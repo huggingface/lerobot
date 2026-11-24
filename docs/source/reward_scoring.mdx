@@ -254,6 +254,16 @@ sample_weighting:
 
 The equivalent CLI flags are `--sample_weighting.type=rabc`, `--sample_weighting.score_name=robometer-4b`, and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`. Train with the same dataset root containing the scores; see the [SARM RA-BC example](./sarm#step-5b-train-policy-with-ra-bc) for a full training command.
 
+### Convert Old RA-BC Progress Files
+
+`lerobot-score` replaces the `python -m lerobot.rewards.<model>.compute_rabc_weights` scripts, which wrote one progress file at the dataset root, such as `sarm_progress.parquet`, and are now removed. To keep using such a file without scoring the dataset again, save it as named scores:
+
+```bash
+uv run examples/dataset/convert_rabc_progress_to_scores.py --repo-id user/my_dataset
+```
+
+The script infers the model from the file name, downloads the file and the dataset's data files (not its videos) if needed, and saves `progress_sparse` as `reward.sarm.sparse_progress` (`progress_dense` as `reward.sarm.dense_progress`), or as RoboMeter's or TOPReward's `progress` signal, under the score name `sarm`, `robometer` or `topreward`. Add `--push-to-hub` to upload them. Training configs that still set the removed progress-file fields load, without those fields; set `score_name` and `signal_name` instead.
+
 ## Output Contract
 
 Every Parquet file of scores contains:
