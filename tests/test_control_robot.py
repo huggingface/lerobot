@@ -15,6 +15,8 @@
 # limitations under the License.
 
 import re
+import subprocess
+import sys
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import draccus
@@ -91,7 +93,7 @@ def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
     cfg = RecordConfig(
         robot=MockRobotConfig(),
         dataset=dataset_cfg,
-        base_teleop=MockTeleopConfig(n_motors=1),
+        base_teleop=MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0]),
         play_sounds=False,
     )
 
@@ -99,8 +101,9 @@ def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
 
     actions = dataset.hf_dataset["action"]
     assert len(actions) > 1
-    assert all(list(a[1:]) == list(actions[0][1:]) for a in actions)
-    assert len({float(a[0]) for a in actions}) > 1
+    first_observation = dataset.hf_dataset[0]["observation.state"]
+    assert all(list(a[1:]) == list(first_observation[1:]) for a in actions)
+    assert all(float(a[0]) == 12.0 for a in actions)
 
 
 def test_record_and_resume(tmp_path):
@@ -368,3 +371,22 @@ def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
             )
     assert [call.args[0]["x.vel"] for call in robot.send_action.call_args_list] == [0.2, 0.2, 0.3, 0.3]
     assert dataset.add_frame.call_count == 2
+
+
+@pytest.mark.parametrize("command", ["teleoperate", "record"])
+def test_lekiwi_cli_registration_in_a_fresh_process(command):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            f"lerobot.scripts.lerobot_{command}",
+            "--robot.type=lekiwi_client",
+            "--base_teleop.type=keyboard",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--robot.remote_ip" in result.stdout
+    assert "--base_mapping.layout" in result.stdout

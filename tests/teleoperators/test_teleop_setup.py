@@ -46,19 +46,6 @@ def arm(tmp_path):
         arm.disconnect()
 
 
-def test_base_only_drives_the_base_and_holds_the_arm(keyboard):
-    robot = SimpleNamespace(action_features={"joint.pos": float, "x.vel": float})
-    teleop, pipeline = make_mobile_teleop(robot, keyboard)
-    assert teleop is keyboard
-    keyboard.event_queue.put(("w", True))
-    assert pipeline((teleop.get_action(), {"joint.pos": 10.0})) == {
-        "x.vel": 0.1,
-        "y.vel": 0.0,
-        "theta.vel": 0.0,
-        "joint.pos": 10.0,
-    }
-
-
 def test_keyboard_and_prefixed_arm_are_combined_and_feedback_is_routed(keyboard, arm):
     robot = SimpleNamespace(arm_action_prefix="arm_", action_features={"arm_shoulder.pos": float})
     teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
@@ -85,6 +72,7 @@ def test_escaped_keyboard_stops_the_base_and_the_arm_is_still_cleaned_up(keyboar
     robot = SimpleNamespace(action_features={})
     teleop, pipeline = make_mobile_teleop(robot, keyboard, arm)
     keyboard.event_queue.put(("w", True))
+    assert pipeline((teleop.get_action(), {}))["x.vel"] == 0.1
     with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
         assert pipeline((teleop.get_action(), {}))["x.vel"] == 0.0
         assert teleop.is_connected

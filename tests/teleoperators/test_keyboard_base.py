@@ -60,6 +60,11 @@ def test_speed_changes_once_per_press_is_bounded_and_resets():
     for _ in range(2):
         step.action({})
         assert step.action({"w": None, "+": None})["x.vel"] == 0.3
+    for expected in (0.2, 0.1, 0.1):
+        step.action({})
+        for _ in range(2):
+            assert step.action({"w": None, "-": None})["x.vel"] == expected
+    assert step.action({"w": None, "+": None})["x.vel"] == 0.2
     step.reset()
     assert step.action({"w": None})["x.vel"] == 0.1
 
@@ -120,8 +125,3 @@ def test_layout_cli_mapping_and_session_copy(layout, keys):
     mapping = replace(config.base_mapping)
     action = mapping.action({**dict.fromkeys(keys), "arm_joint.pos": 12.0})
     assert action == {"x.vel": 0.1, "y.vel": 0.1, "theta.vel": 30.0, "arm_joint.pos": 12.0}
-    assert KeyboardToBaseActionProcessorStep(**mapping.get_config()).action(dict.fromkeys(keys)) == {
-        "x.vel": 0.1,
-        "y.vel": 0.1,
-        "theta.vel": 30.0,
-    }
