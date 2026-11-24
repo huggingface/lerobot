@@ -716,10 +716,12 @@ def test_merge_scores_replaces_existing_scores_only_with_overwrite(tmp_path):
     merge_scores(dataset, ["a", "b"], name="test", overwrite=True)
 
 
-def test_scores_use_global_ids_for_noncontiguous_episode_views(tmp_path):
-    dataset = FakeDataset(tmp_path / "dataset", [2] * 10, episodes=[2, 5, 9])
+@pytest.mark.parametrize("as_view", [True, False], ids=["dataset-view", "selected-episodes"])
+def test_scores_use_global_ids_for_noncontiguous_episodes(tmp_path, as_view):
+    dataset = FakeDataset(tmp_path / "dataset", [2] * 10, episodes=[2, 5, 9] if as_view else None)
     function = dense(dataset)
-    add_scores(dataset, "test", function, info=INFO)
+    add_scores(dataset, "test", function, info=INFO, episodes=None if as_view else [2, 5, 9])
+    dataset.episodes = [2, 5, 9]
 
     assert function.calls == [2, 5, 9]
     assert list(load_scores(dataset, "test")["index"]) == [4, 5, 10, 11, 18, 19]
