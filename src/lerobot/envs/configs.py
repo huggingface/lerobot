@@ -355,7 +355,8 @@ class LiberoEnvConfig(EnvConfig):
             raise ValueError(f"fps must be positive, got {self.fps}")
         if not self.hard_reset and not self.init_states:
             raise ValueError("hard_reset=False requires init_states=True")
-        # "pixels_agent_pos_joints" adds the arm's joint angles as `observation.joint_pos`.
+        # "pixels_agent_pos_joints" adds `observation.joint_pos`, `observation.base_pos` and
+        # `observation.base_quat` to the observation of "pixels_agent_pos".
         if self.obs_type not in ("pixels", "pixels_agent_pos", "pixels_agent_pos_joints"):
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
