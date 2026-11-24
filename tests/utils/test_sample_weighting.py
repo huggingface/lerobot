@@ -361,7 +361,7 @@ def test_rabc_compute_batch_weights(sample_score_dataset, score_loaders):
     scores.assert_called_once_with(
         sample_score_dataset,
         "sarm",
-        columns=["index", "episode_index", "frame_index", "progress_sparse"],
+        columns=["index", "episode_index", "progress_sparse"],
     )
 
 

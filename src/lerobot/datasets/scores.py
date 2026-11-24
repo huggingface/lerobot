@@ -21,6 +21,9 @@ store saves and compares but never interprets.
 
 Episodes are written one at a time to a staging folder, so an interrupted run can resume, and
 the file is published only once every selected episode is written.
+
+A frame without a row was not scored, for example because its episode was not selected. A file
+that is not a score file, or whose rows no longer match the dataset's episodes, raises when read.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import datasets
 import numpy as np
@@ -48,11 +51,10 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import load_json, write_json
 
 from .dataset_metadata import CODEBASE_VERSION
+from .lerobot_dataset import LeRobotDataset
+from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT
 from .utils import SCORES_DIR, resolve_episode_indices
-
-if TYPE_CHECKING:
-    from .lerobot_dataset import LeRobotDataset
 
 SCORES_FORMAT = "lerobot.scores"
 SCORES_SCHEMA_VERSION = 1
@@ -75,6 +77,10 @@ def _canonical_json(value: Any, *, label: str) -> str:
 
 
 def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
+    if isinstance(dataset, MultiLeRobotDataset):
+        raise TypeError(
+            "Scores belong to a single dataset; use them with each dataset of a MultiLeRobotDataset"
+        )
     if not name.strip() or name.startswith(".") or "/" in name or "\\" in name:
         raise ValueError(f"Score name must be a non-empty filename without a leading dot, got {name!r}")
     return Path(dataset.root) / SCORES_DIR / f"{name}.parquet"
@@ -82,6 +88,11 @@ def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
 
 def _validate_writable_storage(dataset: LeRobotDataset) -> None:
     """Reject datasets whose root cannot hold score files."""
+    if not isinstance(dataset, LeRobotDataset):
+        raise TypeError(
+            f"Scores can only be written for a LeRobotDataset, got {type(dataset).__name__}; "
+            "load the dataset as a LeRobotDataset to score it"
+        )
     if dataset.meta.storage_format != DEFAULT_STORAGE_FORMAT:
         raise NotImplementedError(
             f"Scores are not supported for storage_format={dataset.meta.storage_format!r}; "
@@ -89,8 +100,8 @@ def _validate_writable_storage(dataset: LeRobotDataset) -> None:
         )
     if Path(dataset.root).resolve().is_relative_to(Path(HF_LEROBOT_HUB_CACHE).resolve()):
         raise NotImplementedError(
-            "Scores cannot be written into the revision-safe Hub snapshot cache; "
-            "materialize the dataset into a writable local root first"
+            "Scores cannot be written into the revision-safe Hub snapshot cache; load the dataset "
+            f"with a writable root, such as root=HF_LEROBOT_HOME / {dataset.repo_id!r}"
         )
 
 
@@ -180,6 +191,7 @@ class ScoreWriter:
         overwrite: If ``True``, allow replacing existing scores once the new ones are published.
 
     Raises:
+        TypeError: If ``dataset`` is not a ``LeRobotDataset``.
         RuntimeError: If the dataset is being recorded and not finalized.
         NotImplementedError: If the dataset root cannot hold score files.
         FileExistsError: If the scores exist and ``overwrite`` is ``False``, or staged parts
@@ -198,9 +210,9 @@ class ScoreWriter:
         resume: bool = True,
         overwrite: bool = False,
     ) -> None:
-        dataset._ensure_reader()
         self.output_path = _scores_path(dataset, name)
         _validate_writable_storage(dataset)
+        dataset._ensure_reader()
         self._selected = _resolve_episode_indices(dataset, episodes)
         self.episode_indices = tuple(sorted(self._selected))
         self.parts_dir = self.output_path.with_name(f".{self.output_path.name}.parts")
@@ -286,7 +298,7 @@ class ScoreWriter:
         Args:
             episode_index: Global index of a selected episode.
             frame_indices: One-dimensional integer array of frame positions inside the episode,
-                in non-decreasing order. A frame may appear several times.
+                in increasing order. Frames left out are not scored.
             columns: One value per row for each column. Every episode must have the same
                 column names and types.
 
@@ -307,10 +319,11 @@ class ScoreWriter:
         if indices.ndim != 1 or indices.dtype.kind not in "iu":
             raise ValueError("frame_indices must be a one-dimensional integer array")
         if indices.size and (
-            indices[0] < 0 or indices[-1] >= episode_length or np.any(indices[1:] < indices[:-1])
+            indices[0] < 0 or indices[-1] >= episode_length or np.any(indices[1:] <= indices[:-1])
         ):
             raise ValueError(
-                f"Frame indices for episode {episode_index} must be non-decreasing and in [0, {episode_length})"
+                f"Frame indices for episode {episode_index} must be increasing, without repeats, "
+                f"and in [0, {episode_length})"
             )
         if not columns:
             raise ValueError("At least one column must be given")
@@ -414,6 +427,27 @@ def _read_schema(path: Path) -> pa.Schema:
     return schema
 
 
+def _validate_rows_match_episodes(dataset: LeRobotDataset, name: str, keys: pa.Table) -> None:
+    """Raise if a row no longer points at its frame, for example after episodes are deleted or reordered."""
+    if keys.num_rows == 0:
+        return
+    indices = keys.column("index").to_numpy()
+    episodes = keys.column("episode_index").to_numpy()
+    frames = keys.column("frame_index").to_numpy()
+    starts: np.ndarray = np.zeros(int(episodes.max()) + 1, dtype=np.int64)
+    ends = np.zeros_like(starts)
+    for episode_index in np.unique(episodes):
+        episode = dataset.meta.episodes[int(episode_index)]
+        starts[episode_index] = int(episode["dataset_from_index"])
+        ends[episode_index] = int(episode["dataset_to_index"])
+    misaligned = (frames < 0) | (indices != starts[episodes] + frames) | (indices >= ends[episodes])
+    if misaligned.any():
+        episode_index = int(episodes[np.argmax(misaligned)])
+        raise ValueError(
+            f"Scores {name!r} no longer align with episode {episode_index} of this dataset; score it again"
+        )
+
+
 def _get_scores_path(dataset: LeRobotDataset, name: str, *, download: bool, token: str | bool | None) -> Path:
     path = _scores_path(dataset, name)
     if path.is_file() or not download:
@@ -458,6 +492,11 @@ def load_scores(
     Returns:
         The scores as a Hugging Face dataset backed by a memory-mapped Arrow cache.
         A selection with no matching rows returns an empty dataset.
+
+    Raises:
+        TypeError: If ``dataset`` is a ``MultiLeRobotDataset``.
+        ValueError: If the file is not a score file, or its rows no longer match the dataset's
+            episodes, for example after episodes were deleted or reordered.
     """
     path = _get_scores_path(dataset, name, download=download, token=token)
     schema = _read_schema(path)
@@ -467,12 +506,14 @@ def load_scores(
         or identity["total_episodes"] > dataset.meta.total_episodes
         or identity["total_frames"] > dataset.meta.total_frames
     ):
-        raise ValueError("Scores no longer align with this dataset; score it again")
+        raise ValueError(f"Scores {name!r} no longer align with this dataset; score it again")
     selected = sorted(_resolve_episode_indices(dataset, episodes))
     requested = schema.names if columns is None else list(columns)
     filters = pa_ds.field("episode_index").isin(selected)
+    keys = pa_ds.dataset(path, format="parquet").to_table(columns=list(RESERVED_COLUMNS), filter=filters)
+    _validate_rows_match_episodes(dataset, name, keys)
     # Return a typed empty dataset when no score rows match the selection.
-    if pa_ds.dataset(path, format="parquet").count_rows(filter=filters) == 0:
+    if keys.num_rows == 0:
         scores = datasets.Dataset(schema.empty_table().select(requested))
     else:
         scores = datasets.Dataset.from_parquet(
@@ -537,8 +578,8 @@ def merge_scores(
 
     Raises:
         FileExistsError: If the scores exist and ``overwrite`` is ``False``.
-        ValueError: If the scores differ in columns or ``info``, do not fit the dataset, or share
-            an episode.
+        ValueError: If the scores differ in columns or ``info``, no longer match the dataset's
+            episodes, or share an episode.
     """
     if not names:
         raise ValueError("At least one score name must be given to merge")
@@ -565,6 +606,7 @@ def merge_scores(
             or identity["total_frames"] > dataset.meta.total_frames
         ):
             raise ValueError(f"Scores {part!r} no longer align with this dataset; score it again")
+        _validate_rows_match_episodes(dataset, part, pq.read_table(path, columns=list(RESERVED_COLUMNS)))
         if not schema.equals(reference, check_metadata=False) or metadata != reference_metadata:
             raise ValueError(f"Scores {part!r} have different columns or info than {names[0]!r}")
         parquet_file = pq.ParquetFile(path)
@@ -599,15 +641,31 @@ def merge_scores(
     logger.info("Published merged scores %r to %s", name, output_path)
 
 
-def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload named scores to the dataset repository and move its version tag to that commit.
+def push_scores_to_hub(
+    dataset: LeRobotDataset,
+    name: str,
+    *,
+    branch: str | None = None,
+    tag_version: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """Upload named scores to the dataset repository.
+
+    Unlike ``LeRobotDataset.push_to_hub``, this uploads only the score file and leaves the other
+    dataset files and the dataset card unchanged. The repository must already exist.
 
     Args:
         dataset: Dataset the scores belong to.
         name: Score name.
+        branch: Branch to upload to. Created from the dataset's revision if it does not exist.
+            Defaults to the main branch.
+        tag_version: If ``True``, move the codebase version tag to the upload commit, as
+            ``LeRobotDataset.push_to_hub`` does, so loading the dataset at that tag finds the scores.
+        overwrite: If ``True``, replace scores with the same name already on the Hub.
 
     Raises:
         FileNotFoundError: If the scores do not exist locally.
+        FileExistsError: If the scores already exist on the Hub and ``overwrite`` is ``False``.
     """
     local_path = _scores_path(dataset, name)
     if not local_path.is_file():
@@ -615,14 +673,26 @@ def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
 
     path_in_repo = f"{SCORES_DIR}/{local_path.name}"
     hub_api = HfApi()
+    if not overwrite and hub_api.file_exists(
+        dataset.repo_id, path_in_repo, repo_type="dataset", revision=branch
+    ):
+        raise FileExistsError(
+            f"Scores {name!r} already exist in hf://datasets/{dataset.repo_id}; set overwrite=True to replace them"
+        )
+    if branch:
+        hub_api.create_branch(
+            dataset.repo_id, branch=branch, revision=dataset.revision, repo_type="dataset", exist_ok=True
+        )
     commit = hub_api.upload_file(
         path_or_fileobj=local_path,
         path_in_repo=path_in_repo,
         repo_id=dataset.repo_id,
         repo_type="dataset",
+        revision=branch,
         commit_message=f"Upload scores {name}",
     )
-    with suppress(RevisionNotFoundError):
-        hub_api.delete_tag(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-    hub_api.create_tag(dataset.repo_id, tag=CODEBASE_VERSION, revision=commit.oid, repo_type="dataset")
+    if tag_version:
+        with suppress(RevisionNotFoundError):
+            hub_api.delete_tag(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        hub_api.create_tag(dataset.repo_id, tag=CODEBASE_VERSION, revision=commit.oid, repo_type="dataset")
     logger.info("Uploaded scores %s to hf://datasets/%s/%s", name, dataset.repo_id, path_in_repo)

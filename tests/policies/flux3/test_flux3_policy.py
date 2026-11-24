@@ -771,15 +771,20 @@ def test_compile_model_wraps_the_inference_dit_forward_only(fake_vae, monkeypatc
     assert eager._compiled_dit is None and len(compiled_fns) == 1  # flag off: torch.compile never called
 
 
-def test_save_load_round_trip_excludes_frozen_components(fake_vae, tmp_path):
+@pytest.mark.parametrize("sharded", [False, True])
+def test_save_load_round_trip_excludes_frozen_components(fake_vae, tmp_path, monkeypatch, sharded):
+    if sharded:
+        monkeypatch.setattr(Flux3Policy, "_max_shard_size", "1MB")
     cfg = droid_config()
     policy = Flux3Policy(cfg)
     with torch.no_grad():
         policy.dit.emb_in["action"].weight.fill_(1.25)
     policy.save_pretrained(tmp_path)
-    assert (tmp_path / "model.safetensors").exists()
-    with safe_open(tmp_path / "model.safetensors", framework="pt") as f:
-        keys = list(f.keys())
+    assert (tmp_path / "model.safetensors.index.json").exists() is sharded
+    keys = []
+    for file in Flux3Policy._resolve_weight_files(str(tmp_path)):
+        with safe_open(file, framework="pt") as f:
+            keys.extend(f.keys())
     assert keys and all(k.startswith("dit.") for k in keys)
     assert not any("video_vae" in k or "text_encoder" in k for k in keys)
     loaded = Flux3Policy.from_pretrained(tmp_path)

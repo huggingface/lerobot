@@ -16,6 +16,7 @@
 import importlib
 from dataclasses import dataclass, field
 
+import draccus
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -24,13 +25,12 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
-from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import (
-    _normalize_hub_result,
-    _parse_hub_url,
-    preprocess_observation,
-)
+from lerobot.envs.configs import AlohaEnvConfig, EnvConfig, HILSerlRobotEnvConfig, PushtEnvConfig
+from lerobot.envs.factory import make_env, make_env_config, make_task_env
+from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
+from lerobot.sim.integrations import envhub, gym as gym_integration
+from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
+from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
 from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
@@ -66,7 +66,11 @@ def test_factory(env_name):
     task_id = next(iter(envs[suite_name]))
     env = envs[suite_name][task_id]
     obs, _ = env.reset()
-    obs = preprocess_observation(obs)
+    obs = (
+        prepare_canonical_observation(obs)
+        if env.metadata.get("canonical_observations", False)
+        else preprocess_observation(obs)
+    )
 
     # test image keys are float32 in range [0,1]
     for key in obs:
@@ -106,11 +110,11 @@ def test_factory_custom_gym_id():
             return {}
 
     try:
-        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+        register(id=gym_id, entry_point=DictObservationEnv)
 
         cfg = DummyEnv()
         envs_dict = make_env(cfg, n_envs=1)
-        dummy_envs = envs_dict["dummy"]
+        dummy_envs = envs_dict["DummyTask-v0"]
         assert len(dummy_envs) == 1
         env = next(iter(dummy_envs.values()))
         assert env is not None and isinstance(env, gym.vector.VectorEnv)
@@ -119,6 +123,66 @@ def test_factory_custom_gym_id():
     finally:
         if gym_id in gym_registry:
             del gym_registry[gym_id]
+
+
+@pytest.mark.parametrize(
+    "config, instruction",
+    [
+        (
+            AlohaEnvConfig(task="AlohaTransferCube-v0"),
+            "Pick up the cube with the right arm and transfer it to the left arm.",
+        ),
+        (AlohaEnvConfig(task="AlohaInsertion-v0"), "Insert the peg into the socket."),
+        (PushtEnvConfig(), "Push the T-shaped block onto the T-shaped target."),
+        (
+            AlohaEnvConfig(task="AlohaTransferCube-v0", instruction="Hand the cube over."),
+            "Hand the cube over.",
+        ),
+    ],
+)
+def test_aloha_and_pusht_send_their_dataset_instruction(config, instruction):
+    # A language-conditioned policy used to receive the gym id (e.g. "AlohaTransferCube-v0") as its
+    # prompt and scored 0 (#5373). The default is the instruction of the task's reference dataset.
+    assert config.sim_settings()["kwargs"]["instruction"] == instruction
+
+
+def test_unknown_task_sends_no_instruction():
+    assert "instruction" not in AlohaEnvConfig(task="AlohaUnknown-v0").sim_settings()["kwargs"]
+
+
+def test_gym_instruction_becomes_the_vector_envs_task_description():
+    gym_id = "dummy_instruction_pkg/DummyTask-v0"
+
+    @EnvConfig.register_subclass("dummy_instructed")
+    @dataclass
+    class InstructedEnv(EnvConfig):
+        task: str = "DummyTask-v0"
+        fps: int = 10
+        features: dict[str, PolicyFeature] = field(default_factory=dict)
+
+        @property
+        def gym_id(self) -> str:
+            return gym_id
+
+        def sim_settings(self):
+            settings = super().sim_settings()
+            settings["kwargs"]["instruction"] = "Move the block to the goal."
+            return settings
+
+    register(id=gym_id, entry_point=DictObservationEnv)
+    try:
+        (factory,) = gym_integration.env_fns("DummyTask-v0", 1, gym_id)["DummyTask-v0"][0]
+        plain = factory()
+        assert not hasattr(plain, "task_description")  # no instruction: unchanged
+        plain.close()
+
+        envs = make_env(InstructedEnv(), n_envs=2)
+        env = envs["DummyTask-v0"][0]
+        env.reset(seed=0)
+        assert env.call("task_description") == ("Move the block to the goal.",) * 2
+        env.close()
+    finally:
+        del gym_registry[gym_id]
 
 
 # Hub environment loading tests
@@ -192,17 +256,22 @@ def test_normalize_hub_result():
         _normalize_hub_result("invalid_type")
 
 
+def test_make_env_refuses_a_hub_repo_id():
+    with pytest.raises(TypeError, match="HubEnvConfig"):
+        make_env("lerobot/cartpole-env")
+
+
 def test_make_env_from_hub_requires_trust_remote_code():
     """Test that loading from hub requires explicit trust_remote_code=True."""
     hub_id = "lerobot/cartpole-env"
 
     # Should raise RuntimeError when trust_remote_code=False (default)
-    with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
-        make_env(hub_id, trust_remote_code=False)
+    with pytest.raises(RuntimeError, match="Refusing to run the EnvHub environment"):
+        envhub.make_envs(hub_id, 1, False, trust_remote_code=False)
 
     # Should also raise when not specified (defaults to False)
-    with pytest.raises(RuntimeError, match="Refusing to execute remote code"):
-        make_env(hub_id)
+    with pytest.raises(RuntimeError, match="Refusing to run the EnvHub environment"):
+        envhub.make_envs(hub_id, 1, False)
 
 
 @pytest.mark.parametrize(
@@ -216,7 +285,7 @@ def test_make_env_from_hub_requires_trust_remote_code():
 def test_make_env_from_hub_with_trust(hub_id):
     """Test loading environment from Hugging Face Hub with trust_remote_code=True."""
     # load environment from hub
-    envs_dict = make_env(hub_id, n_envs=2, trust_remote_code=True)
+    envs_dict = envhub.make_envs(hub_id, 2, False, trust_remote_code=True)
 
     # verify structure
     assert isinstance(envs_dict, dict)
@@ -252,7 +321,7 @@ def test_make_env_from_hub_async():
     hub_id = "lerobot/cartpole-env"
 
     # load with async envs
-    envs_dict = make_env(hub_id, n_envs=2, use_async_envs=True, trust_remote_code=True)
+    envs_dict = envhub.make_envs(hub_id, 2, True, trust_remote_code=True)
 
     suite_name = next(iter(envs_dict))
     task_id = next(iter(envs_dict[suite_name]))
@@ -280,3 +349,23 @@ def test_gym_manipulator_points_to_the_real_robot_entry_points():
         make_env(HILSerlRobotEnvConfig(), n_envs=1)
     assert "lerobot.rl.gym_manipulator" in str(e.value)
     assert "lerobot.rl.eval_policy" in str(e.value)
+
+
+def test_env_server_options_are_one_optional_group():
+    assert ToyEnvConfig().server is None and draccus.encode(ToyEnvConfig())["server"] is None
+    config = draccus.parse(
+        ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpeg"]
+    )
+    assert (config.server.endpoint, config.server.encoding) == ("tcp/127.0.0.1:7448", "jpeg")
+    with pytest.raises(draccus.utils.DecodingError, match="endpoint"):
+        draccus.parse(ToyEnvConfig, args=["--server.encoding=jpeg"])
+    # A typo fails while parsing the command line, not when the client starts.
+    with pytest.raises(SystemExit):
+        draccus.parse(ToyEnvConfig, args=["--server.endpoint=tcp/127.0.0.1:7448", "--server.encoding=jpg"])
+
+
+def test_env_config_saves_only_its_settings():
+    # Saved with a training config after its env is built; the env's description is runtime state.
+    config = ToyEnvConfig()
+    make_task_env(config).close()
+    assert "descriptor" not in draccus.encode(config)

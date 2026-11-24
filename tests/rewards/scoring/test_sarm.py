@@ -75,6 +75,7 @@ class _FakeModel:
             type="sarm",
             pretrained_path="test/sarm",
             pretrained_revision=None,
+            trust_remote_code=False,
             device="cpu",
             image_key=IMAGE_KEY,
             state_key=STATE_KEY,
@@ -131,8 +132,14 @@ def encoder(monkeypatch):
     step = _WindowEncoderStep()
     received = {}
 
-    def fake_from_pretrained(path, config_filename, *, revision, overrides):
-        received.update(path=path, config_filename=config_filename, revision=revision, overrides=overrides)
+    def fake_from_pretrained(path, config_filename, *, revision, overrides, trust_remote_code):
+        received.update(
+            path=path,
+            config_filename=config_filename,
+            revision=revision,
+            overrides=overrides,
+            trust_remote_code=trust_remote_code,
+        )
         return PolicyProcessorPipeline(steps=[step])
 
     monkeypatch.setattr(
@@ -145,6 +152,7 @@ def encoder(monkeypatch):
 @pytest.mark.parametrize("with_state", [True, False])
 def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_state: bool):
     model = _FakeModel()
+    model.config.trust_remote_code = True
     scorer = SARMFrameScorer(model, batch_size=2)
     dataset = _FakeDataset(with_state=with_state)
 
@@ -165,6 +173,8 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_s
             "SARMEncodingProcessorStep": {"config": model.config},
             "device_processor": {"device": "cpu"},
         },
+        # The caller's consent to run custom code applies to the saved preprocessor too.
+        "trust_remote_code": True,
     }
     # Each frame is read once, for both the image and the state.
     assert dataset.row_requests == list(range(5))

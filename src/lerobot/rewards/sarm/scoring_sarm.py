@@ -132,6 +132,7 @@ class SARMFrameScorer:
                     "SARMEncodingProcessorStep": {"config": config},
                     "device_processor": {"device": config.device},
                 },
+                trust_remote_code=config.trust_remote_code,
             )
             for step in self._preprocessor.steps:
                 if hasattr(step, "eval"):

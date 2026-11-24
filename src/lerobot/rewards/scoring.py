@@ -41,6 +41,7 @@ class SignalDescriptor:
     greater_is_better: bool | None
     bounds: tuple[float, float] | None = None
     unit: str | None = None
+    # Whether NaN may mark a frame the scorer could not score. Frames left out are not scored.
     allow_nan: bool = False
     # Names of a categorical signal's values, such as subtasks: each value is a position here.
     labels: tuple[str, ...] | None = None
@@ -122,7 +123,8 @@ def score_dataset(
     Raises:
         ImportError: If the dataset extra's dependencies are unavailable.
         ValueError: If a descriptor has an invalid direction, signal names do not match
-            descriptors, frame indices repeat, or signals have non-numeric dtypes.
+            descriptors, frame indices repeat, signals have non-numeric dtypes, or a signal
+            whose descriptor does not allow NaN has NaN values.
     """
     require_package("datasets", extra="dataset")
     require_package("av", extra="dataset")
@@ -143,13 +145,16 @@ def score_dataset(
                 f"Signal names for episode {episode_index} must match the scorer's descriptors: "
                 f"signals={sorted(frame_signals.signals)}, descriptors={sorted(descriptors)}"
             )
-        if np.unique(frame_signals.frame_indices).size != frame_signals.frame_indices.size:
-            raise ValueError(f"Frame indices for episode {episode_index} must not contain repeated values")
         for signal_name, values in frame_signals.signals.items():
             if values.dtype.kind not in "biuf":
                 raise ValueError(
                     f"Signal {signal_name!r} for episode {episode_index} must have a numeric dtype "
                     f"(bool, integer or float), got {values.dtype}"
+                )
+            if not descriptors[signal_name].allow_nan and values.dtype.kind == "f" and np.isnan(values).any():
+                raise ValueError(
+                    f"Signal {signal_name!r} for episode {episode_index} has NaN values, "
+                    "but its descriptor does not allow them"
                 )
         return frame_signals.frame_indices, dict(frame_signals.signals)
 

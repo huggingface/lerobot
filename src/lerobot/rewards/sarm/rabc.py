@@ -107,12 +107,12 @@ class RABCWeights(SampleWeighter):
                 f"but {signal_name!r} declares greater_is_better={descriptor.greater_is_better!r}"
             )
 
+        # `load_scores` rejects scores whose rows no longer match the dataset's episodes.
         scores = load_scores(
-            dataset, score_name, columns=["index", "episode_index", "frame_index", signal_name]
+            dataset, score_name, columns=["index", "episode_index", signal_name]
         ).with_format("numpy")
         # Whole-column reads in NumPy format; converting a column with `np.asarray` iterates in Python.
         global_indices = scores["index"][:]
-        frame_indices = scores["frame_index"][:]
         progress_values = scores[signal_name][:]
         episode_indices = scores["episode_index"][:]
         if progress_values.dtype.kind not in "iuf":
@@ -120,11 +120,6 @@ class RABCWeights(SampleWeighter):
         # NaN marks a missing value, but one infinite value would make every weight NaN.
         if np.isinf(progress_values).any():
             raise ValueError(f"RA-BC signal {signal_name!r} in scores {score_name!r} has infinite values")
-        if np.any((global_indices < 0) | (global_indices >= dataset.meta.total_frames)):
-            raise ValueError(
-                f"Scores {score_name!r} no longer align with the dataset's frame range; "
-                "score the dataset again"
-            )
 
         self.progress_lookup: dict[int, float] = {}
         self.episode_lookup: dict[int, int] = {}
@@ -139,31 +134,16 @@ class RABCWeights(SampleWeighter):
                 self.progress_lookup[global_idx] = float(progress)
             self.episode_lookup[global_idx] = episode_idx
 
-        # Build episode boundaries for delta computation
-        self.episode_boundaries: dict[int, dict[str, int]] = {}
-        for episode_idx in np.unique(episode_indices):
-            if not 0 <= episode_idx < dataset.meta.total_episodes:
-                raise ValueError(
-                    f"Scores {score_name!r} no longer align with the dataset: "
-                    f"episode {episode_idx} does not exist; score the dataset again"
-                )
-            episode_mask = episode_indices == episode_idx
-            episode_global_indices = global_indices[episode_mask]
-            episode = dataset.meta.episodes[int(episode_idx)]
-            episode_start = int(episode["dataset_from_index"])
-            if np.any(
-                (episode_global_indices < episode_start)
-                | (episode_global_indices >= int(episode["dataset_to_index"]))
-                | (episode_global_indices != episode_start + frame_indices[episode_mask])
-            ):
-                raise ValueError(
-                    f"Scores {score_name!r} no longer align with the dataset's "
-                    f"frame indices for episode {episode_idx}; score the dataset again"
-                )
-            self.episode_boundaries[int(episode_idx)] = {
-                "start": int(episode_global_indices.min()),
-                "end": int(episode_global_indices.max()) + 1,
-            }
+        # Build episode boundaries for delta computation, in one pass over the rows sorted by episode.
+        order = np.argsort(episode_indices, kind="stable")
+        scored_episodes, first_rows = np.unique(episode_indices[order], return_index=True)
+        sorted_indices = global_indices[order]
+        starts = np.minimum.reduceat(sorted_indices, first_rows)
+        ends = np.maximum.reduceat(sorted_indices, first_rows) + 1
+        self.episode_boundaries: dict[int, dict[str, int]] = {
+            int(episode_idx): {"start": int(start), "end": int(end)}
+            for episode_idx, start, end in zip(scored_episodes, starts, ends, strict=True)
+        }
 
         # Frames of unscored episodes get `fallback_weight`, for example after appending episodes
         # without scoring them and merging their scores.

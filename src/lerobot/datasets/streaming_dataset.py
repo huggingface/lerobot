@@ -13,13 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 import io
 import os
 import warnings
 from collections import deque
 from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, suppress
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -850,6 +851,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         """Build the worker-local video manifest and its bounded byte cache."""
         if self._sidecar_path is None or not episode_indices:
             return None
+        if self._video_backend == "torchcodec":
+            with suppress(ImportError, OSError, RuntimeError):
+                importlib.import_module("torchcodec.decoders")
         range_backend = StorageLocation.parse(self._data_root).range_backend
         manifest = EpisodeVideoManifest.build(
             self.meta,
