@@ -56,6 +56,15 @@ pre-commit run --all-files
 
 The API reference is generated from the docstrings in `src/lerobot/`. If you add or change anything public, follow the [docstring standard](https://huggingface.co/docs/lerobot/writing_docstrings) — the format is parsed by the renderer and checked in CI.
 
+### Documentation pages
+
+The documentation is the `.mdx` pages in `docs/source/`, and its sidebar is `docs/source/_toctree.yml`: every page must be listed there, or the docs build fails.
+
+- **Before you add or change a page**, read [Writing docs](https://huggingface.co/docs/lerobot/main/en/writing_docs): where a new page goes, the templates for tutorial steps, policy pages and choosers, and the words to use.
+- **Renaming or removing a page?** Add a redirect from the old name to the closest page in `docs/source/_redirects.yml`, so that links to it keep working.
+- **Preview your changes:** the documentation bot comments a link to a preview of the docs on your pull request.
+- Run `pre-commit run --files docs/source/<your_page>.mdx` before you push: it formats the page with Prettier.
+
 ### Running Tests
 
 We use `pytest`. First, ensure you have test artifacts by installing **git-lfs**:

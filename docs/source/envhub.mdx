@@ -338,7 +338,7 @@ Running an EnvHub environment runs its code, with your permissions. LeRobot neve
 | `Refusing to run the EnvHub environment`                                     | Add `--env.trust_remote_code=true` (`--robot.env.trust_remote_code=true`) after reading the code, or serve the environment |
 | `failed to import because the dependency '<name>' is not installed`          | Install the repository's `requirements.txt` next to LeRobot, or serve the environment                                      |
 | `requires an unwrapped SyncVectorEnv or AsyncVectorEnv`                      | Return the vector env built from factories, without wrappers                                                               |
-| `LEROBOT_SIM has unknown keys`                                               | Use the keys listed in [`LEROBOT_SIM`](#lerobot_sim); the error names the closest one                                      |
+| `LEROBOT_SIM has unknown keys`                                               | Use the keys listed in [`LEROBOT_SIM`](#lerobotsim); the error names the closest one                                       |
 | `The env server at ... runs another environment than this command describes` | The server runs another environment than `--env.*` describes; pass the same options, or restart the server with yours      |
 | `A sim robot needs an observation.state feature with component names`        | Return `agent_pos` in the observation                                                                                      |
 | `images must be HWC uint8 with three channels`                               | Convert camera images to height x width x 3, `uint8`                                                                       |

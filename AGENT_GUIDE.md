@@ -44,11 +44,11 @@ See [`AGENTS.md`](./AGENTS.md) for repo architecture.
 
 ### Path A — "I have an SO-101 and want my first trained policy"
 
-Go to §4 (SO-101 end-to-end), then §5 (data tips), then §6 (pick a policy — likely **ACT**), then §7 (how long), then §8 (eval).
+Go to §4 (SO-101 end-to-end), then §5 (data tips), then §6 (pick a policy — likely **ACT**), then §7 (how long), then §8 (eval). The human-facing version is the step-by-step tutorial that starts at [`il_robots.mdx`](./docs/source/il_robots.mdx): point the user to the step they're on.
 
 ### Path B — "No hardware, I want to train on an existing dataset"
 
-Skip §4. Pick a policy in §6, pick a duration in §7, then run `lerobot-train` per §4.9 with a Hub `--dataset.repo_id` and an `--env.type` for eval. Finish with §8.
+Skip §4. Pick a policy in §6, pick a duration in §7, then run `lerobot-train` per §4.9 with a Hub `--dataset.repo_id` and an `--env.type` for eval. Finish with §8. For a first run with no robot, [`train_in_sim.mdx`](./docs/source/train_in_sim.mdx) walks through PushT end to end (it needs a GPU to train).
 
 ### Path C — "I just want to understand the codebase"
 
@@ -58,7 +58,7 @@ Read §2 above, then `AGENTS.md` "Architecture", then open `src/lerobot/policies
 
 ## 4. SO-101 end-to-end cheat-sheet
 
-Full details in [`docs/source/so101.mdx`](./docs/source/so101.mdx) and [`docs/source/il_robots.mdx`](./docs/source/il_robots.mdx). Minimum commands in order. Confirm arms are assembled + powered before issuing.
+Build instructions in [`so101.mdx`](./docs/source/so101.mdx). The tutorial explains each step: [`setup_your_robot.mdx`](./docs/source/setup_your_robot.mdx) → [`teleoperate.mdx`](./docs/source/teleoperate.mdx) → [`record_dataset.mdx`](./docs/source/record_dataset.mdx) → [`check_dataset.mdx`](./docs/source/check_dataset.mdx) → [`train_policy.mdx`](./docs/source/train_policy.mdx) → [`run_policy.mdx`](./docs/source/run_policy.mdx) → [`improve_policy.mdx`](./docs/source/improve_policy.mdx). Error messages and fixes: [`troubleshooting.mdx`](./docs/source/troubleshooting.mdx). Minimum commands in order. Confirm arms are assembled + powered before issuing.
 
 **4.1 Install**
 
@@ -242,7 +242,7 @@ Match the policy to the user's **GPU memory** and **time budget**. Numbers below
 
 All policies typically train for **5–10 epochs** (see §7).
 
-> **Human-facing version:** the [Compute Hardware Guide](./docs/source/hardware_guide.mdx) reuses the table below and adds a cloud-GPU tier guide and a Hugging Face Jobs pointer.
+> **Human-facing version:** [Which GPU do I need?](./docs/source/hardware_guide.mdx) reuses the table below and adds a cloud-GPU tier guide and a Hugging Face Jobs pointer. [Choose a policy](./docs/source/policies.mdx) compares every policy (text input, base checkpoint, what its page demonstrates).
 
 | Policy      | Batch | Update (ms) | Peak GPU mem (GB) | Best for                                                                                         |
 | ----------- | ----: | ----------: | ----------------: | ------------------------------------------------------------------------------------------------ |
@@ -385,6 +385,7 @@ lerobot-eval \
 - Use `--policy.path=outputs/train/.../checkpoints/<step>/pretrained_model` for local checkpoints.
 - `--eval.n_episodes` should be ≥ 50 for a stable success-rate estimate.
 - Env configs live in `src/lerobot/envs/configs.py`, simulator integrations in `src/lerobot/sim/integrations/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
+- To pick a simulation or benchmark (OS, GPU and install needs of each), see [`simulation_overview.mdx`](./docs/source/simulation_overview.mdx).
 - To add a new benchmark, see [`docs/source/adding_benchmarks.mdx`](./docs/source/adding_benchmarks.mdx) and [`envhub.mdx`](./docs/source/envhub.mdx).
 
 ### 8.2b Simulator servers for benchmark eval
@@ -410,7 +411,8 @@ Single-task grasp-and-place with 50 clean episodes: ACT should reach **> 70% suc
 
 ## 9. Further reading & resources
 
-- **Getting started:** [`installation.mdx`](./docs/source/installation.mdx) · [`il_robots.mdx`](./docs/source/il_robots.mdx) · [What makes a good dataset](https://huggingface.co/blog/lerobot-datasets)
+- **Getting started:** [`how_it_works.mdx`](./docs/source/how_it_works.mdx) · [`installation.mdx`](./docs/source/installation.mdx) · [`il_robots.mdx`](./docs/source/il_robots.mdx) (tutorial overview) · [`quickstart.mdx`](./docs/source/quickstart.mdx) · [`troubleshooting.mdx`](./docs/source/troubleshooting.mdx) · [`glossary.mdx`](./docs/source/glossary.mdx) · [`cheat-sheet.mdx`](./docs/source/cheat-sheet.mdx) · [What makes a good dataset](https://huggingface.co/blog/lerobot-datasets)
+- **Choosers:** [`robots.mdx`](./docs/source/robots.mdx) · [`policies.mdx`](./docs/source/policies.mdx) · [`hardware_guide.mdx`](./docs/source/hardware_guide.mdx) · [`simulation_overview.mdx`](./docs/source/simulation_overview.mdx)
 - **Per-policy docs:** browse [`docs/source/*.mdx`](./docs/source/) (policies, hardware, benchmarks, advanced training).
 - **Other hardware:** [`third_party_robots.mdx`](./docs/source/third_party_robots.mdx) · [`third_party_sensors.mdx`](./docs/source/third_party_sensors.mdx) · [`integrate_hardware.mdx`](./docs/source/integrate_hardware.mdx)
 - **Community:** [Discord](https://discord.com/invite/s3KuuzsPFb) · [Hub `LeRobot` tag](https://huggingface.co/datasets?other=LeRobot) · [Dataset visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset)
