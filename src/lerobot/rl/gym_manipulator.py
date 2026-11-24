@@ -27,6 +27,7 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.envs import HILSerlRobotEnvConfig
+from lerobot.envs.configs import HILSerlProcessorConfig
 from lerobot.model import RobotKinematics
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
@@ -301,6 +302,17 @@ class RobotEnv(gym.Env):
         return self._raw_joint_positions
 
 
+def _gripper_enabled(processor: HILSerlProcessorConfig) -> bool:
+    """Return whether the gripper is part of the action.
+
+    An unset gripper config means enabled. The environment, the control loop and
+    the inverse-kinematics steps share this default.
+    """
+    if processor.gripper is None:
+        return True
+    return processor.gripper.use_gripper
+
+
 def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     """Create robot environment from configuration.
 
@@ -317,7 +329,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
         import gym_hil  # noqa: F401
 
         # Extract gripper settings with defaults
-        use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+        use_gripper = _gripper_enabled(cfg.processor)
         gripper_penalty = cfg.processor.gripper.gripper_penalty if cfg.processor.gripper is not None else 0.0
 
         env = gym.make(
@@ -339,7 +351,7 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     teleop_device.connect()
 
     # Create base environment with safe defaults
-    use_gripper = cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else True
+    use_gripper = _gripper_enabled(cfg.processor)
     display_cameras = (
         cfg.processor.observation.display_cameras if cfg.processor.observation is not None else False
     )
@@ -488,7 +500,7 @@ def make_processors(
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
         AddTeleopEventsAsInfoStep(teleop_device=teleop_device),
         InterventionActionProcessorStep(
-            use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False,
+            use_gripper=_gripper_enabled(cfg.processor),
             terminate_on_success=terminate_on_success,
         ),
     ]
@@ -497,9 +509,7 @@ def make_processors(
     if cfg.processor.inverse_kinematics is not None and kinematics_solver is not None:
         # Add EE bounds and safety processor
         inverse_kinematics_steps = [
-            MapTensorToDeltaActionDictStep(
-                use_gripper=cfg.processor.gripper.use_gripper if cfg.processor.gripper is not None else False
-            ),
+            MapTensorToDeltaActionDictStep(use_gripper=_gripper_enabled(cfg.processor)),
             MapDeltaActionToRobotActionStep(),
             EEReferenceAndDelta(
                 kinematics=kinematics_solver,
@@ -639,7 +649,7 @@ def control_loop(
     transition = reset_and_build_transition(env, env_processor, action_processor)
 
     # Determine if gripper is used
-    use_gripper = cfg.env.processor.gripper.use_gripper if cfg.env.processor.gripper is not None else True
+    use_gripper = _gripper_enabled(cfg.env.processor)
 
     dataset = None
     if cfg.mode == "record":
