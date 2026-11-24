@@ -769,9 +769,10 @@ def train(cfg: TrainPipelineConfig) -> None:
 
         if is_main_process():
             logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        # The weighter reads `policy.config`, which a DDP/FSDP wrapper doesn't expose.
         sample_weighter = make_sample_weighter(
             cfg.sample_weighting,
-            policy,
+            accelerator.unwrap_model(policy),
             device,
             dataset_root=cfg.dataset.root,
             dataset_repo_id=cfg.dataset.repo_id,
