@@ -157,17 +157,17 @@ def test_score_writer_rejects_dataset_being_recorded(tmp_path):
     assert not (dataset.root / "scores").exists()
 
 
-def test_scores_accept_repeated_frames_and_string_columns(tmp_path):
+def test_scores_accept_sparse_frames_and_string_columns(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3])
 
     def function(episode_index: int):
-        return np.asarray([0, 0, 2], dtype=np.int64), {"text": ["a", "b", "c"]}
+        return np.asarray([0, 2], dtype=np.int64), {"text": ["a", "c"]}
 
     add_scores(dataset, "language", function, info=INFO)
 
     table = load_scores(dataset, "language")
-    assert list(table["frame_index"]) == [0, 0, 2]
-    assert list(table["text"]) == ["a", "b", "c"]
+    assert list(table["frame_index"]) == [0, 2]
+    assert list(table["text"]) == ["a", "c"]
 
 
 @pytest.mark.parametrize("tag_exists", [True, False])
@@ -504,13 +504,14 @@ def test_scores_reject_snapshot_cache_before_work(monkeypatch, tmp_path):
         (np.asarray([0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "must have 1 values"),
         (np.asarray([0]), {}, "At least one column"),
         (np.asarray([0.0]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "integer array"),
-        (np.asarray([1, 0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "non-decreasing"),
+        (np.asarray([1, 0]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "increasing"),
         (
             np.asarray([1, 0], dtype=np.uint64),
             {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)},
-            "non-decreasing",
+            "increasing",
         ),
-        (np.asarray([2]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "non-decreasing and in \\[0, 2\\)"),
+        (np.asarray([1, 1]), {COLUMN: np.asarray([0.5, 0.6], dtype=np.float32)}, "without repeats"),
+        (np.asarray([2]), {COLUMN: np.asarray([0.5], dtype=np.float32)}, "in \\[0, 2\\)"),
     ],
 )
 def test_scores_reject_structurally_invalid_rows(tmp_path, frame_indices, columns, error):
@@ -626,7 +627,7 @@ def test_merge_scores_keeps_row_order_within_an_episode(tmp_path):
     dataset = FakeDataset(tmp_path / "dataset", [3, 3])
 
     def function(episode_index: int):
-        return np.asarray([0, 0, 1, 1, 2]), {"text": [f"{episode_index}-{row}" for row in range(5)]}
+        return np.asarray([0, 1, 2]), {"text": [f"{episode_index}-{row}" for row in range(3)]}
 
     add_scores(dataset, "a", function, info=INFO, episodes=[1])
     add_scores(dataset, "b", function, info=INFO, episodes=[0])
@@ -634,7 +635,7 @@ def test_merge_scores_keeps_row_order_within_an_episode(tmp_path):
     merge_scores(dataset, ["a", "b"], name="test")
 
     table = load_scores(dataset, "test")
-    assert list(table["text"]) == [f"{episode}-{row}" for episode in (0, 1) for row in range(5)]
+    assert list(table["text"]) == [f"{episode}-{row}" for episode in (0, 1) for row in range(3)]
 
 
 def test_merge_scores_rejects_shared_episodes(tmp_path):

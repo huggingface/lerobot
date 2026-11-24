@@ -286,7 +286,7 @@ class ScoreWriter:
         Args:
             episode_index: Global index of a selected episode.
             frame_indices: One-dimensional integer array of frame positions inside the episode,
-                in non-decreasing order. A frame may appear several times.
+                in increasing order. Frames left out are not scored.
             columns: One value per row for each column. Every episode must have the same
                 column names and types.
 
@@ -307,10 +307,11 @@ class ScoreWriter:
         if indices.ndim != 1 or indices.dtype.kind not in "iu":
             raise ValueError("frame_indices must be a one-dimensional integer array")
         if indices.size and (
-            indices[0] < 0 or indices[-1] >= episode_length or np.any(indices[1:] < indices[:-1])
+            indices[0] < 0 or indices[-1] >= episode_length or np.any(indices[1:] <= indices[:-1])
         ):
             raise ValueError(
-                f"Frame indices for episode {episode_index} must be non-decreasing and in [0, {episode_length})"
+                f"Frame indices for episode {episode_index} must be increasing, without repeats, "
+                f"and in [0, {episode_length})"
             )
         if not columns:
             raise ValueError("At least one column must be given")
