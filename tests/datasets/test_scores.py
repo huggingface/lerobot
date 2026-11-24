@@ -30,7 +30,7 @@ from datasets.table import MemoryMappedTable
 from httpx import Request, Response
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.datasets import LeRobotDataset
+from lerobot.datasets import LeRobotDataset, MultiLeRobotDataset, StreamingLeRobotDataset
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
 from lerobot.datasets.scores import (
     ScoreWriter,
@@ -702,6 +702,19 @@ def test_scores_reject_episodes_moved_with_the_same_totals(tmp_path, lengths):
     edited = FakeDataset(dataset.root, lengths)
     with pytest.raises(ValueError, match="no longer align with episode"):
         load_scores(edited, "test")
+
+
+def test_scores_reject_streaming_writes_and_multi_dataset_reads(tmp_path):
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    streaming = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
+    streaming.root = dataset.root
+    multi = MultiLeRobotDataset.__new__(MultiLeRobotDataset)
+
+    with pytest.raises(TypeError, match="only be written for a LeRobotDataset"):
+        ScoreWriter(streaming, "other", info=INFO)
+    with pytest.raises(TypeError, match="MultiLeRobotDataset"):
+        load_scores(multi, "test")
 
 
 def test_scores_survive_real_dataset_append_and_parquet_repacking(tmp_path):

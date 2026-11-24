@@ -36,7 +36,7 @@ import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import datasets
 import numpy as np
@@ -51,11 +51,10 @@ from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.io_utils import load_json, write_json
 
 from .dataset_metadata import CODEBASE_VERSION
+from .lerobot_dataset import LeRobotDataset
+from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT
 from .utils import SCORES_DIR, resolve_episode_indices
-
-if TYPE_CHECKING:
-    from .lerobot_dataset import LeRobotDataset
 
 SCORES_FORMAT = "lerobot.scores"
 SCORES_SCHEMA_VERSION = 1
@@ -78,6 +77,10 @@ def _canonical_json(value: Any, *, label: str) -> str:
 
 
 def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
+    if isinstance(dataset, MultiLeRobotDataset):
+        raise TypeError(
+            "Scores belong to a single dataset; use them with each dataset of a MultiLeRobotDataset"
+        )
     if not name.strip() or name.startswith(".") or "/" in name or "\\" in name:
         raise ValueError(f"Score name must be a non-empty filename without a leading dot, got {name!r}")
     return Path(dataset.root) / SCORES_DIR / f"{name}.parquet"
@@ -85,6 +88,11 @@ def _scores_path(dataset: LeRobotDataset, name: str) -> Path:
 
 def _validate_writable_storage(dataset: LeRobotDataset) -> None:
     """Reject datasets whose root cannot hold score files."""
+    if not isinstance(dataset, LeRobotDataset):
+        raise TypeError(
+            f"Scores can only be written for a LeRobotDataset, got {type(dataset).__name__}; "
+            "load the dataset as a LeRobotDataset to score it"
+        )
     if dataset.meta.storage_format != DEFAULT_STORAGE_FORMAT:
         raise NotImplementedError(
             f"Scores are not supported for storage_format={dataset.meta.storage_format!r}; "
@@ -92,8 +100,8 @@ def _validate_writable_storage(dataset: LeRobotDataset) -> None:
         )
     if Path(dataset.root).resolve().is_relative_to(Path(HF_LEROBOT_HUB_CACHE).resolve()):
         raise NotImplementedError(
-            "Scores cannot be written into the revision-safe Hub snapshot cache; "
-            "materialize the dataset into a writable local root first"
+            "Scores cannot be written into the revision-safe Hub snapshot cache; load the dataset "
+            f"with a writable root, such as root=HF_LEROBOT_HOME / {dataset.repo_id!r}"
         )
 
 
@@ -183,6 +191,7 @@ class ScoreWriter:
         overwrite: If ``True``, allow replacing existing scores once the new ones are published.
 
     Raises:
+        TypeError: If ``dataset`` is not a ``LeRobotDataset``.
         RuntimeError: If the dataset is being recorded and not finalized.
         NotImplementedError: If the dataset root cannot hold score files.
         FileExistsError: If the scores exist and ``overwrite`` is ``False``, or staged parts
@@ -201,9 +210,9 @@ class ScoreWriter:
         resume: bool = True,
         overwrite: bool = False,
     ) -> None:
-        dataset._ensure_reader()
         self.output_path = _scores_path(dataset, name)
         _validate_writable_storage(dataset)
+        dataset._ensure_reader()
         self._selected = _resolve_episode_indices(dataset, episodes)
         self.episode_indices = tuple(sorted(self._selected))
         self.parts_dir = self.output_path.with_name(f".{self.output_path.name}.parts")
@@ -485,6 +494,7 @@ def load_scores(
         A selection with no matching rows returns an empty dataset.
 
     Raises:
+        TypeError: If ``dataset`` is a ``MultiLeRobotDataset``.
         ValueError: If the file is not a score file, or its rows no longer match the dataset's
             episodes, for example after episodes were deleted or reordered.
     """
