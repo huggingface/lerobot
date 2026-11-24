@@ -1,0 +1,230 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.datasets import LeRobotDataset
+from lerobot.datasets.scores import load_scores, load_scores_info
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
+from lerobot.rewards import load_signal_descriptors, make_frame_scorer, score_dataset
+from lerobot.rewards.prediction import RemainingTimeOutput
+from lerobot.rewards.rynnvalue.configuration_rynnvalue import RynnValueConfig
+from lerobot.rewards.rynnvalue.scoring_rynnvalue import (
+    REMAINING_TIME_SIGNAL,
+    RynnValueFrameScorer,
+    make_rynnvalue_frame_scorer,
+    select_anchor_indices,
+)
+
+pytestmark = pytest.mark.dataset
+
+IMAGE_KEY = "observation.images.top"
+
+
+@pytest.mark.parametrize(
+    ("num_frames", "dataset_fps", "inference_fps", "expected"),
+    [
+        (61, 30.0, 1.0, [0, 30, 60]),
+        (70, 30.0, 1.0, [0, 30, 60, 69]),
+        (1, 30.0, 1.0, [0]),
+        (4, 2.0, 10.0, [0, 1, 2, 3]),
+    ],
+)
+def test_select_anchor_indices(num_frames, dataset_fps, inference_fps, expected):
+    assert select_anchor_indices(num_frames, dataset_fps, inference_fps).tolist() == expected
+
+
+def test_make_rynnvalue_frame_scorer_builds_processor_without_frame_cap(monkeypatch):
+    import lerobot.rewards.rynnvalue.scoring_rynnvalue as scoring_rynnvalue
+
+    received = {}
+    preprocessor = object()
+
+    def fake_make_processors(config):
+        received["config"] = config
+        return preprocessor, object()
+
+    monkeypatch.setattr(scoring_rynnvalue, "make_rynnvalue_pre_post_processors", fake_make_processors)
+    model = SimpleNamespace(config=RynnValueConfig(device="cpu", inference_fps=0.5))
+
+    scorer = make_rynnvalue_frame_scorer(model)
+
+    assert scorer.preprocessor is preprocessor
+    assert scorer.provenance["scorer"]["options"]["inference_fps"] == 0.5
+    assert received["config"].max_frames is None
+    assert model.config.max_frames == 8
+
+
+@pytest.mark.parametrize(("batch_size", "expected"), [(None, 1), (4, 4)])
+def test_make_frame_scorer_builds_the_rynnvalue_scorer(monkeypatch, batch_size, expected):
+    import lerobot.rewards.rynnvalue.scoring_rynnvalue as scoring_rynnvalue
+
+    monkeypatch.setattr(
+        scoring_rynnvalue, "make_rynnvalue_pre_post_processors", lambda config: (object(), object())
+    )
+    model = SimpleNamespace(config=RynnValueConfig(device="cpu"))
+
+    scorer = make_frame_scorer(model, batch_size=batch_size)
+
+    # Without a batch size, RynnValue's own default of 1 applies.
+    assert isinstance(scorer, RynnValueFrameScorer)
+    assert scorer.batch_size == expected
+
+
+def test_rynnvalue_frame_scorer_rejects_invalid_batch_size():
+    with pytest.raises(ValueError, match="batch_size"):
+        RynnValueFrameScorer(SimpleNamespace(config=None), object(), batch_size=0)
+
+
+class _FakeDataset:
+    absolute_to_relative_idx: dict[int, int] | None = None
+    fps = 2.0
+
+    def __init__(self, episodes):
+        self.meta = SimpleNamespace(episodes=episodes)
+        self.loads: list[int] = []
+
+    def __getitem__(self, position: int):
+        self.loads.append(position)
+        return {IMAGE_KEY: torch.full((3, 2, 2), float(position)), "task": "pick up the cube"}
+
+
+@dataclass
+class _PrefixEncoderStep(ProcessorStep):
+    """Stand in for RynnValue's encoder: record each prefix's frames and write its last one."""
+
+    prefixes: list[list[float]] = field(default_factory=list)
+    batch_sizes: list[int] = field(default_factory=list)
+
+    def __call__(self, transition):
+        observation = dict(transition[TransitionKey.OBSERVATION])
+        frames = observation[IMAGE_KEY]
+        self.prefixes.extend(frames[:, :, 0, 0, 0].tolist())
+        self.batch_sizes.append(frames.shape[0])
+        observation["observation.last_frame"] = frames[:, -1, 0, 0, 0]
+        return {**transition, TransitionKey.OBSERVATION: observation}
+
+    def transform_features(self, features):
+        return features
+
+
+class _FakeEncoder(PolicyProcessorPipeline):
+    """A real preprocessor pipeline around the stand-in encoder step."""
+
+    def __init__(self):
+        super().__init__(steps=[_PrefixEncoderStep()])
+
+    @property
+    def prefixes(self) -> list[list[float]]:
+        return self.steps[0].prefixes
+
+    @property
+    def batch_sizes(self) -> list[int]:
+        return self.steps[0].batch_sizes
+
+
+class _FakeModel:
+    config = RynnValueConfig(
+        device="cpu",
+        pretrained_path="test/rynnvalue",
+        pretrained_revision="model-revision",
+        image_key=IMAGE_KEY,
+        max_frames=3,
+        robot_description="a single-arm robot",
+    )
+
+    def eval(self):
+        return self
+
+    def predict_remaining_time(self, batch):
+        assert torch.is_inference_mode_enabled()
+        # Four seconds remain at frame 0, then one second less per frame.
+        return RemainingTimeOutput(remaining_time_s=4.0 - batch["observation.last_frame"])
+
+
+def test_rynnvalue_frame_scorer_scores_prefixes_and_interpolates_remaining_time():
+    encoder = _FakeEncoder()
+    scorer = RynnValueFrameScorer(_FakeModel(), encoder, batch_size=2)
+
+    dataset = _FakeDataset([{"dataset_from_index": 0, "dataset_to_index": 5}])
+    result = scorer.score_episode(dataset, 0)
+
+    # At 2 fps, RynnValue runs once a second, on frames 0, 2 and 4, with three frames per prefix.
+    assert encoder.prefixes == [[0.0, 0.0, 0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 4.0]]
+    # Two prefixes per batch, each batch decoding its frames once, after the task lookup.
+    assert encoder.batch_sizes == [2, 1]
+    assert dataset.loads == [0, 0, 1, 2, 0, 2, 4]
+    np.testing.assert_array_equal(result.frame_indices, np.arange(5))
+    np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0, 1.0, 0.0])
+    assert result.signals[REMAINING_TIME_SIGNAL].dtype == np.float32
+    assert scorer.descriptors[REMAINING_TIME_SIGNAL].unit == "s"
+    assert scorer.descriptors[REMAINING_TIME_SIGNAL].greater_is_better is False
+    assert scorer.name == "rynnvalue"
+    options = scorer.provenance["scorer"]["options"]
+    assert options["inference_fps"] == 1.0
+    assert options["robot_description"] == "a single-arm robot"
+
+
+def test_rynnvalue_frame_scorer_supports_episode_filtered_dataset_views():
+    dataset = _FakeDataset(
+        [{"dataset_from_index": 0, "dataset_to_index": 5}, {"dataset_from_index": 5, "dataset_to_index": 8}]
+    )
+    dataset.absolute_to_relative_idx = {5: 0, 6: 1, 7: 2}
+    encoder = _FakeEncoder()
+
+    result = RynnValueFrameScorer(_FakeModel(), encoder).score_episode(dataset, 1)
+
+    assert encoder.prefixes == [[0.0, 0.0, 0.0], [0.0, 1.0, 2.0]]
+    np.testing.assert_allclose(result.signals[REMAINING_TIME_SIGNAL], [4.0, 3.0, 2.0])
+
+
+def test_rynnvalue_frame_scorer_publishes_a_dataset_score(tmp_path):
+    class FakeDataset(LeRobotDataset):
+        absolute_to_relative_idx = None
+        episodes = None
+        fps = 2.0
+        reader = SimpleNamespace()
+        writer = None
+        _storage_root = None
+
+        def __init__(self) -> None:
+            self.root = tmp_path
+            self.repo_id = "test/dataset"
+            self.revision = "dataset-revision"
+            self.meta = SimpleNamespace(
+                total_episodes=1,
+                total_frames=5,
+                storage_format="lerobot",
+                episodes=[{"dataset_from_index": 0, "dataset_to_index": 5}],
+            )
+
+        def __getitem__(self, index: int):
+            return {IMAGE_KEY: torch.full((3, 2, 2), float(index)), "task": "pick up the cube"}
+
+    dataset = FakeDataset()
+    score_dataset(dataset, RynnValueFrameScorer(_FakeModel(), _FakeEncoder()))
+
+    scores = load_scores(dataset, "rynnvalue")
+    assert list(scores[REMAINING_TIME_SIGNAL]) == [4.0, 3.0, 2.0, 1.0, 0.0]
+    assert scores.features[REMAINING_TIME_SIGNAL].dtype == "float32"
+    assert load_signal_descriptors(dataset, "rynnvalue")[REMAINING_TIME_SIGNAL].greater_is_better is False
+    assert load_scores_info(dataset, "rynnvalue")["provenance"]["model"]["id"] == "test/rynnvalue"
