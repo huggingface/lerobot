@@ -37,6 +37,7 @@ Edge DAMPs the robot about two seconds later.
 import argparse
 import logging
 import time
+from pathlib import Path
 
 from lerobot.robots.asimov import Asimov, AsimovConfig
 from lerobot.robots.asimov.asimov import ARM_ACTIONS
@@ -55,6 +56,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--legs", choices=["policy", "stand"], default="policy")
     parser.add_argument("--exo-arms", choices=list(ARM_PREFIXES), default="none")
     parser.add_argument("--exo-id", default=None, help="exoskeleton calibration id")
+    parser.add_argument(
+        "--calibration-dir",
+        type=Path,
+        default=None,
+        help="directory with <exo-id>_left.json and <exo-id>_right.json (default: the G1 calibration cache)",
+    )
     parser.add_argument("--left-port", default="/dev/ttyACM0")
     parser.add_argument("--right-port", default="/dev/ttyACM1")
     parser.add_argument("--arm-speed", type=float, default=0.6, help="max exo arm target speed (rad/s)")
@@ -83,6 +90,7 @@ def main() -> None:
         exo = AsimovExoTeleoperator(
             AsimovExoTeleoperatorConfig(
                 id=args.exo_id,
+                calibration_dir=args.calibration_dir,
                 control_mode="arms",
                 left_arm_config=ExoskeletonArmPortConfig(port=args.left_port),
                 right_arm_config=ExoskeletonArmPortConfig(port=args.right_port),
