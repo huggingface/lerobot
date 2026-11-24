@@ -21,6 +21,7 @@ Based on:
 - Real Time Chunking: https://www.physicalintelligence.company/research/real_time_chunking
 """
 
+import math
 from dataclasses import dataclass
 
 from lerobot.configs import RTCAttentionSchedule
@@ -74,6 +75,10 @@ class RTCConfig:
     prefix_attention_schedule: RTCAttentionSchedule = RTCAttentionSchedule.LINEAR
     max_guidance_weight: float = 10.0
     execution_horizon: int = 10
+    # Optional per-action-dimension guidance multipliers (e.g., downweighting binary gripper
+    # dimensions relative to continuous arm joints). When shorter than the denoiser's padded
+    # action width (e.g., max_action_dim=32 in Pi0/Pi0.5), trailing dimensions are zero-weighted.
+    action_dim_weights: list[float] | None = None
 
     # Debug settings
     debug: bool = False
@@ -87,3 +92,19 @@ class RTCConfig:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
         if self.debug_maxlen <= 0:
             raise ValueError(f"debug_maxlen must be positive, got {self.debug_maxlen}")
+        if self.action_dim_weights is not None:
+            if isinstance(self.action_dim_weights, tuple):
+                self.action_dim_weights = list(self.action_dim_weights)
+            if not isinstance(self.action_dim_weights, list) or len(self.action_dim_weights) == 0:
+                raise ValueError(
+                    "action_dim_weights must be a non-empty sequence of finite non-negative numbers"
+                )
+            if any(
+                isinstance(w, bool) or not isinstance(w, (int, float)) or not math.isfinite(w) or w < 0
+                for w in self.action_dim_weights
+            ):
+                raise ValueError(
+                    "action_dim_weights must contain only finite non-negative numbers, "
+                    f"got {self.action_dim_weights}"
+                )
+            self.action_dim_weights = [float(w) for w in self.action_dim_weights]
