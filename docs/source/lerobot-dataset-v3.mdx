@@ -408,11 +408,14 @@ A backend is a module exposing two names:
   [`BaseDatasetReader`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/datasets/dataset_reader.py),
   constructed with the keyword arguments `meta`, `root`, `episodes`, `delta_timestamps`,
   `image_transforms`, `tolerance_s`, `revision`, `return_uint8`, `depth_output_unit` and `token`.
+  It must also accept `storage_options` when the caller supplies a nonempty dictionary of
+  connection settings (such as credentials or an endpoint).
   It must be picklable, so `DataLoader` workers can reopen their own connections.
-- `localize_root(repo_id, root, revision, token=..., force_cache_sync=...)` — materializes
+- `localize_root(repo_id, root, revision, token=..., force_cache_sync=..., storage_options=...)` — materializes
   `meta/` locally for an object-store root and returns the directory holding it. Raise
   `FileNotFoundError` if the root is not yours, so the other registered formats still get
-  their turn.
+  their turn. Like the reader, this hook receives `storage_options` only when nonempty;
+  give it a default such as `None` so calls without connection settings also work.
 
 Declare an entry point so your format is available as soon as your package is installed:
 

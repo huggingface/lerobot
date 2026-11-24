@@ -17,6 +17,7 @@
 
 import importlib
 import json
+import multiprocessing
 import sys
 import threading
 import time
@@ -440,11 +441,137 @@ def test_contested_format_is_reported_when_localizing_a_remote_root(monkeypatch)
         ("contestedfmt", "a_pkg.reader", "pkg-a"),
         ("contestedfmt", "b_pkg.reader", "pkg-b"),
     )
-    # No built-in probes, so the error is about the conflict and nothing else.
-    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+    # A missing optional dependency must not hide the unresolved conflict.
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {"missingfmt": "missing_reader"})
 
-    with pytest.raises(FileNotFoundError, match="contestedfmt"):
+    def missing_reader(module_name):
+        raise ImportError("install missing-extra")
+
+    monkeypatch.setattr(storage_module.importlib, "import_module", missing_reader)
+
+    with pytest.raises(FileNotFoundError) as caught:
         localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds")
+
+    message = str(caught.value)
+    assert "missingfmt: install missing-extra" in message
+    assert "not probed, claimed by more than one installed package: ['contestedfmt']" in message
+
+
+@pytest.mark.parametrize("storage_options", [None, {}, {"endpoint": "https://store.example"}])
+def test_metadata_loading_discovers_remote_plugin(
+    tmp_path, lerobot_dataset_factory, monkeypatch, storage_options
+):
+    """Metadata loading discovers before probing and forwards connection settings."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=8, use_videos=False, camera_features={}
+    )
+    scans = _fake_entry_points(monkeypatch, ("remotefmt", "remote_reader"))
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+    calls = []
+    module = types.ModuleType("remote_reader")
+
+    def localize_root(repo_id, root, revision, **kwargs):
+        calls.append((repo_id, root, revision, kwargs))
+        return dataset.root
+
+    module.localize_root = localize_root
+    monkeypatch.setitem(sys.modules, "remote_reader", module)
+
+    meta = storage_module.load_dataset_metadata(
+        DUMMY_REPO_ID,
+        root="s3://bucket/ds",
+        revision="test-revision",
+        token="test-token",
+        force_cache_sync=True,
+        storage_options=storage_options,
+    )
+
+    expected_kwargs = {"token": "test-token", "force_cache_sync": True}
+    if storage_options:
+        expected_kwargs["storage_options"] = storage_options
+    assert calls == [(DUMMY_REPO_ID, "s3://bucket/ds", "test-revision", expected_kwargs)]
+    assert scans == [DATASET_READER_ENTRY_POINT_GROUP]
+    assert meta.root == dataset.root
+    assert meta.total_frames == 8
+    assert meta.features == dataset.meta.features
+
+
+def test_discovered_reader_receives_storage_options(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """A discovered reader receives options while preserving the dataset's samples."""
+    root = tmp_path / "ds"
+    plain = lerobot_dataset_factory(
+        root=root, total_episodes=1, total_frames=8, use_videos=False, camera_features={}
+    )
+    expected = [plain[index] for index in range(8)]
+    _fake_entry_points(monkeypatch, ("optionsfmt", "options_reader"))
+    received = []
+
+    class OptionsReader(ToyDatasetReader):
+        def __init__(self, *, storage_options=None, **kwargs):
+            received.append(storage_options)
+            super().__init__(**kwargs)
+
+    module = types.ModuleType("options_reader")
+    module.DATASET_READER = OptionsReader
+    monkeypatch.setitem(sys.modules, "options_reader", module)
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["storage_format"] = "optionsfmt"
+    info_path.write_text(json.dumps(info))
+    options = {"endpoint": "https://store.example"}
+
+    actual = LeRobotDataset(DUMMY_REPO_ID, root=root, storage_options=options)
+
+    assert received == [options]
+    assert len(actual) == 8
+    for index, item in enumerate(expected):
+        for key, value in item.items():
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(actual[index][key], value, rtol=0, atol=0)
+            else:
+                assert actual[index][key] == value
+
+
+@pytest.mark.parametrize("context", ["spawn", "forkserver"])
+def test_parent_resolved_reader_survives_dataloader_workers(
+    tmp_path, lerobot_dataset_factory, monkeypatch, context
+):
+    """Workers use the reader chosen in the parent without rediscovering plugins."""
+    if context not in multiprocessing.get_all_start_methods():
+        pytest.skip(f"{context} is unavailable on this platform")
+    root = tmp_path / "ds"
+    plain = lerobot_dataset_factory(
+        root=root, total_episodes=1, total_frames=8, use_videos=False, camera_features={}
+    )
+    expected = [plain[index] for index in range(8)]
+    _fake_entry_points(
+        monkeypatch,
+        ("workerfmt", "worker_reader_a", "pkg-a"),
+        ("workerfmt", "worker_reader_b", "pkg-b"),
+    )
+    storage_module._discover_plugin_readers()
+    module = types.ModuleType("worker_reader_a")
+    module.DATASET_READER = ToyDatasetReader
+    monkeypatch.setitem(sys.modules, "worker_reader_a", module)
+    register_dataset_reader("workerfmt", "worker_reader_a")
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["storage_format"] = "workerfmt"
+    info_path.write_text(json.dumps(info))
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=None, num_workers=2, multiprocessing_context=context, timeout=60
+    )
+    actual = list(loader)
+
+    assert len(actual) == 8
+    for item, reference in zip(actual, expected, strict=True):
+        for key, value in reference.items():
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(item[key], value, rtol=0, atol=0)
+            else:
+                assert item[key] == value
 
 
 def test_discovery_does_not_import_plugin_modules(monkeypatch):
