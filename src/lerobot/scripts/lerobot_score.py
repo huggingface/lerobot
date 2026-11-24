@@ -50,12 +50,15 @@ Model-specific scoring options belong to each reward model's config, for example
 ``--reward_model.num_subsampled_frames``. ``--batch_size`` sets how many predictions run together.
 Rerun the same command to resume an interrupted run. To discard staged work and replace
 existing scores, add ``--overwrite=true --resume=false``. Add ``--push_to_hub=true`` to
-upload the completed scores to the dataset repository.
+upload the completed scores to the dataset repository; scores with the same name already on the
+Hub are only replaced with ``--overwrite=true``.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from huggingface_hub import HfApi
 
 from lerobot.configs import parser
 from lerobot.configs.rewards import RewardModelConfig
@@ -126,6 +129,15 @@ def run_score(cfg: ScoreConfig) -> None:
         raise FileExistsError(
             f"Scores {score_name!r} already exist at {output_path}; pass --overwrite=true or choose another --name"
         )
+    if (
+        cfg.push_to_hub
+        and not cfg.overwrite
+        and HfApi().file_exists(cfg.dataset_repo_id, f"{SCORES_DIR}/{output_path.name}", repo_type="dataset")
+    ):
+        raise FileExistsError(
+            f"Scores {score_name!r} already exist in hf://datasets/{cfg.dataset_repo_id}; "
+            "pass --overwrite=true or choose another --name"
+        )
 
     model = make_reward_model(cfg.reward_model)
     scorer = make_frame_scorer(model, batch_size=cfg.batch_size)
@@ -147,7 +159,7 @@ def run_score(cfg: ScoreConfig) -> None:
     )
 
     if cfg.push_to_hub:
-        push_scores_to_hub(dataset, score_name)
+        push_scores_to_hub(dataset, score_name, overwrite=cfg.overwrite)
 
 
 @parser.wrap()

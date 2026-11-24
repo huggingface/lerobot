@@ -641,15 +641,31 @@ def merge_scores(
     logger.info("Published merged scores %r to %s", name, output_path)
 
 
-def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
-    """Upload named scores to the dataset repository and move its version tag to that commit.
+def push_scores_to_hub(
+    dataset: LeRobotDataset,
+    name: str,
+    *,
+    branch: str | None = None,
+    tag_version: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """Upload named scores to the dataset repository.
+
+    Unlike ``LeRobotDataset.push_to_hub``, this uploads only the score file and leaves the other
+    dataset files and the dataset card unchanged. The repository must already exist.
 
     Args:
         dataset: Dataset the scores belong to.
         name: Score name.
+        branch: Branch to upload to. Created from the dataset's revision if it does not exist.
+            Defaults to the main branch.
+        tag_version: If ``True``, move the codebase version tag to the upload commit, as
+            ``LeRobotDataset.push_to_hub`` does, so loading the dataset at that tag finds the scores.
+        overwrite: If ``True``, replace scores with the same name already on the Hub.
 
     Raises:
         FileNotFoundError: If the scores do not exist locally.
+        FileExistsError: If the scores already exist on the Hub and ``overwrite`` is ``False``.
     """
     local_path = _scores_path(dataset, name)
     if not local_path.is_file():
@@ -657,14 +673,26 @@ def push_scores_to_hub(dataset: LeRobotDataset, name: str) -> None:
 
     path_in_repo = f"{SCORES_DIR}/{local_path.name}"
     hub_api = HfApi()
+    if not overwrite and hub_api.file_exists(
+        dataset.repo_id, path_in_repo, repo_type="dataset", revision=branch
+    ):
+        raise FileExistsError(
+            f"Scores {name!r} already exist in hf://datasets/{dataset.repo_id}; set overwrite=True to replace them"
+        )
+    if branch:
+        hub_api.create_branch(
+            dataset.repo_id, branch=branch, revision=dataset.revision, repo_type="dataset", exist_ok=True
+        )
     commit = hub_api.upload_file(
         path_or_fileobj=local_path,
         path_in_repo=path_in_repo,
         repo_id=dataset.repo_id,
         repo_type="dataset",
+        revision=branch,
         commit_message=f"Upload scores {name}",
     )
-    with suppress(RevisionNotFoundError):
-        hub_api.delete_tag(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-    hub_api.create_tag(dataset.repo_id, tag=CODEBASE_VERSION, revision=commit.oid, repo_type="dataset")
+    if tag_version:
+        with suppress(RevisionNotFoundError):
+            hub_api.delete_tag(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
+        hub_api.create_tag(dataset.repo_id, tag=CODEBASE_VERSION, revision=commit.oid, repo_type="dataset")
     logger.info("Uploaded scores %s to hf://datasets/%s/%s", name, dataset.repo_id, path_in_repo)

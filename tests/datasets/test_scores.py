@@ -177,6 +177,7 @@ def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path, tag_exists
     dataset = FakeDataset(tmp_path / "dataset", [1])
     add_scores(dataset, "test", dense(dataset), info=INFO)
     api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
     api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
     if not tag_exists:
         api.delete_tag.side_effect = RevisionNotFoundError(
@@ -192,7 +193,13 @@ def test_scores_upload_uses_owned_hub_location(monkeypatch, tmp_path, tag_exists
     assert captured["path_in_repo"] == "scores/test.parquet"
     assert captured["repo_id"] == dataset.repo_id
     assert captured["repo_type"] == "dataset"
-    assert [call[0] for call in api.method_calls] == ["upload_file", "delete_tag", "create_tag"]
+    assert captured["revision"] is None
+    assert [call[0] for call in api.method_calls] == [
+        "file_exists",
+        "upload_file",
+        "delete_tag",
+        "create_tag",
+    ]
     api.delete_tag.assert_called_once_with(dataset.repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
     api.create_tag.assert_called_once_with(
         dataset.repo_id, tag=CODEBASE_VERSION, revision="uploaded-commit", repo_type="dataset"
@@ -205,12 +212,54 @@ def test_scores_upload_failure_leaves_version_tag_unchanged(monkeypatch, tmp_pat
     dataset = FakeDataset(tmp_path / "dataset", [1])
     add_scores(dataset, "test", dense(dataset), info=INFO)
     api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
     api.upload_file.side_effect = OSError("Upload failed")
     monkeypatch.setattr(scores, "HfApi", lambda: api)
 
     with pytest.raises(OSError, match="Upload failed"):
         push_scores_to_hub(dataset, "test")
 
+    api.delete_tag.assert_not_called()
+    api.create_tag.assert_not_called()
+
+
+def test_scores_upload_refuses_to_replace_hub_scores_without_overwrite(monkeypatch, tmp_path):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = True
+    api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
+
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        push_scores_to_hub(dataset, "test")
+    api.upload_file.assert_not_called()
+
+    push_scores_to_hub(dataset, "test", overwrite=True)
+    api.upload_file.assert_called_once()
+
+
+def test_scores_upload_to_a_branch_without_moving_the_version_tag(monkeypatch, tmp_path):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [1])
+    add_scores(dataset, "test", dense(dataset), info=INFO)
+    api = Mock(spec=scores.HfApi)
+    api.file_exists.return_value = False
+    api.upload_file.return_value = SimpleNamespace(oid="uploaded-commit")
+    monkeypatch.setattr(scores, "HfApi", lambda: api)
+
+    push_scores_to_hub(dataset, "test", branch="scores", tag_version=False)
+
+    api.file_exists.assert_called_once_with(
+        dataset.repo_id, "scores/test.parquet", repo_type="dataset", revision="scores"
+    )
+    api.create_branch.assert_called_once_with(
+        dataset.repo_id, branch="scores", revision=dataset.revision, repo_type="dataset", exist_ok=True
+    )
+    assert api.upload_file.call_args.kwargs["revision"] == "scores"
     api.delete_tag.assert_not_called()
     api.create_tag.assert_not_called()
 

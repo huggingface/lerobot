@@ -167,7 +167,9 @@ dataset = LeRobotDataset("user/my_dataset", root="/path/to/local/dataset")
 push_scores_to_hub(dataset, "robometer-4b")
 ```
 
-Like a full dataset upload, score upload moves the dataset's codebase-version tag to the uploaded commit. Loading a dataset does not download its scores; `load_scores()` downloads the named file when it is requested.
+Only the score file is uploaded; the other dataset files and the dataset card are left unchanged. Scores with the same name already on the Hub are only replaced with `--overwrite=true`, or `overwrite=True` in Python. Pass `branch=` to upload to a branch, created from the dataset's revision if needed. Like `LeRobotDataset.push_to_hub()`, the upload moves the dataset's codebase-version tag to the uploaded commit, so loading the dataset at that tag finds the scores; pass `tag_version=False` to leave the tag in place. `LeRobotDataset.push_to_hub()` also uploads the completed score files in `scores/` with the rest of the dataset.
+
+Loading a dataset does not download its scores; `load_scores()` downloads the named file, at the dataset's revision, when it is requested.
 
 ## Score in Parallel
 
