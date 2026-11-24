@@ -283,7 +283,9 @@ lerobot-teleoperate \
     --base_teleop.type=keyboard
 ```
 
-The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--base_mapping`, e.g. `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`.
+The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--base_mapping`, e.g. `--base_mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--base_mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
+
+In Python, including the recording example, pass `keyboard_mapping=KeyboardToBaseActionProcessorStep(layout="azerty")` to `make_mobile_teleop`.
 
 ### Wired version
 

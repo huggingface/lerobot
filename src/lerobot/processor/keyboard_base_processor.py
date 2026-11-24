@@ -23,14 +23,16 @@ from lerobot.lerobot_types import RobotAction
 from .pipeline import ProcessorStepRegistry, RobotActionProcessorStep
 
 
-def default_base_key_bindings() -> dict[str, str]:
-    """Return WASD translation, ZX rotation, and +/- speed controls."""
+def default_base_key_bindings(layout: str = "qwerty") -> dict[str, str]:
+    """Keep movement keys in the same physical positions across supported layouts."""
+    if layout not in ("qwerty", "azerty", "qwertz"):
+        raise ValueError(f"Unknown keyboard layout {layout!r}; use qwerty, azerty, or qwertz.")
     return {
-        "forward": "w",
+        "forward": "z" if layout == "azerty" else "w",
         "backward": "s",
-        "left": "a",
+        "left": "q" if layout == "azerty" else "a",
         "right": "d",
-        "rotate_left": "z",
+        "rotate_left": {"qwerty": "z", "azerty": "w", "qwertz": "y"}[layout],
         "rotate_right": "x",
         "speed_up": "+",
         "speed_down": "-",
@@ -45,13 +47,18 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
     Opposite directions cancel. Speed changes once per key press and resets to the lowest preset.
     """
 
-    key_bindings: dict[str, str] = field(default_factory=default_base_key_bindings)
+    layout: str = "qwerty"
+    # An explicit complete mapping overrides the layout preset.
+    key_bindings: dict[str, str] | None = None
     linear_speeds: tuple[float, ...] = (0.1, 0.2, 0.3)
     angular_speeds: tuple[float, ...] = (30.0, 60.0, 90.0)
     _speed_index: int = field(default=0, init=False, repr=False)
     _pressed: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        preset = default_base_key_bindings(self.layout)
+        if self.key_bindings is None:
+            self.key_bindings = preset
         missing = default_base_key_bindings().keys() - self.key_bindings.keys()
         if missing:
             raise ValueError(f"Missing keyboard bindings: {sorted(missing)}")
@@ -65,6 +72,7 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
         newly_pressed = pressed - self._pressed
         self._pressed = pressed
         keys = self.key_bindings
+        assert keys is not None
         change = int(keys["speed_up"] in newly_pressed) - int(keys["speed_down"] in newly_pressed)
         self._speed_index = max(0, min(self._speed_index + change, len(self.linear_speeds) - 1))
         xy = self.linear_speeds[self._speed_index]
@@ -82,7 +90,8 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "key_bindings": dict(self.key_bindings),
+            "layout": self.layout,
+            "key_bindings": dict(self.key_bindings) if self.key_bindings is not None else None,
             "linear_speeds": self.linear_speeds,
             "angular_speeds": self.angular_speeds,
         }

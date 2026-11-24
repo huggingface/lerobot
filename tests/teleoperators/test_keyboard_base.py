@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field, replace
+
+import draccus
 import pytest
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
@@ -61,7 +64,7 @@ def test_speed_changes_once_per_press_is_bounded_and_resets():
     assert step.action({"w": None})["x.vel"] == 0.1
 
 
-@pytest.mark.parametrize("kwargs", [{"angular_speeds": (1.0,)}, {"key_bindings": {}}])
+@pytest.mark.parametrize("kwargs", [{"angular_speeds": (1.0,)}, {"key_bindings": {}}, {"layout": "unknown"}])
 def test_invalid_mapping_config_is_rejected(kwargs):
     with pytest.raises(ValueError):
         KeyboardToBaseActionProcessorStep(**kwargs)
@@ -78,7 +81,9 @@ def test_holding_latches_positions_until_reset():
 
 def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
     pipeline = make_pipeline(
-        KeyboardToBaseActionProcessorStep(key_bindings={**default_base_key_bindings(), "forward": "i"}),
+        KeyboardToBaseActionProcessorStep(
+            layout="azerty", key_bindings={**default_base_key_bindings("azerty"), "forward": "i"}
+        ),
         HoldUncommandedJointsProcessorStep(("arm_joint.pos", "gripper.pos")),
     )
     feature = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
@@ -101,3 +106,22 @@ def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
     sample = ({"i": None, "arm_joint.pos": 4.0}, {"gripper.pos": 8.0})
     expected = {"arm_joint.pos": 4.0, "x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "gripper.pos": 8.0}
     assert restored(sample) == pipeline(sample) == expected
+
+
+@pytest.mark.parametrize("layout,keys", [("qwerty", "waz"), ("azerty", "zqw"), ("qwertz", "way")])
+def test_layout_cli_mapping_and_session_copy(layout, keys):
+    @dataclass
+    class Config:
+        base_mapping: KeyboardToBaseActionProcessorStep = field(
+            default_factory=KeyboardToBaseActionProcessorStep
+        )
+
+    config = draccus.parse(Config, args=[f"--base_mapping.layout={layout}"])
+    mapping = replace(config.base_mapping)
+    action = mapping.action({**dict.fromkeys(keys), "arm_joint.pos": 12.0})
+    assert action == {"x.vel": 0.1, "y.vel": 0.1, "theta.vel": 30.0, "arm_joint.pos": 12.0}
+    assert KeyboardToBaseActionProcessorStep(**mapping.get_config()).action(dict.fromkeys(keys)) == {
+        "x.vel": 0.1,
+        "y.vel": 0.1,
+        "theta.vel": 30.0,
+    }
