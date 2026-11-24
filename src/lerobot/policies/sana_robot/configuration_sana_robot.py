@@ -2,13 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
-from dataclasses import dataclass, field, replace
-from pathlib import Path
+from dataclasses import dataclass, field
 
 import torch
-from huggingface_hub import hf_hub_download, list_repo_files
-from huggingface_hub.errors import EntryNotFoundError
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig
@@ -24,8 +20,8 @@ from .sana_robot_core.video import RESIZE_CROP, RESIZE_STRETCH, VAE_SPATIAL_STRI
 class SanaRobotConfig(PreTrainedConfig):
     """Configuration of SANA-Robot-AR, for inference and evaluation.
 
-    The defaults are those of the LIBERO checkpoint. A checkpoint stores what its training dataset fixed: the
-    cameras, the robot slots, the prompt fields and the control frequency.
+    The defaults are those of the LIBERO checkpoint. A checkpoint's config stores what its training dataset
+    fixed: the cameras, the robot slots, the prompt fields and the control frequency.
 
     Args:
         camera_keys (`list[str]`, *optional*):
@@ -92,14 +88,6 @@ class SanaRobotConfig(PreTrainedConfig):
             Where the views sit on the spatial rotary positions: `"2x2"` or `"t_shape"`.
         sliding_window_chunks (`int`, *optional*, defaults to `1`):
             How many past chunks' clean latents the softmax layers read besides the first frame.
-        checkpoint (`str`, *optional*):
-            Hub repository or folder of a released SANA-Robot checkpoint, e.g.
-            `Efficient-Large-Model/SANA-Robot-AR-LIBERO`: its weights file (`.pth`) and, when it is finetuned on
-            a dataset, `meta.json` and `normalization.json`. A new policy loads the weights; `meta.json` sets
-            `view_slots`, `view_descriptions`, `resize`, `embodiment`, `action_mode`, `state_slots`,
-            `action_slots` and `fps`; `normalization.json` gives the processors their statistics.
-        checkpoint_revision (`str`, *optional*):
-            The Hub commit the released checkpoint is downloaded from.
         vae_path (`str`, *optional*, defaults to `"Efficient-Large-Model/LTX-2.3-Diffusers"`):
             Hub repository or folder of the LTX-2 video VAE in the diffusers layout, with a `vae` subfolder.
         vae_revision (`str`, *optional*, defaults to `"362acdf779d42e785fb26910c32254e9458e78c2"`):
@@ -153,9 +141,6 @@ class SanaRobotConfig(PreTrainedConfig):
     spatial_layout: str = SPATIAL_LAYOUT_2X2
     sliding_window_chunks: int = 1
 
-    checkpoint: str | None = None
-    checkpoint_revision: str | None = None
-
     vae_path: str | None = "Efficient-Large-Model/LTX-2.3-Diffusers"
     vae_revision: str | None = "362acdf779d42e785fb26910c32254e9458e78c2"
     text_encoder_path: str = "google/gemma-2-2b-it"
@@ -172,18 +157,6 @@ class SanaRobotConfig(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        meta_file = self.checkpoint_file("meta.json")
-        if meta_file is not None:
-            # The description of the dataset the checkpoint was finetuned on.
-            meta = json.loads(meta_file.read_text())
-            self.view_slots = [int(view["slot"]) for view in meta["views"]]
-            self.view_descriptions = [view["description"] for view in meta["views"]]
-            self.resize = meta.get("resize", RESIZE_STRETCH)
-            self.embodiment = meta["embodiment"]
-            self.action_mode = meta["action_mode"]
-            self.state_slots = [int(slot) for slot in meta["state_slots"]]
-            self.action_slots = [int(slot) for slot in meta["action_slots"]]
-            self.fps = float(meta["fps"])
         views = len(self.camera_keys)
         if not views or len(set(self.camera_keys)) != views:
             raise ValueError("camera_keys must be nonempty and unique, in checkpoint order")
@@ -212,8 +185,7 @@ class SanaRobotConfig(PreTrainedConfig):
             raise ValueError("n_action_steps must be a multiple of video_frame_stride, at most chunk_size")
         if self.num_inference_steps <= 0 or min(self.video_flow_shift, self.action_flow_shift) <= 0:
             raise ValueError("num_inference_steps and the flow shifts must be positive")
-        # The features follow the checkpoint's description when it has one.
-        if meta_file is not None or not self.input_features:
+        if not self.input_features:
             self.input_features = {
                 **{
                     key: PolicyFeature(FeatureType.VISUAL, (3, *size))
@@ -221,41 +193,9 @@ class SanaRobotConfig(PreTrainedConfig):
                 },
                 OBS_STATE: PolicyFeature(FeatureType.STATE, (len(self.state_slots),)),
             }
-        if meta_file is not None or not self.output_features:
+        if not self.output_features:
             self.output_features = {ACTION: PolicyFeature(FeatureType.ACTION, (len(self.action_slots),))}
         self.validate_features()
-
-    def checkpoint_file(self, name: str) -> Path | None:
-        """Return a file of the released checkpoint, or None when the checkpoint has no such file."""
-        if self.checkpoint is None:
-            return None
-        folder = Path(self.checkpoint)
-        if folder.is_dir():
-            return folder / name if (folder / name).is_file() else None
-        try:
-            return Path(hf_hub_download(self.checkpoint, name, revision=self.checkpoint_revision))
-        except EntryNotFoundError:
-            return None
-
-    def checkpoint_weights(self) -> Path:
-        """Return the weights file of the released checkpoint, its only `.pth` file."""
-        if self.checkpoint is None:
-            raise ValueError("policy.checkpoint is not set")
-        folder = Path(self.checkpoint)
-        if folder.is_dir():
-            names = sorted(file.name for file in folder.glob("*.pth"))
-        else:
-            files = list_repo_files(self.checkpoint, revision=self.checkpoint_revision)
-            names = sorted(name for name in files if name.endswith(".pth"))
-        weights = self.checkpoint_file(names[0]) if len(names) == 1 else None
-        if weights is None:
-            raise ValueError(f"{self.checkpoint} must hold exactly one .pth weights file, found {names}")
-        return weights
-
-    def _save_pretrained(self, save_directory: Path) -> None:
-        # A saved policy holds its own weights and statistics, so it no longer reads the released checkpoint.
-        saved = replace(self, checkpoint=None, checkpoint_revision=None)
-        super(SanaRobotConfig, saved)._save_pretrained(save_directory)
 
     @property
     def observation_delta_indices(self) -> None:

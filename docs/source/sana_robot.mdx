@@ -37,22 +37,21 @@ pip install -e ".[sana_robot]"
 
 ## Checkpoints
 
-LeRobot loads the released SANA-Robot checkpoints as they are, named by `policy.checkpoint`:
+| Checkpoint                                                                                                    | Trained on                    | Processors                   |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------- | ---------------------------- |
+| [SANA-Robot-AR-LIBERO-LeRobot](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-LIBERO-LeRobot)     | the four LIBERO suites, 20 Hz | the checkpoint's statistics  |
+| [SANA-Robot-AR-Pretrain-LeRobot](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-Pretrain-LeRobot) | the pretraining mix           | no statistics (weights only) |
 
-| Checkpoint                                                                                    | Trained on                    | Files                                      |
-| --------------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------ |
-| [SANA-Robot-AR-LIBERO](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-LIBERO)     | the four LIBERO suites, 20 Hz | weights, `meta.json`, `normalization.json` |
-| [SANA-Robot-AR-Pretrain](https://huggingface.co/Efficient-Large-Model/SANA-Robot-AR-Pretrain) | the pretraining mix           | weights                                    |
+They are the released SANA-Robot checkpoints in the LeRobot format (`config.json`, safetensors weights and the
+processors) and load with `--policy.path`. The weights are those of the released files, in FP32; the policy runs
+them in BF16 by default (`policy.dtype`).
 
-- The weights (a `.pth` file) are loaded when the policy is built.
-- `meta.json` describes the dataset the checkpoint was finetuned on and sets the config's `view_slots`,
-  `view_descriptions`, `resize`, `embodiment`, `action_mode`, `state_slots`, `action_slots` and `fps`.
-- `normalization.json` gives the pre/post-processors the statistics of the state and of the actions.
-
-The released files do not hold the camera keys, the view sizes, the spatial layout or the sampling settings: the
-config's defaults are those of the LIBERO checkpoint. The pretrained checkpoint holds weights only, so every robot
-field of the config is yours to set. `save_pretrained` writes a LeRobot checkpoint (`config.json`, safetensors
-weights and the processors), which loads with `--policy.path` and no longer reads the released files.
+[`examples/sana_robot/convert_checkpoint.py`](https://github.com/huggingface/lerobot/blob/main/examples/sana_robot/convert_checkpoint.py)
+converts another released checkpoint (a `.pth` weights file, with `meta.json` and `normalization.json` when it
+is finetuned on a dataset): `meta.json` gives the config's `view_slots`, `view_descriptions`, `resize`,
+`embodiment`, `action_mode`, `state_slots`, `action_slots` and `fps`, and `normalization.json` the statistics of
+the processors. The released files do not hold the camera keys, the view sizes, the spatial layout or the
+sampling settings, which the script takes as flags.
 
 The two frozen encoders are downloaded when the first action is requested:
 
@@ -73,9 +72,9 @@ the state and the actions fill. `observation.state` and `action` hold those slot
 training data; the processors normalize them with the checkpoint's statistics and resize the camera frames as the
 training frames were resized.
 
-The LIBERO checkpoint reads the joint angles, the pose of the flange in the arm's base frame (position and 6D
-rotation) and the gripper closedness (17 values), and predicts the target flange pose and the gripper closedness
-(10 values). With a LIBERO environment the conversion from and to LIBERO's own state and commands is added
+The LIBERO checkpoint reads the joint positions, the pose of the flange in the frame of the robot base (position
+and 6D rotation) and the gripper closedness (17 values), and predicts the target flange pose and the gripper
+closedness (10 values). With a LIBERO environment the conversion from and to LIBERO's own state and commands is added
 automatically (see [Evaluation](#evaluation)).
 
 ## Inference
@@ -84,8 +83,9 @@ automatically (see [Evaluation](#evaluation)).
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.sana_robot.modeling_sana_robot import SanaRobotPolicy
 
-policy = SanaRobotPolicy.from_pretrained("Efficient-Large-Model/SANA-Robot-AR-LIBERO")
-preprocess, postprocess = make_pre_post_processors(policy.config)
+checkpoint = "Efficient-Large-Model/SANA-Robot-AR-LIBERO-LeRobot"
+policy = SanaRobotPolicy.from_pretrained(checkpoint)
+preprocess, postprocess = make_pre_post_processors(policy.config, pretrained_path=checkpoint)
 policy.reset()
 # observation holds the current frame of every camera, observation.state and task.
 # Repeat on every control step.
@@ -111,14 +111,14 @@ other step about 2 ms; the policy and its encoders use 15 GB of GPU memory.
 
 ## Evaluation
 
-The LIBERO checkpoint is evaluated with LIBERO's absolute control mode and with the joint angles in the
-observation, from which the processors compute the flange pose the policy reads:
+The LIBERO checkpoint is evaluated with LIBERO's absolute control mode and with the joint positions and the pose
+of the robot base in the observation (`--env.obs_type=pixels_agent_pos_joints`), which the processors need for
+the state the policy reads:
 
 ```bash
 pip install -e ".[sana_robot,libero]"
 
-lerobot-eval --policy.type=sana_robot \
-  --policy.checkpoint=Efficient-Large-Model/SANA-Robot-AR-LIBERO \
+lerobot-eval --policy.path=Efficient-Large-Model/SANA-Robot-AR-LIBERO-LeRobot \
   --policy.device=cuda \
   --env.type=libero --env.task=libero_spatial \
   --env.obs_type=pixels_agent_pos_joints --env.control_mode=absolute \
@@ -158,8 +158,7 @@ once, from its first initial state.
 Reproduce, per suite:
 
 ```bash
-lerobot-eval --policy.type=sana_robot \
-  --policy.checkpoint=Efficient-Large-Model/SANA-Robot-AR-LIBERO \
+lerobot-eval --policy.path=Efficient-Large-Model/SANA-Robot-AR-LIBERO-LeRobot \
   --policy.device=cuda \
   --env.type=libero_plus --env.task=libero_spatial \
   --env.obs_type=pixels_agent_pos_joints --env.control_mode=absolute \
@@ -181,7 +180,7 @@ On four LIBERO training episodes of six chunks each (H100, LeRobot's locked depe
 
 - The vendored model code gives the same actions, video latents and text embeddings as the SANA-Robot package,
   bit for bit, in BF16 and in FP32.
-- Through `from_pretrained` on the released checkpoint, the processors and `select_action`, the actions are the
+- Through `from_pretrained` on the LeRobot checkpoint, the processors and `select_action`, the actions are the
   same bit for bit in BF16 and within 1e-6 in FP32.
 
 The original code calls flash-attn for the text cross-attention; LeRobot runs the same attention with

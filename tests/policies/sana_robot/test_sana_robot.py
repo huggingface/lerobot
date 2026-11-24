@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Offline checks of SANA-Robot with a reduced policy, video VAE and text encoder."""
 
+import importlib.util
 import json
-import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -25,26 +26,23 @@ from lerobot.policies import make_pre_post_processors
 from lerobot.policies.sana_robot.configuration_sana_robot import SanaRobotConfig
 from lerobot.policies.sana_robot.modeling_sana_robot import SanaRobotPolicy
 from lerobot.policies.sana_robot.processor_sana_robot import (
+    LIBERO_BASE_POS,
+    LIBERO_BASE_QUAT,
     LIBERO_JOINT_POS,
     SanaRobotLiberoAction,
     SanaRobotLiberoInstruction,
     SanaRobotLiberoObservation,
     SanaRobotObservations,
+    panda_grip_site_pose,
+    panda_hand_pose,
     pose_matrix,
 )
 from lerobot.policies.sana_robot.sana_robot_core.causal_vae import LTX2VideoEncoder3d
-from lerobot.policies.sana_robot.sana_robot_core.kinematics import flange_poses
-from lerobot.policies.sana_robot.sana_robot_core.libero import (
-    FRANKA_FLANGE,
-    FRANKA_FLANGE_AXES,
-    FRANKA_JOINTS,
-    grip_site_pose,
-    hand_pose,
-)
 from lerobot.policies.sana_robot.sana_robot_core.robot80 import rotation_to_rot6d
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.rotation import Rotation
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 LATENT_CHANNELS = 8
 TEXT_WIDTH = 32
 VAE_CONFIG = {
@@ -110,8 +108,9 @@ def encoders(tmp_path, monkeypatch):
     return {"vae_path": str(tmp_path / "ltx"), "text_encoder_path": str(text)}
 
 
-def make_config(encoders, **overrides):
-    arguments = {
+def config_fields(encoders, **overrides):
+    """The fields of a reduced policy on the reduced encoders."""
+    return {
         "device": "cpu",
         "dtype": torch.float32,
         "push_to_hub": False,
@@ -127,7 +126,10 @@ def make_config(encoders, **overrides):
         **encoders,
         **overrides,
     }
-    return SanaRobotConfig(**arguments)
+
+
+def make_config(encoders, **overrides):
+    return SanaRobotConfig(**config_fields(encoders, **overrides))
 
 
 def make_policy(config):
@@ -337,23 +339,24 @@ def test_state_and_actions_use_the_checkpoint_statistics(encoders):
     )
 
 
-def libero_observation(joints, fingers, world_from_base):
-    """The observation LIBERO gives for joint angles [7], finger positions [2] and an arm base at ``world_from_base``."""
-    flange = flange_poses(FRANKA_JOINTS, joints[None], FRANKA_FLANGE, FRANKA_FLANGE_AXES)[0]
-    site = world_from_base @ flange @ grip_site_pose()
-    hand = world_from_base @ flange @ hand_pose()
+def libero_observation(joints, flange, fingers, world_from_base):
+    """The observation LIBERO gives for joint positions [7], a flange pose [4, 4] in the frame of the robot base,
+    finger positions [2] and a base at ``world_from_base``."""
+    site = world_from_base @ flange @ panda_grip_site_pose()
+    hand = world_from_base @ flange @ panda_hand_pose()
     state = np.concatenate((site[:3, 3], Rotation.from_matrix(hand[:3, :3]).as_rotvec(), fingers))
-    return (
-        {
-            OBS_STATE: torch.from_numpy(state).float()[None],
-            LIBERO_JOINT_POS: torch.from_numpy(joints).float()[None],
-        },
-        flange,
-        site,
-    )
+    batch = {
+        OBS_STATE: torch.from_numpy(state).float()[None],
+        LIBERO_JOINT_POS: torch.from_numpy(joints).float()[None],
+        LIBERO_BASE_POS: torch.from_numpy(world_from_base[:3, 3]).float()[None],
+        LIBERO_BASE_QUAT: torch.from_numpy(Rotation.from_matrix(world_from_base[:3, :3]).as_quat()).float()[
+            None
+        ],
+    }
+    return batch, site
 
 
-def test_libero_processors_move_between_the_world_and_the_arm_base():
+def test_libero_processors_move_between_the_world_and_the_robot_base():
     (pre, post) = make_env_pre_post_processors(
         LiberoEnvConfig(control_mode="absolute"), SanaRobotConfig(device="cpu")
     )
@@ -363,16 +366,19 @@ def test_libero_processors_move_between_the_world_and_the_arm_base():
         np.array([-0.66, 0.1, 0.912]), Rotation.from_rotvec(np.array([0.0, 0.0, 0.3])).as_matrix()
     )
     joints = np.array([0.1, -0.3, 0.05, -2.2, 0.02, 2.0, 0.7])
-    (batch, flange, site) = libero_observation(joints, np.array([0.03, -0.03]), world_from_base)
+    flange = pose_matrix(
+        np.array([0.45, -0.05, 0.3]), Rotation.from_rotvec(np.array([2.9, 0.4, -0.2])).as_matrix()
+    )
+    (batch, site) = libero_observation(joints, flange, np.array([0.03, -0.03]), world_from_base)
     result = observe.observation(batch)
     state = result[OBS_STATE]
     assert state.shape == (1, 17)
-    assert LIBERO_JOINT_POS not in result
+    assert not {LIBERO_JOINT_POS, LIBERO_BASE_POS, LIBERO_BASE_QUAT} & set(result)
     assert np.allclose(state[0, :7].numpy(), joints, atol=1e-6)
     assert np.allclose(state[0, 7:10].numpy(), flange[:3, 3], atol=1e-6)
     assert np.allclose(state[0, 10:16].numpy(), rotation_to_rot6d(flange[:3, :3]), atol=1e-6)
     assert np.isclose(state[0, 16].item(), 0.25, atol=1e-6)
-    assert np.allclose(observe.frames.world_from_base, world_from_base, atol=1e-5)
+    assert np.allclose(observe.frames.world_from_base, world_from_base, atol=1e-6)
 
     # The flange pose of the observation, sent back as an action, is the grip site's pose in the world.
     action = torch.cat((state[0, 7:16], torch.tensor([0.2])))[None]
@@ -382,7 +388,8 @@ def test_libero_processors_move_between_the_world_and_the_arm_base():
     assert command[6] == -1.0
     assert act.action(torch.cat((state[0, 7:16], torch.tensor([0.8])))[None])[0, 6] == 1.0
 
-    with pytest.raises(ValueError):
+    # Without the joint positions and the base pose of `--env.obs_type=pixels_agent_pos_joints`.
+    with pytest.raises(ValueError, match="pixels_agent_pos_joints"):
         observe.observation({OBS_STATE: torch.zeros(1, 8)})
     with pytest.raises(ValueError):
         SanaRobotLiberoAction().action(action)
@@ -408,6 +415,15 @@ def test_libero_plus_tags_leave_the_instruction(instruction, expected):
     assert isinstance(pre.steps[1], SanaRobotLiberoInstruction)
     assert pre.steps[1].complementary_data({"task": [instruction]})["task"] == [expected]
     assert pre.steps[1].complementary_data({"task": instruction})["task"] == expected
+
+
+def load_converter():
+    """`examples/sana_robot/convert_checkpoint.py` as a module."""
+    path = REPO_ROOT / "examples" / "sana_robot" / "convert_checkpoint.py"
+    spec = importlib.util.spec_from_file_location("sana_robot_convert_checkpoint", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -439,9 +455,16 @@ def released(tmp_path, encoders):
     return folder, policy, meta, normalization
 
 
-def test_a_released_checkpoint_gives_the_weights_the_robot_fields_and_the_statistics(encoders, released):
+def test_a_converted_checkpoint_has_the_weights_the_robot_fields_and_the_statistics(
+    encoders, released, tmp_path
+):
     (folder, source, meta, normalization) = released
-    config = make_config(encoders, checkpoint=str(folder))
+    out = tmp_path / "converted"
+    load_converter().convert(folder, out, **config_fields(encoders))
+
+    # The LeRobot directory stands alone: `config.json`, the weights and the two processors.
+    policy = SanaRobotPolicy.from_pretrained(out)
+    config = policy.config
     assert (config.fps, config.embodiment, config.action_mode, config.resize) == (
         10.0,
         "test robot",
@@ -451,16 +474,10 @@ def test_a_released_checkpoint_gives_the_weights_the_robot_fields_and_the_statis
     assert (config.view_slots, config.view_descriptions) == ([0, 1], ["first camera", "second camera"])
     assert (config.state_slots, config.action_slots) == (meta["state_slots"], meta["action_slots"])
     assert config.robot_state_feature.shape == (8,) and config.action_feature.shape == (7,)
+    for name, value in source.model.state_dict().items():
+        assert torch.equal(policy.model.state_dict()[name], value), name
 
-    for policy in (
-        SanaRobotPolicy(config),
-        SanaRobotPolicy.from_pretrained(folder, config=make_config(encoders)),
-    ):
-        assert policy.config.checkpoint == str(folder)
-        for name, value in source.model.state_dict().items():
-            assert torch.equal(policy.model.state_dict()[name], value), name
-
-    (preprocess, postprocess) = make_pre_post_processors(config)
+    (preprocess, postprocess) = make_pre_post_processors(config, pretrained_path=str(out))
     batch = observation(config, 0)
     state = batch[OBS_STATE].clone()
     (center, scale) = (torch.tensor(normalization["center"][:8]), torch.tensor(normalization["scale"][:8]))
@@ -473,39 +490,24 @@ def test_a_released_checkpoint_gives_the_weights_the_robot_fields_and_the_statis
     assert actions.shape == (18, 7) and torch.isfinite(actions).all()
 
 
-def test_a_saved_policy_no_longer_reads_the_released_checkpoint(encoders, released, tmp_path):
-    (folder, _source, _meta, _normalization) = released
-    config = make_config(encoders, checkpoint=str(folder))
-    policy = SanaRobotPolicy(config)
-    (preprocess, postprocess) = make_pre_post_processors(config)
-    expected = rollout(policy, preprocess, postprocess, 18)
-    policy.save_pretrained(tmp_path / "saved")
-    preprocess.save_pretrained(tmp_path / "saved")
-    postprocess.save_pretrained(tmp_path / "saved")
-    shutil.rmtree(folder)
-
-    loaded = SanaRobotPolicy.from_pretrained(tmp_path / "saved")
-    assert loaded.config.checkpoint is None
-    assert loaded.config.state_slots == config.state_slots and loaded.config.fps == 10.0
-    (preprocess, postprocess) = make_pre_post_processors(
-        loaded.config, pretrained_path=str(tmp_path / "saved")
-    )
-    assert torch.equal(expected, rollout(loaded, preprocess, postprocess, 18))
-
-
-def test_a_pretrained_checkpoint_holds_weights_only(encoders, released):
+def test_a_converted_pretrained_checkpoint_holds_weights_only(encoders, released, tmp_path):
     (folder, source, _meta, _normalization) = released
     (folder / "meta.json").unlink()
     (folder / "normalization.json").unlink()
+    converter = load_converter()
+    out = tmp_path / "converted"
+    converter.convert(folder, out, **config_fields(encoders))
+
+    policy = SanaRobotPolicy.from_pretrained(out)
     defaults = make_config(encoders)
-    policy = SanaRobotPolicy.from_pretrained(folder, config=defaults)
     assert policy.config.state_slots == defaults.state_slots and policy.config.fps == defaults.fps
     assert torch.equal(
         policy.model.state_dict()["blocks.0.attn.proj.weight"],
         source.model.state_dict()["blocks.0.attn.proj.weight"],
     )
-    (preprocess, _postprocess) = make_pre_post_processors(policy.config)
+    (preprocess, _postprocess) = make_pre_post_processors(policy.config, pretrained_path=str(out))
     assert not preprocess.steps[3].stats
+
     (folder / "second.pth").write_bytes(b"")
-    with pytest.raises(ValueError):
-        SanaRobotPolicy.from_pretrained(folder, config=defaults)
+    with pytest.raises(ValueError, match="exactly one"):
+        converter.convert(folder, tmp_path / "again", **config_fields(encoders))

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
+import math
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -26,23 +26,31 @@ from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.rotation import Rotation
 
 from .configuration_sana_robot import SanaRobotConfig
-from .sana_robot_core.kinematics import flange_poses
-from .sana_robot_core.libero import (
-    FRANKA_FLANGE,
-    FRANKA_FLANGE_AXES,
-    FRANKA_JOINTS,
-    grip_site_pose,
-    hand_pose,
-    state_rows,
+from .sana_robot_core.robot80 import (
+    ROBOT_FIELDS,
+    field_slots,
+    gripper_closedness,
+    rot6d_to_rotation,
+    rotation_to_rot6d,
 )
-from .sana_robot_core.robot80 import ROBOT_FIELDS, field_slots, rot6d_to_rotation
 from .sana_robot_core.video import byte_frames, frames_to_model_range, resize_frames
 
 FeatureMap = dict[PipelineFeatureType, dict[str, PolicyFeature]]
 
 LIBERO_JOINT_POS = f"{OBS_STR}.joint_pos"
+LIBERO_BASE_POS = f"{OBS_STR}.base_pos"
+LIBERO_BASE_QUAT = f"{OBS_STR}.base_quat"
 LIBERO_STATE_FIELDS = ("right_joints", "right_eef_position", "right_eef_rotation", "right_gripper")
 LIBERO_ACTION_FIELDS = ("right_eef_position", "right_eef_rotation", "right_gripper")
+# The distance between the two fingers of LIBERO's gripper, in metres, when it is open and when it is closed.
+LIBERO_GRIPPER_OPEN, LIBERO_GRIPPER_CLOSED = 0.08, 0.0
+# The simulated Panda of LIBERO. The checkpoint's poses are those of the flange: the frame of the last joint,
+# 0.107 m along its axis, with the axes below. The hand body sits 0.1065 m along that axis and the grip site
+# 0.097 m after the hand.
+PANDA_FLANGE_HEIGHT = 0.107
+PANDA_FLANGE_AXES = np.array([[0.0, -1.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]])
+PANDA_HAND_HEIGHT, PANDA_HAND_QUATERNION = 0.1065, (0.0, 0.0, -0.383, 0.924)
+PANDA_GRIP_SITE_HEIGHT, PANDA_GRIP_SITE_TURN = 0.097, -math.pi / 2
 # What LIBERO-plus appends to the instruction of a task variant, from the variant's file name.
 LIBERO_PLUS_TAG = re.compile(r" (?:(?:view|initstate|table|tb|light|noise|add) [-+]?\d|(?:moved )?level ?\d)")
 
@@ -81,31 +89,12 @@ class SanaRobotObservations(ObservationProcessorStep):
         return features
 
 
-def checkpoint_stats(config: SanaRobotConfig) -> dict[str, dict[str, torch.Tensor]] | None:
-    """Return the statistics of `observation.state` and `action` from the `normalization.json` of the released
-    checkpoint: per slot of the robot row a center and a scale, 0 and 1 on the slots that are not normalized."""
-    file = config.checkpoint_file("normalization.json")
-    if file is None:
-        return None
-    normalization = json.loads(file.read_text())
-    (center, scale) = (torch.tensor(normalization["center"]), torch.tensor(normalization["scale"]))
-    normalized = torch.tensor(normalization["mask"])
-    stats = {}
-    for key, slots in ((OBS_STATE, config.state_slots), (ACTION, config.action_slots)):
-        stats[key] = {
-            "mean": torch.where(normalized[slots], center[slots], 0.0).float(),
-            "std": torch.where(normalized[slots], scale[slots], 1.0).float(),
-        }
-    return stats
-
-
 def make_sana_robot_pre_post_processors(
     config: SanaRobotConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Build the processors of SANA-Robot. ``dataset_stats`` holds, under ``mean`` and ``std``, the center and
-    scale of the robot slots of `observation.state` and of `action`; without it they are those of the released
-    checkpoint the config names."""
-    steps = make_default_policy_processor_steps(config, dataset_stats or checkpoint_stats(config))
+    scale of the robot slots of `observation.state` and of `action`."""
+    steps = make_default_policy_processor_steps(config, dataset_stats)
     pre = [
         steps.rename_observations,
         steps.add_batch_dim,
@@ -129,9 +118,29 @@ def pose_matrix(position: np.ndarray, rotation: np.ndarray) -> np.ndarray:
     return pose
 
 
+def panda_hand_pose() -> np.ndarray:
+    """Return the fixed [4, 4] pose of the hand of LIBERO's Panda, the body whose rotation LIBERO observes, in the
+    flange frame."""
+    hand = np.eye(4)
+    hand[:3, :3] = Rotation.from_quat(np.asarray(PANDA_HAND_QUATERNION)).as_matrix()
+    hand[2, 3] = PANDA_HAND_HEIGHT - PANDA_FLANGE_HEIGHT
+    axes = np.eye(4)
+    axes[:3, :3] = PANDA_FLANGE_AXES
+    return axes.T @ hand
+
+
+def panda_grip_site_pose() -> np.ndarray:
+    """Return the fixed [4, 4] pose of the grip site of LIBERO's Panda, the point LIBERO's controller moves, in
+    the flange frame."""
+    site = np.eye(4)
+    site[:3, :3] = Rotation.from_rotvec(np.array([0.0, 0.0, PANDA_GRIP_SITE_TURN])).as_matrix()
+    site[2, 3] = PANDA_GRIP_SITE_HEIGHT
+    return panda_hand_pose() @ site
+
+
 @dataclass
 class LiberoFrames:
-    """The pose [4, 4] of the arm's base in the world of the running LIBERO episode, which the observation step
+    """The pose [4, 4] of the robot base in the world of the running LIBERO episode, which the observation step
     writes and the action step reads."""
 
     world_from_base: np.ndarray | None = None
@@ -143,29 +152,39 @@ class SanaRobotLiberoObservation(ObservationProcessorStep):
     """Turn a LIBERO observation into the state of the SANA-Robot LIBERO checkpoint.
 
     LIBERO gives the position of the grip site and the rotation of the hand in the world, the two finger
-    positions and, with ``--env.obs_type=pixels_agent_pos_joints``, the joint angles. The checkpoint reads the
-    joint angles, the pose of the flange in the arm's base frame and the gripper closedness. The step also
-    recovers the pose of the arm's base in the world, which the scene of a task fixes, for the action step.
+    positions and, with ``--env.obs_type=pixels_agent_pos_joints``, the joint positions and the pose of the robot
+    base in the world. The checkpoint reads the joint positions, the pose of the flange in the frame of the base
+    and the gripper closedness.
     """
 
     frames: LiberoFrames = field(default_factory=LiberoFrames)
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
-        if LIBERO_JOINT_POS not in observation:
+        missing = [
+            key for key in (LIBERO_JOINT_POS, LIBERO_BASE_POS, LIBERO_BASE_QUAT) if key not in observation
+        ]
+        if missing:
             raise ValueError(
-                "SANA-Robot needs the joint angles of LIBERO: use --env.obs_type=pixels_agent_pos_joints"
+                f"SANA-Robot needs {missing} of LIBERO: use --env.obs_type=pixels_agent_pos_joints"
             )
         state = observation[OBS_STATE]
         if state.ndim != 2 or tuple(state.shape) != (1, 8):
             raise ValueError("SANA-Robot runs one LIBERO environment at a time: use --eval.batch_size=1")
         values = state[0].double().cpu().numpy()
-        joints = observation.pop(LIBERO_JOINT_POS).double().cpu().numpy().reshape(1, 7)
-        rows = state_rows(joints, values[None, 6:8])
-        flange = flange_poses(FRANKA_JOINTS, joints, FRANKA_FLANGE, FRANKA_FLANGE_AXES)[0]
-        rotation = Rotation.from_rotvec(values[3:6]).as_matrix() @ (flange @ hand_pose())[:3, :3].T
-        position = values[:3] - rotation @ (flange @ grip_site_pose())[:3, 3]
-        self.frames.world_from_base = pose_matrix(position, rotation)
-        observation[OBS_STATE] = torch.from_numpy(rows[:, robot_slots(LIBERO_STATE_FIELDS)]).to(state)
+        joints = observation.pop(LIBERO_JOINT_POS)[0].double().cpu().numpy()
+        base_position = observation.pop(LIBERO_BASE_POS)[0].double().cpu().numpy()
+        base_rotation = Rotation.from_quat(
+            observation.pop(LIBERO_BASE_QUAT)[0].double().cpu().numpy()
+        ).as_matrix()
+        self.frames.world_from_base = pose_matrix(base_position, base_rotation)
+        # The observed rotation is the hand's and the observed position the grip site's.
+        rotation = (
+            base_rotation.T @ Rotation.from_rotvec(values[3:6]).as_matrix() @ panda_hand_pose()[:3, :3].T
+        )
+        position = base_rotation.T @ (values[:3] - base_position) - rotation @ panda_grip_site_pose()[:3, 3]
+        closedness = gripper_closedness(values[6] - values[7], LIBERO_GRIPPER_OPEN, LIBERO_GRIPPER_CLOSED)
+        row = np.concatenate((joints, position, rotation_to_rot6d(rotation), [closedness]))
+        observation[OBS_STATE] = torch.from_numpy(row.astype(np.float32))[None].to(state)
         return observation
 
     def get_config(self) -> dict[str, Any]:
@@ -174,7 +193,8 @@ class SanaRobotLiberoObservation(ObservationProcessorStep):
     def transform_features(self, features: FeatureMap) -> FeatureMap:
         features = {kind: dict(values) for kind, values in features.items()}
         observations = features.get(PipelineFeatureType.OBSERVATION, {})
-        observations.pop(LIBERO_JOINT_POS, None)
+        for key in (LIBERO_JOINT_POS, LIBERO_BASE_POS, LIBERO_BASE_QUAT):
+            observations.pop(key, None)
         if OBS_STATE in observations:
             width = len(robot_slots(LIBERO_STATE_FIELDS))
             observations[OBS_STATE] = replace(observations[OBS_STATE], shape=(width,))
@@ -215,8 +235,8 @@ def libero_instruction(instruction: str) -> str:
 class SanaRobotLiberoAction(PolicyActionProcessorStep):
     """Turn an action of the SANA-Robot LIBERO checkpoint into the command of LIBERO's absolute control mode.
 
-    The action is the target pose of the flange in the arm's base frame, as a position and a 6D rotation, and the
-    gripper closedness. The command is the position and the rotation vector of the grip site in the world, and
+    The action is the target pose of the flange in the frame of the robot base, as a position and a 6D rotation,
+    and the gripper closedness. The command is the position and the rotation vector of the grip site in the world, and
     -1 to open the gripper or 1 to close it. Run LIBERO with ``--env.control_mode=absolute``.
     """
 
@@ -236,7 +256,7 @@ class SanaRobotLiberoAction(PolicyActionProcessorStep):
             row[ROBOT_FIELDS["right_eef_position"]],
             rot6d_to_rotation(row[ROBOT_FIELDS["right_eef_rotation"]]),
         )
-        goal = self.frames.world_from_base @ goal @ grip_site_pose()
+        goal = self.frames.world_from_base @ goal @ panda_grip_site_pose()
         closedness = float(np.clip(row[ROBOT_FIELDS["right_gripper"]][0], 0.0, 1.0))
         command = np.concatenate(
             (

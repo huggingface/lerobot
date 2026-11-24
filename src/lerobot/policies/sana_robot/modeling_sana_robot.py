@@ -7,15 +7,13 @@ The model code is vendored in ``sana_robot_core``. This module drives it from Le
 """
 
 from collections import deque
-from dataclasses import replace
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 import torch
-from huggingface_hub import list_repo_files, snapshot_download
+from huggingface_hub import snapshot_download
 from torch import Tensor
 
-from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
@@ -39,16 +37,6 @@ def local_folder(path: str, revision: str | None, patterns: list[str] | None = N
     if Path(path).is_dir():
         return path
     return snapshot_download(path, revision=revision, allow_patterns=patterns)
-
-
-def is_released_checkpoint(path: str, revision: str | None) -> bool:
-    """Return whether a folder or a Hub repository is a released SANA-Robot checkpoint: weights in a `.pth`
-    file and no LeRobot `config.json`."""
-    if Path(path).is_dir():
-        names = [file.name for file in Path(path).iterdir()]
-    else:
-        names = list_repo_files(path, revision=revision)
-    return "config.json" not in names and any(name.endswith(".pth") for name in names)
 
 
 class SanaRobotPolicy(PreTrainedPolicy):
@@ -91,82 +79,9 @@ class SanaRobotPolicy(PreTrainedPolicy):
         self.model.requires_grad_(False)
         if config.dtype is not None:
             self.to(dtype=config.dtype)
-        # A LeRobot checkpoint (`pretrained_path`) brings its own weights.
-        if config.checkpoint is not None and config.pretrained_path is None:
-            state = torch.load(config.checkpoint_weights(), map_location="cpu", weights_only=True, mmap=True)
-            for key in ("state_dict_ema", "state_dict"):
-                state = state.get(key, state)
-            self.model.load_state_dict(state, strict=True)
         self._encoders: dict[str, Any] = {}
         self._text_cache: dict[str, tuple[Tensor, Tensor]] = {}
         self.reset()
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        force_download: bool = False,
-        resume_download: bool | None = None,
-        proxies: dict | None = None,
-        token: str | bool | None = None,
-        cache_dir: str | Path | None = None,
-        local_files_only: bool = False,
-        revision: str | None = None,
-        trust_remote_code: bool | None = None,
-        strict: bool = False,
-        **kwargs: Any,
-    ) -> Self:
-        """Load a released SANA-Robot checkpoint (a `.pth` weights file, with `meta.json` and
-        `normalization.json` when it is finetuned on a dataset) or a LeRobot checkpoint.
-
-        A released checkpoint takes the defaults of `SanaRobotConfig` for what its files do not say: the
-        camera keys, the view sizes, the spatial layout and the sampling settings. Pass `config` to set them.
-        """
-        if is_released_checkpoint(str(pretrained_name_or_path), revision):
-            if config is None:
-                config = SanaRobotConfig()
-            if not isinstance(config, SanaRobotConfig):
-                raise TypeError(f"Expected a SanaRobotConfig, got {type(config).__name__}")
-            config = replace(
-                config,
-                checkpoint=str(pretrained_name_or_path),
-                checkpoint_revision=revision,
-                pretrained_path=None,
-            )
-            policy = cls(config, **kwargs)
-            policy.to(config.device)
-            policy.eval()
-            return policy
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                trust_remote_code=bool(trust_remote_code),
-            )
-        if config.pretrained_path is None:
-            config = replace(config, pretrained_path=Path(pretrained_name_or_path))
-        return super().from_pretrained(
-            pretrained_name_or_path,
-            config=config,
-            force_download=force_download,
-            resume_download=resume_download,
-            proxies=proxies,
-            token=token,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            strict=strict,
-            **kwargs,
-        )
 
     def get_optim_params(self) -> list[torch.nn.Parameter]:
         return list(self.parameters())
