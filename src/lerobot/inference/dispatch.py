@@ -33,12 +33,8 @@ from contextlib import nullcontext
 
 import torch
 
-from lerobot.lerobot_types import PolicyPrediction
-from lerobot.processor import (
-    policy_output_to_transition,
-    transition_to_policy_action,
-    transition_to_prediction,
-)
+from lerobot.lerobot_types import PolicyPrediction, TransitionKey
+from lerobot.processor import create_transition
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 
@@ -82,7 +78,7 @@ def next_interpolated_action(
     ``timer`` when one is given, and the pull is timed as its ``infer`` step.
 
     The engine may return the action with the policy's prediction (an ``EnvTransition``,
-    see ``PreTrainedPolicy.select_action``); only the action is interpolated, and a
+    see ``PreTrainedPolicy.predict_action_chunk``); only the action is interpolated, and a
     non-empty prediction is handed to ``on_prediction`` on the tick that pulled it.
     """
     if not dispatch_permitted(engine, interpolator, hold):
@@ -92,9 +88,12 @@ def next_interpolated_action(
             frame = obs_frame() if callable(obs_frame) else obs_frame
             result = engine.get_action(frame)
         if result is not None:
-            step = policy_output_to_transition(result)
-            interpolator.add(transition_to_policy_action(step).cpu())
-            if on_prediction is not None and (prediction := transition_to_prediction(step)):
+            step = result if isinstance(result, dict) else create_transition(action=result)
+            action = step[TransitionKey.ACTION]
+            if not isinstance(action, torch.Tensor):
+                raise TypeError(f"Inference engines return action tensors, got {type(action).__name__}.")
+            interpolator.add(action.cpu())
+            if on_prediction is not None and (prediction := step.get(TransitionKey.PREDICTION)):
                 on_prediction(prediction)
     if not dispatch_permitted(engine, interpolator, hold):
         return None

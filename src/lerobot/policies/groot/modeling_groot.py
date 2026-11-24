@@ -26,10 +26,9 @@ import builtins
 import dataclasses
 import logging
 import os
-from collections import deque
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -38,11 +37,13 @@ from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import rtc_inputs
+from lerobot.utils.constants import ACTION, NOISE, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
-from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
+from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
     GROOT_N1_5,
@@ -84,7 +85,6 @@ class GrootPolicy(PreTrainedPolicy):
 
         # Initialize GR00T model using ported components
         self._groot_model = self._create_groot_model()
-        self._action_queue_steps = self._resolve_action_queue_steps()
         self._warned_native_relative_rtc_prefix_disabled = False
 
         self.reset()
@@ -151,10 +151,6 @@ class GrootPolicy(PreTrainedPolicy):
             {"params": decay_params},
             {"params": no_decay_params, "weight_decay": 0.0},
         ]
-
-    def reset(self):
-        """Reset policy state when environment resets."""
-        self._action_queue = deque([], maxlen=self._action_queue_steps)
 
     @classmethod
     def from_pretrained(
@@ -492,13 +488,7 @@ class GrootPolicy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
         Returns a tensor of shape (B, n_action_steps, action_dim).
@@ -509,6 +499,8 @@ class GrootPolicy(PreTrainedPolicy):
         `noise` is the starting sample of the flow-matching loop, shaped as the underlying
         model's (B, action_horizon, max_action_dim). When it is None, fresh noise is drawn.
         """
+        noise = batch.get(NOISE)
+        kwargs = rtc_inputs(batch)
         self.eval()
 
         # Preprocessing is handled by the processor pipeline, so we just filter the batch.
@@ -541,22 +533,4 @@ class GrootPolicy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        return actions
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Select single action from action queue."""
-        if getattr(self.config, "use_relative_actions", False):
-            raise NotImplementedError(
-                "GrootPolicy.select_action does not support relative-action policies because cached "
-                "relative chunk actions can be decoded against newer observation states. Use "
-                "predict_action_chunk and postprocess the full chunk before queuing actions, or use "
-                "the RTC/chunked rollout inference path."
-            )
-
-        self.eval()
-
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._action_queue.extend(actions[:, : self._action_queue_steps].transpose(0, 1))
-        return self._action_queue.popleft()
+        return PolicyOutput(action=actions)

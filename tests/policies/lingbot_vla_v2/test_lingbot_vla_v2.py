@@ -27,6 +27,7 @@ import torch
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config, SlotMapping
+from lerobot.processor import make_inference_pipeline
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from tests.utils import skip_if_package_missing
 
@@ -136,14 +137,13 @@ def _tiny_config(assets, device: str = "cpu", **kwargs) -> LingbotVLAV2Config:
     )
 
 
-def _select_action(policy, preprocessor, postprocessor, dim: int, device: str) -> torch.Tensor:
+def _predict_chunk(policy, preprocessor, postprocessor, dim: int, device: str) -> torch.Tensor:
     batch = _raw_batch(dim, device)
     batch.pop(ACTION)
-    policy.reset()
-    return postprocessor(policy.select_action(preprocessor(batch)))
+    return make_inference_pipeline(preprocessor, policy, postprocessor)(batch)[ACTION]
 
 
-def test_train_and_select_action(tiny_backbone):
+def test_train_and_predict_action_chunk(tiny_backbone):
     """7-D robot (arm 0-6, gripper 6-7, canonical ``end.position`` unmapped): train step + inference."""
     cfg = _tiny_config(tiny_backbone, **_slot_kwargs(arm=[[0, 6]], effector=[[6, 7]]))
     meta = _ds_meta(7)
@@ -155,8 +155,8 @@ def test_train_and_select_action(tiny_backbone):
     loss.backward()
     assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in policy.parameters())
 
-    action = _select_action(policy, preprocessor, postprocessor, 7, "cpu")
-    assert action.shape == (2, 7)
+    action = _predict_chunk(policy, preprocessor, postprocessor, 7, "cpu")
+    assert action.shape == (2, CHUNK, 7)
     assert torch.isfinite(action).all()
 
 
@@ -180,7 +180,7 @@ def test_align_query_tokens(tiny_backbone, monkeypatch):
     images, img_masks, tokens, masks, _, grid = policy._extract_model_inputs(preprocessor(_raw_batch(7)))
     prefix_len = policy.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1]
     assert prefix_len == plain.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1] + 8
-    assert _select_action(policy, preprocessor, postprocessor, 7, "cpu").shape == (2, 7)
+    assert _predict_chunk(policy, preprocessor, postprocessor, 7, "cpu").shape == (2, CHUNK, 7)
 
     class Teachers:  # the frozen teachers' target shapes: [B, num_backbone_tokens, dim_out]
         def __init__(self, params, device):
@@ -224,7 +224,7 @@ def test_slot_mapping_round_trip(tiny_backbone, arm, effector):
     # The gripper lands in the canonical effector slot (after 14 arm + 14 end-effector dims).
     effector_start = cfg.canonical_joints["arm.position"] + cfg.canonical_joints["end.position"]
     assert canonical[..., effector_start : effector_start + len(effector)].abs().sum() > 0
-    torch.testing.assert_close(postprocessor(canonical), raw[ACTION], atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(postprocessor({ACTION: canonical})[ACTION], raw[ACTION], atol=1e-5, rtol=1e-5)
 
     # An action dim the slots leave out can't be produced by the inverse map, so it is rejected up front.
     cfg.action_slots = _slots(ACTION, [[0, 5], *arm[1:]], effector)
@@ -239,7 +239,7 @@ def test_slot_mapping_round_trip(tiny_backbone, arm, effector):
         pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")),
     ],
 )
-def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
+def test_finetune_save_reload_predict_action_chunk(tiny_backbone, tmp_path, device):
     """Fine-tune a 7-D checkpoint on a 6-D robot, save, then reload it the way eval/rollout do."""
     base_dir, finetuned_dir = tmp_path / "base", tmp_path / "finetuned"
     base_cfg = _tiny_config(tiny_backbone, device=device, **_slot_kwargs(arm=[[0, 6]], effector=[[6, 7]]))
@@ -294,8 +294,8 @@ def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
     cfg.pretrained_path = finetuned_dir
     policy = make_policy(cfg, ds_meta=meta)
     preprocessor, postprocessor = make_pre_post_processors(cfg, pretrained_path=finetuned_dir)
-    action = _select_action(policy, preprocessor, postprocessor, 6, device)
-    assert action.shape == (2, 6)
+    action = _predict_chunk(policy, preprocessor, postprocessor, 6, device)
+    assert action.shape == (2, CHUNK, 6)
     assert torch.isfinite(action).all()
 
 

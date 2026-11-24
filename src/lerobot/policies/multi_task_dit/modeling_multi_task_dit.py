@@ -26,7 +26,6 @@ References:
 """
 
 import math
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 import einops
@@ -54,16 +53,18 @@ if TYPE_CHECKING or _diffusers_available:
 else:
     DDIMScheduler = None
     DDPMScheduler = None
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import (
     ACTION,
+    NOISE,
     OBS_IMAGES,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
 )
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy
-from ..utils import populate_queues
 
 # -- Policy --
 
@@ -78,8 +79,6 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-
-        self._queues: dict[str, deque[Tensor]] = {}
 
         self.observation_encoder = ObservationEncoder(config)
         conditioning_dim = self.observation_encoder.conditioning_dim
@@ -146,31 +145,29 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         actions = actions[:, start:end]
         return actions
 
-    def reset(self):
-        """Clear observation and action queues. Should be called on `env.reset()`"""
-        self._queues = {
-            OBS_STATE: deque(maxlen=self.config.n_obs_steps),
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-
-        if self.config.image_features:
-            self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Predict and execute the ``n_action_steps`` actions that follow the current observation."""
+        steps = self.config.n_action_steps
+        return ChunkPolicySpec(prediction_steps=steps, execution_steps=steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Predict a chunk of actions given environment observations.
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Predict the ``n_action_steps`` actions that follow the current observation.
 
-        `noise` is the optional starting sample of shape `(B, horizon, action_dim)`. The DDPM scheduler still
-        adds fresh noise at every step, so only DDIM and flow matching are fully driven by `noise`.
+        Observations come as their ``[B, n_obs_steps, ...]`` window, or as the current frame
+        when ``n_obs_steps`` is 1. `noise` is the optional starting sample of shape
+        `(B, horizon, action_dim)`. The DDPM scheduler still adds fresh noise at every step, so
+        only DDIM and flow matching are fully driven by `noise`.
         """
+        noise = batch.get(NOISE)
         self.eval()
-
-        for k in batch:
-            if k in self._queues:
-                batch[k] = torch.stack(list(self._queues[k]), dim=1)
-
-        actions = self._generate_actions(batch, noise=noise)
-        return actions
+        batch = dict(batch)
+        if batch[OBS_STATE].ndim == 2:
+            batch[OBS_STATE] = batch[OBS_STATE].unsqueeze(1)
+        for key in self.config.image_features:
+            if batch[key].ndim == 4:
+                batch[key] = batch[key].unsqueeze(1)
+        return PolicyOutput(action=self._generate_actions(self._prepare_batch(batch), noise=noise))
 
     def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Prepare batch by stacking image features if needed."""
@@ -179,24 +176,6 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
 
         return batch
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Select a single action given environment observations"""
-        if ACTION in batch:
-            batch = dict(batch)  # shallow copy to avoid modifying original
-            batch.pop(ACTION)
-
-        batch = self._prepare_batch(batch)
-
-        self._queues = populate_queues(self._queues, batch)
-
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._queues[ACTION].extend(actions.transpose(0, 1))
-
-        action = self._queues[ACTION].popleft()
-        return action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
         """Run the batch through the model and compute the loss for training"""

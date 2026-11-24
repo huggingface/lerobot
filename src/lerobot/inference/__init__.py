@@ -44,6 +44,15 @@ from .factory import (
     SyncInferenceConfig,
     create_inference_engine,
 )
+from .history import (
+    ChunkHistory,
+    ExecutionRecord,
+    FeatureHistory,
+    HistoryInputs,
+    apply_history,
+    policy_history,
+    rename_history,
+)
 from .policy_runner import PolicyRunner
 from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk
 from .rtc import RTCInferenceEngine, supports_rtc_inference, validate_local_chunk_policy
@@ -55,12 +64,16 @@ __all__ = [
     "EXTERNAL_HISTORY_DEFAULT",
     "ActionChunk",
     "ActionProvenance",
+    "ChunkHistory",
     "ChunkPolicySpec",
     "ChunkPrediction",
     "ChunkRequest",
     "ChunkRuntime",
     "ExecutionMode",
+    "ExecutionRecord",
+    "FeatureHistory",
     "FeatureSpec",
+    "HistoryInputs",
     "HoldState",
     "InferenceEngine",
     "InferenceEngineConfig",
@@ -77,6 +90,7 @@ __all__ = [
     "RemoteInferenceConfig",
     "SyncInferenceConfig",
     "SyncInferenceEngine",
+    "apply_history",
     "chunk_inference_context",
     "chunk_settings",
     "commit_action",
@@ -85,7 +99,9 @@ __all__ = [
     "dispatch_tick",
     "estimate_delay",
     "next_interpolated_action",
+    "policy_history",
     "predict_chunk",
+    "rename_history",
     "supports_rtc_inference",
     "trained_overlap_valid",
     "validate_local_chunk_policy",

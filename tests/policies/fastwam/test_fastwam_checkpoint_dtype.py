@@ -35,6 +35,7 @@ from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.wan import LiteKVFusion
+from lerobot.utils.constants import ACTION, NOISE, PREDICTION
 
 DOT_FLAGS = {
     "action_expert_layers": 1,
@@ -160,10 +161,10 @@ def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, f
     noise = torch.randn(1, 8, 3)
     with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, enabled=dtype == torch.bfloat16):
         policy.eval()
-        action = policy.predict_action_chunk(batch, noise=noise)
+        action = policy.predict_action_chunk({**batch, NOISE: noise})[ACTION]
         policy.save_pretrained(tmp_path)
         loaded = FastWAMPolicy.from_pretrained(tmp_path, strict=True)
-        reloaded_action = loaded.predict_action_chunk(batch, noise=noise)
+        reloaded_action = loaded.predict_action_chunk({**batch, NOISE: noise})[ACTION]
     assert action.shape == (1, 8, 3)
     assert torch.isfinite(action).all()
     torch.testing.assert_close(reloaded_action, action, rtol=0, atol=0)
@@ -280,18 +281,20 @@ def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components,
         policy.config.return_predicted_video = return_predicted_video
         policy.reset()
         torch.manual_seed(1)
-        return [policy.select_action(batch) for _ in range(8)]  # two chunks
+        return [policy.predict_action_chunk(batch) for _ in range(2)]  # two chunks
 
-    expected = torch.stack(rollout(False), 1)
+    expected = rollout(False)
     outputs = rollout(True)
 
-    assert [isinstance(output, dict) for output in outputs] == [True, False, True, False] * 2
-    actions = torch.stack([output["action"] if isinstance(output, dict) else output for output in outputs], 1)
-    torch.testing.assert_close(actions, expected, rtol=0, atol=0)
-    frame = outputs[0]["prediction"]["observation"]["observation.images.image"]
-    assert frame.shape == (1, 3, 16, 32)
-    assert frame.dtype == torch.uint8
-    assert frame.unique().numel() > 1
+    assert all(PREDICTION not in output for output in expected)
+    for output, reference in zip(outputs, expected, strict=True):
+        torch.testing.assert_close(output[ACTION], reference[ACTION], rtol=0, atol=0)
+        # Of the 4 executed actions, the first and the third start a new predicted frame.
+        assert output[PREDICTION]["observation_steps"] == [0, 2]
+        frames = output[PREDICTION]["observation"]["observation.images.image"]
+        assert frames.shape == (1, 2, 3, 16, 32)
+        assert frames.dtype == torch.uint8
+        assert frames.unique().numel() > 1
 
 
 def test_infer_video_matches_the_joint_clip(offline_components):

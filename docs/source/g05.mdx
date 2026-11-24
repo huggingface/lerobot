@@ -114,8 +114,8 @@ System 2 is available only when the packaged checkpoint metadata has
 `predict_action_chunk` returns a `PolicyOutput` batch holding the chunk under
 `"action"` and, under `"prediction"`, each env's CoT subtask (`language["subtask"]`,
 one string per env) and boxes as [0, 1] xyxy fractions on
-`policy.config.bbox_camera` (`boxes[camera]`, one answer per env), and
-`select_action` returns it with the first action of each chunk. The model names
+`policy.config.bbox_camera` (`boxes[camera]`, one answer per env), once per
+chunk. The model names
 no camera: its BBox targets are all drawn on that camera during training. System 1
 generates no CoT and returns bare actions.
 

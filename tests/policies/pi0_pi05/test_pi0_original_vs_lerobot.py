@@ -27,7 +27,7 @@ pytest.importorskip("transformers")
 from lerobot.configs import PreTrainedConfig  # noqa: E402
 from lerobot.policies.pi0 import PI0Policy  # noqa: E402
 from lerobot.policies.pi0.processor_pi0 import make_pi0_pre_post_processors  # noqa: E402
-from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
+from lerobot.utils.constants import ACTION, NOISE, OBS_STATE  # noqa: E402
 from tests.policies.pi0_pi05.openpi_pytorch.pi0_pytorch import PI0Pytorch  # noqa: E402
 from tests.policies.pi0_pi05.utils.openpi_parity import (  # noqa: E402
     assert_processor_inputs_match_lerobot,
@@ -226,10 +226,12 @@ def assert_sample_actions_match_openpi(*, compile_model: bool = False):
         lerobot_preprocessor,
     )
 
+    # Same number of denoising steps as the openpi call below.
+    lerobot_pi0.config.num_inference_steps = 10
     lerobot_pi0.eval()
     original_pi0.eval()
     with torch.no_grad():
-        lerobot_actions = lerobot_pi0.predict_action_chunk(lerobot_batch, noise=noise, num_steps=10)
+        lerobot_actions = lerobot_pi0.predict_action_chunk({**lerobot_batch, NOISE: noise})[ACTION]
         openpi_actions = original_pi0.sample_actions(
             device=DEVICE,
             observation=openpi_observation,

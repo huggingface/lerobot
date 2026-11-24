@@ -22,7 +22,6 @@ from torch import Tensor
 
 from lerobot.lerobot_types import RobotObservation
 from lerobot.processor import (
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
     TokenizerProcessorStep,
@@ -96,7 +95,7 @@ def make_multi_task_dit_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Constructs pre-processor and post-processor pipelines for a Multi-Task DiT policy.

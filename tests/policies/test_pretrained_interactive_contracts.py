@@ -12,39 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the PreTrainedPolicy contracts the interactive rollout stack relies on:
-drop_queued_actions() and the generate_text()/supports_text_generation() tandem override."""
+"""Tests for the PreTrainedPolicy contract: what a policy must implement, and the
+generate_text()/supports_text_generation() tandem override the interactive rollout relies on."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
-
-
-def _tiny_act_policy() -> ACTPolicy:
-    """A real chunking policy, small enough to instantiate per test."""
-    config = ACTConfig(
-        input_features={
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
-            OBS_ENV_STATE: PolicyFeature(type=FeatureType.ENV, shape=(4,)),
-        },
-        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
-        chunk_size=8,
-        n_action_steps=8,
-        use_vae=False,
-        dim_model=32,
-        n_heads=2,
-        dim_feedforward=64,
-        n_encoder_layers=1,
-        n_decoder_layers=1,
-    )
-    return ACTPolicy(config)
 
 
 def _policy_class_body():
@@ -55,54 +31,19 @@ def _policy_class_body():
         "reset": lambda self: None,
         "forward": lambda self, batch: (torch.tensor(0.0), None),
         "predict_action_chunk": lambda self, batch, **kwargs: torch.zeros(1),
-        "select_action": lambda self, batch, **kwargs: torch.zeros(1),
     }
 
 
-def test_drop_queued_actions_forces_fresh_forward_on_real_chunking_policy():
-    """Behind the interactive /subtask fast switch: a broken attribute convention would
-    silently keep serving stale actions."""
-    policy = _tiny_act_policy()
-    policy.reset()
-
-    forwards = []
-    original_forward = policy.model.forward
-
-    def counting_forward(*args, **kwargs):
-        forwards.append(1)
-        return original_forward(*args, **kwargs)
-
-    policy.model.forward = counting_forward
-    batch = {OBS_STATE: torch.zeros(1, 4), OBS_ENV_STATE: torch.zeros(1, 4)}
-
-    with torch.no_grad():
-        policy.select_action(batch)  # fills the queue with one forward
-        policy.select_action(batch)  # served from the queue
-    assert len(forwards) == 1
-
-    policy.drop_queued_actions()
-    with torch.no_grad():
-        policy.select_action(batch)
-    assert len(forwards) == 2, "drop_queued_actions() did not force a fresh forward"
-
-
-def test_count_queued_actions_tracks_the_real_chunking_policy_queue():
-    """The sync engine's relative-action anchor hold reads this count directly: it must
-    reflect the same queue drop_queued_actions() clears, at every point in the chunk cycle."""
-    policy = _tiny_act_policy()
-    policy.reset()
-    batch = {OBS_STATE: torch.zeros(1, 4), OBS_ENV_STATE: torch.zeros(1, 4)}
-
-    assert policy.count_queued_actions() == 0  # nothing computed yet
-
-    with torch.no_grad():
-        policy.select_action(batch)  # fills the queue with a fresh chunk, pops one
-    assert policy.count_queued_actions() == 7  # chunk_size=8 minus the one just served
-
-    with torch.no_grad():
-        for _ in range(7):
-            policy.select_action(batch)
-    assert policy.count_queued_actions() == 0  # queue drained -> next tick predicts fresh
+def test_a_policy_implements_training_and_chunk_prediction_only():
+    """``forward`` and ``predict_action_chunk`` are the whole inference/training surface:
+    ``reset`` is optional and nothing queues actions per step."""
+    body = {**_policy_class_body(), "name": "minimal_policy"}
+    del body["reset"]
+    minimal = type("MinimalPolicy", (PreTrainedPolicy,), body)
+    assert not minimal.__abstractmethods__
+    assert not hasattr(minimal, "select_action")
+    instance = minimal.__new__(minimal)
+    instance.reset()  # the default keeps nothing between calls
 
 
 @pytest.mark.parametrize("via_mixin", [False, True], ids=["own-method", "mixin-supplied"])

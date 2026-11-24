@@ -54,7 +54,7 @@ def test_freshly_built_postprocessor_is_identity() -> None:
     cfg = _make_config()
     _, post = make_lingbot_va_pre_post_processors(cfg, dataset_stats=None)
     normed = torch.tensor([[0.3, -0.5, 1.0, -1.0, 0.0, 0.7, -0.2]])
-    assert torch.allclose(post(normed), normed, atol=1e-6)
+    assert torch.allclose(post({ACTION: normed})[ACTION], normed, atol=1e-6)
 
 
 def test_postprocessor_quantile_unnormalization() -> None:
@@ -64,8 +64,8 @@ def test_postprocessor_quantile_unnormalization() -> None:
     q99 = [1.0, 0.5, 2.0, 1.0, 1.0, 1.0, 1.0]
     stats = {ACTION: {"q01": q01, "q99": q99}}
     _, post = make_lingbot_va_pre_post_processors(cfg, dataset_stats=stats)
-    out_lo = post(torch.full((1, 7), -1.0))
-    out_hi = post(torch.full((1, 7), 1.0))
+    out_lo = post({ACTION: torch.full((1, 7), -1.0)})[ACTION]
+    out_hi = post({ACTION: torch.full((1, 7), 1.0)})[ACTION]
     assert torch.allclose(out_lo, torch.tensor(q01).unsqueeze(0), atol=1e-4)
     assert torch.allclose(out_hi, torch.tensor(q99).unsqueeze(0), atol=1e-4)
 

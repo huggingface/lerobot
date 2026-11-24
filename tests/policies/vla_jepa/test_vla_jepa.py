@@ -37,7 +37,6 @@ from conftest import (  # noqa: E402
     ACTION_HORIZON,
     BATCH_SIZE,
     EXPECTED_ACTION_CHUNK_SHAPE,
-    EXPECTED_SELECT_ACTION_SHAPE,
     IMAGE_SIZE,
     N_ACTION_STEPS,
     QWEN_HIDDEN_SIZE,
@@ -132,16 +131,10 @@ def test_action_generation_shape(patch_vla_jepa_external_models: None) -> None:
     policy.eval()
     batch = make_inference_batch()
 
-    chunk = policy.predict_action_chunk(batch)
+    chunk = policy.predict_action_chunk(batch)["action"]
     assert tuple(chunk.shape) == EXPECTED_ACTION_CHUNK_SHAPE
     assert chunk.device.type == "cpu"
     assert torch.isfinite(chunk).all()
-
-    a1 = policy.select_action(batch)
-    a2 = policy.select_action(batch)
-    assert tuple(a1.shape) == EXPECTED_SELECT_ACTION_SHAPE
-    assert tuple(a2.shape) == EXPECTED_SELECT_ACTION_SHAPE
-    assert torch.isfinite(a1).all() and torch.isfinite(a2).all()
 
 
 @torch.no_grad()
@@ -154,7 +147,7 @@ def test_action_generation_various_dims(
     policy = VLAJEPAPolicy(config)
     policy.eval()
     batch = make_inference_batch(state_dim=state_dim)
-    chunk = policy.predict_action_chunk(batch)
+    chunk = policy.predict_action_chunk(batch)["action"]
     assert chunk.shape[-1] == action_dim
     assert torch.isfinite(chunk).all()
 
@@ -167,9 +160,9 @@ def test_inference_reproducibility(patch_vla_jepa_external_models: None) -> None
     batch = make_inference_batch()
 
     set_seed_all(123)
-    actions_1 = policy.predict_action_chunk(batch)
+    actions_1 = policy.predict_action_chunk(batch)["action"]
     set_seed_all(123)
-    actions_2 = policy.predict_action_chunk(batch)
+    actions_2 = policy.predict_action_chunk(batch)["action"]
 
     assert tuple(actions_1.shape) == EXPECTED_ACTION_CHUNK_SHAPE
     assert torch.allclose(actions_1, actions_2, atol=1e-6)
@@ -181,42 +174,8 @@ def test_predict_action_chunk_always_finite(patch_vla_jepa_external_models: None
     policy.eval()
     for seed in [0, 42, 123]:
         set_seed_all(seed)
-        chunk = policy.predict_action_chunk(make_inference_batch())
+        chunk = policy.predict_action_chunk(make_inference_batch())["action"]
         assert torch.isfinite(chunk).all(), f"non-finite actions with seed={seed}"
-
-
-# ---------------------------------------------------------------------------
-# Action queue behaviour
-# ---------------------------------------------------------------------------
-
-
-@torch.no_grad()
-def test_select_action_queue_drains_before_refill(patch_vla_jepa_external_models: None) -> None:
-    set_seed_all(42)
-    policy = VLAJEPAPolicy(make_config())
-    policy.eval()
-    batch = make_inference_batch()
-
-    # First call fills the queue (n_action_steps items) and pops one.
-    a1 = policy.select_action(batch)
-    assert len(policy._queues[ACTION]) == N_ACTION_STEPS - 1
-
-    # Second call pops from the existing queue without calling predict_action_chunk.
-    a2 = policy.select_action(batch)
-    assert tuple(a1.shape) == EXPECTED_SELECT_ACTION_SHAPE
-    assert tuple(a2.shape) == EXPECTED_SELECT_ACTION_SHAPE
-
-
-@torch.no_grad()
-def test_reset_clears_action_queue(patch_vla_jepa_external_models: None) -> None:
-    set_seed_all(42)
-    policy = VLAJEPAPolicy(make_config())
-    policy.eval()
-    policy.select_action(make_inference_batch())
-    assert len(policy._queues[ACTION]) > 0
-
-    policy.reset()
-    assert len(policy._queues[ACTION]) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +318,11 @@ def test_hub_disable_world_model_loads_simpler_env() -> None:
 
 @extended_test
 def test_hub_libero_inference_shape() -> None:
-    """select_action returns the expected shape using the LIBERO hub checkpoint."""
+    """predict_action_chunk returns the expected shape using the LIBERO hub checkpoint."""
     policy = VLAJEPAPolicy.from_pretrained(f"{_CP_ROOT}/VLA-JEPA-LIBERO")
     policy.eval()
     batch = _make_hub_inference_batch(policy)
-    action = policy.select_action(batch)
+    action = policy.predict_action_chunk(batch)["action"]
     assert action.shape[-1] == policy.config.action_dim
 
 
@@ -475,7 +434,7 @@ def test_postprocessor_applied_after_predict_action_chunk(
     _, postprocessor = make_vla_jepa_pre_post_processors(cfg, dataset_stats)
 
     batch = make_inference_batch()
-    chunk = policy.predict_action_chunk(batch)
+    chunk = policy.predict_action_chunk(batch)["action"]
 
     # predict_action_chunk returns raw (normalized) actions
     assert torch.allclose(chunk, torch.zeros_like(chunk), atol=1e-6), (
@@ -483,8 +442,9 @@ def test_postprocessor_applied_after_predict_action_chunk(
     )
 
     # Postprocessor applies unnormalization: 0 → (0+1)/2 * (max-min) + min = 5 + i
-    unnormed = postprocessor(chunk)
     from lerobot.utils.constants import ACTION
+
+    unnormed = postprocessor({ACTION: chunk})[ACTION]
 
     a_min = dataset_stats[ACTION]["min"].numpy()
     a_max = dataset_stats[ACTION]["max"].numpy()

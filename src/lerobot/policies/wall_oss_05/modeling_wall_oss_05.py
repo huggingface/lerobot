@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import math
-from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -25,8 +24,9 @@ import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, NOISE
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
@@ -803,7 +803,6 @@ class WallOSS05Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self._queues: dict[str, deque[Tensor]] = {}
         self.processor: Qwen2_5_VLProcessor | None = None
         if load_model:
             self._initialize_model()
@@ -839,9 +838,6 @@ class WallOSS05Policy(PreTrainedPolicy):
             self.processor.tokenizer.add_tokens([_PROPRIO_TOKEN, _ACTION_TOKEN])
             self.processor.tokenizer.padding_side = "left"
         return self.processor
-
-    def reset(self) -> None:
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -938,8 +934,9 @@ class WallOSS05Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """`noise` is the optional starting sample, shape `(batch_size, chunk_size, max_action_dim)`."""
+        noise = batch.get(NOISE)
         inputs = self._pretokenized_inputs(batch)
         output = self.model.generate_flow_action(
             action_horizon=self.config.chunk_size,
@@ -948,7 +945,7 @@ class WallOSS05Policy(PreTrainedPolicy):
             noise=noise,
             **inputs,
         )
-        return output["predict_action"]
+        return PolicyOutput(action=output["predict_action"])
 
     def supports_text_generation(self) -> bool:
         return True
@@ -977,10 +974,3 @@ class WallOSS05Policy(PreTrainedPolicy):
             )
         ]
         return require_single_text_output(outputs, policy_name="Wall-OSS-0.5")
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        if not self._queues[ACTION]:
-            chunk = self.predict_action_chunk(batch, noise=noise)
-            self._queues[ACTION].extend(chunk[:, : self.config.n_action_steps].transpose(0, 1))
-        return self._queues[ACTION].popleft()

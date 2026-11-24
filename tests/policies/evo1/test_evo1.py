@@ -59,6 +59,7 @@ from lerobot.utils.constants import (
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    RTC_INFERENCE_DELAY,
 )
 
 STATE_DIM = 4
@@ -108,32 +109,6 @@ class DummyEvo1Model(nn.Module):
         pred_velocity = torch.zeros(batch_size, CHUNK_SIZE * MAX_ACTION_DIM)
         noise = torch.zeros_like(actions_gt)
         return pred_velocity, noise
-
-
-class ChunkCountingDummyModel(DummyEvo1Model):
-    """Emits per-step distinguishable actions so queue ordering and re-prediction are observable."""
-
-    def __init__(self, config, vlm_hub_kwargs=None):
-        super().__init__(config, vlm_hub_kwargs)
-        self.chunks_predicted = 0
-
-    def forward(
-        self,
-        fused_tokens,
-        state=None,
-        actions_gt=None,
-        action_mask=None,
-        embodiment_ids=None,
-        context_mask=None,
-        **kwargs,
-    ):
-        if actions_gt is not None:
-            return super().forward(fused_tokens, state, actions_gt, action_mask, embodiment_ids, context_mask)
-        self.chunks_predicted += 1
-        batch_size = fused_tokens.shape[0]
-        step_values = torch.arange(CHUNK_SIZE, dtype=torch.float32) + 10.0 * self.chunks_predicted
-        chunk = step_values.repeat_interleave(MAX_ACTION_DIM).unsqueeze(0).repeat(batch_size, 1)
-        return chunk
 
 
 def make_config(training_stage="stage1", **kwargs):
@@ -436,7 +411,7 @@ def test_evo1_policy_processors_pad_state_crop_action_and_binarize_gripper():
         ],
         dtype=torch.float32,
     )
-    processed = postprocessor(action)
+    processed = postprocessor({ACTION: action})[ACTION]
 
     assert processed.shape == (2, 7)
     assert processed.dtype == torch.float32
@@ -448,7 +423,7 @@ def test_evo1_postprocessor_returns_float32_for_bf16_actions():
     config = make_config()
     _preprocessor, postprocessor = make_evo1_pre_post_processors(config, dataset_stats=make_stats())
 
-    processed = postprocessor(torch.zeros(2, MAX_ACTION_DIM, dtype=torch.bfloat16))
+    processed = postprocessor({ACTION: torch.zeros(2, MAX_ACTION_DIM, dtype=torch.bfloat16)})[ACTION]
     assert processed.dtype == torch.float32
 
 
@@ -567,13 +542,9 @@ def test_evo1_policy_forward_and_inference_use_batched_embedding(monkeypatch):
     assert metrics["active_action_dims"] == ACTION_DIM * CHUNK_SIZE
     assert policy.model.get_vl_embeddings_calls == 1
 
-    action_chunk = policy.predict_action_chunk(make_batch(include_action=False))
+    action_chunk = policy.predict_action_chunk(make_batch(include_action=False))[ACTION]
     assert action_chunk.shape == (2, CHUNK_SIZE, MAX_ACTION_DIM)
     assert action_chunk.dtype == torch.float32
-
-    policy.reset()
-    selected = policy.select_action(make_batch(include_action=False))
-    assert selected.shape == (2, MAX_ACTION_DIM)
 
 
 def test_evo1_forward_masks_padded_action_timesteps(monkeypatch):
@@ -596,27 +567,11 @@ def test_evo1_forward_masks_padded_action_timesteps(monkeypatch):
     assert torch.isclose(loss, torch.tensor(1.0))
 
 
-def test_evo1_select_action_queue_orders_steps_and_repredicts(monkeypatch):
-    monkeypatch.setattr(modeling_evo1, "Evo1Model", ChunkCountingDummyModel)
-    policy = modeling_evo1.Evo1Policy(make_config(n_action_steps=CHUNK_SIZE))
-
-    batch = make_batch(include_action=False)
-    first = policy.select_action(batch)
-    second = policy.select_action(batch)
-    third = policy.select_action(batch)
-
-    # First chunk provides steps 10, 11 in order; the third call triggers a fresh prediction (20).
-    assert torch.all(first == 10.0)
-    assert torch.all(second == 11.0)
-    assert torch.all(third == 20.0)
-    assert policy.model.chunks_predicted == 2
-
-
-def test_evo1_predict_action_chunk_rejects_rtc_kwargs_without_rtc_config(monkeypatch):
+def test_evo1_predict_action_chunk_rejects_rtc_inputs_without_rtc_config(monkeypatch):
     monkeypatch.setattr(modeling_evo1, "Evo1Model", DummyEvo1Model)
     policy = modeling_evo1.Evo1Policy(make_config())
     with pytest.raises(RuntimeError, match="RTC"):
-        policy.predict_action_chunk(make_batch(include_action=False), inference_delay=2)
+        policy.predict_action_chunk({**make_batch(include_action=False), RTC_INFERENCE_DELAY: 2})
 
 
 def test_evo1_rtc_processor_wiring(monkeypatch):
@@ -630,10 +585,6 @@ def test_evo1_rtc_processor_wiring(monkeypatch):
     policy.init_rtc_processor()
     assert isinstance(policy.rtc_processor, RTCProcessor)
     assert policy.model.rtc_processor is policy.rtc_processor
-
-    # RTC drives predict_action_chunk directly; the select_action queue path is unsupported.
-    with pytest.raises(AssertionError, match="select_action"):
-        policy.select_action(make_batch(include_action=False))
 
 
 def test_flowmatching_head_takes_the_starting_noise():

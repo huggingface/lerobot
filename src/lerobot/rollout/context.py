@@ -62,7 +62,6 @@ from lerobot.processor import (
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
-    bind_relative_anchor,
     make_default_processors,
     rename_stats,
 )
@@ -526,8 +525,8 @@ def build_rollout_context(
         if not supports_rtc_inference(policy):
             raise ValueError(
                 f"RTC inference is not supported by policy type '{policy_config.type}': "
-                "the policy must implement RTC semantics and predict_action_chunk must accept "
-                "inference_delay and prev_chunk_left_over. Use '--inference.type=sync' instead."
+                "the policy must implement RTC semantics (supports_rtc). "
+                "Use '--inference.type=sync' instead."
             )
         policy.config.rtc_config = cfg.inference.rtc
         if hasattr(policy, "init_rtc_processor"):
@@ -641,9 +640,6 @@ def build_rollout_context(
             preprocessor.steps = [*env_preprocessor.steps, *preprocessor.steps]
             postprocessor.steps = [*postprocessor.steps, *env_postprocessor.steps]
 
-        # Keep relative-action anchors fixed while the local policy's queued chunk drains.
-        bind_relative_anchor(policy, preprocessor)
-
         logger.info(
             "Creating inference engine (type=%s)...",
             cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
@@ -656,7 +652,6 @@ def build_rollout_context(
             postprocessor=postprocessor,
             robot_wrapper=robot_wrapper,
             dataset_features=dataset_features,
-            ordered_action_keys=ordered_action_keys,
             task=task_str,
             fps=cfg.fps,
             device=cfg.device,

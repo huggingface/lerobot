@@ -109,12 +109,12 @@ class GatedConformingPolicy(ConformingPolicy):
         self.entered = entered
         self.release = release
 
-    def predict_action_chunk(self, batch, **kwargs):
+    def predict_action_chunk(self, batch):
         self.calls += 1
         if self.calls == 2:
             self.entered.set()
             assert self.release.wait(5), "client did not release the second policy call"
-        return super().predict_action_chunk(batch, **kwargs)
+        return super().predict_action_chunk(batch)
 
 
 def serve_in_child(endpoint, ready, stopped, entered, release):

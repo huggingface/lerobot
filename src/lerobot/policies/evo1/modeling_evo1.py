@@ -15,17 +15,17 @@
 from __future__ import annotations
 
 import builtins
-from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Unpack
+from typing import Any
 
 import torch
 from torch import Tensor
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import PreTrainedPolicy, T, rtc_inputs
+from lerobot.utils.constants import ACTION, NOISE, OBS_IMAGES, OBS_STATE
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_evo1 import Evo1Config
@@ -178,9 +178,6 @@ class Evo1Policy(PreTrainedPolicy):
             {"params": decay, "weight_decay": self.config.optimizer_weight_decay},
             {"params": no_decay, "weight_decay": 0.0},
         ]
-
-    def reset(self):
-        self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
     def _normalize_task_batch(self, batch: dict[str, Tensor | list[str] | str]) -> list[str]:
         prompts = batch.get(self.config.task_field)
@@ -479,18 +476,14 @@ class Evo1Policy(PreTrainedPolicy):
         }
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions.
 
         `noise` is the optional starting sample of the flow, shape
         `(batch_size, chunk_size, max_action_dim)`. When it is None, it is drawn uniformly from [-1, 1).
         """
+        noise = batch.get(NOISE)
+        kwargs = rtc_inputs(batch)
         inference_delay = kwargs.get("inference_delay")
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         execution_horizon = kwargs.get("execution_horizon")
@@ -524,18 +517,4 @@ class Evo1Policy(PreTrainedPolicy):
                 noise=noise,
             )
         actions = actions.view(states.shape[0], self.config.chunk_size, self.config.max_action_dim)
-        return actions.to(dtype=torch.float32)
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        assert not self._rtc_enabled(), (
-            "RTC is not supported for select_action, use it with predict_action_chunk"
-        )
-        self.eval()
-        if len(self._action_queue) == 0:
-            action_chunk = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
-            self._action_queue.extend(action_chunk.transpose(0, 1))
-        # Returns one step of shape (B, max_action_dim): actions are emitted at the padded max_action_dim
-        # width and cropped to the real action dim downstream by the postprocessor (Evo1ActionProcessorStep).
-        # Callers that bypass the postprocessor receive the padded width.
-        return self._action_queue.popleft()
+        return PolicyOutput(action=actions.to(dtype=torch.float32))

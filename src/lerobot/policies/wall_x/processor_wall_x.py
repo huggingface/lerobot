@@ -25,7 +25,6 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -67,7 +66,7 @@ def make_wall_x_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Constructs pre-processor and post-processor pipelines for the Wall-X policy.

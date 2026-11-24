@@ -61,11 +61,16 @@ class PolicyPrediction(TypedDict, total=False):
     """What a policy expects or believes besides the action it takes, batched like the action.
 
     Every entry is keyed by what it refers to, so it maps to existing names, and holds one value
-    per environment of the batch (see ``PreTrainedPolicy.select_action``).
+    per environment of the batch, for one action chunk (see ``PreTrainedPolicy.predict_action_chunk``).
     """
 
-    # Predicted future observation, by observation key ("observation.images.top" -> [B, C, H, W]).
+    # The predicted action chunk [B, H, A], in the model's coordinates, before postprocessing.
+    action: torch.Tensor
+    # Predicted future observation, by observation key ("observation.images.top" -> [B, C, H, W],
+    # or [B, F, C, H, W] for frames predicted at several actions of the chunk).
     observation: dict[str, torch.Tensor]
+    # Index in the chunk of the action each stacked predicted frame belongs to, ascending.
+    observation_steps: list[int]
     # Predicted language, by annotation style ("subtask", "plan", "memory"), one string per env.
     language: dict[str, list[str]]
     # Boxes, by the observation image key they are drawn on, one answer per env.
@@ -73,10 +78,11 @@ class PolicyPrediction(TypedDict, total=False):
 
 
 class PolicyOutput(TypedDict):
-    """What ``select_action`` / ``predict_action_chunk`` return when they predict more than actions.
+    """What ``predict_action_chunk`` returns: a batch with what the policy produced.
 
-    A batch keyed like the input batch: the action under ``"action"`` and the prediction under
-    ``"prediction"``. `batch_to_transition` turns it into an `EnvTransition`.
+    The chunk ``[B, H, A]`` under ``"action"``, in model coordinates, and what the policy
+    predicted besides it under ``"prediction"``. `batch_to_transition` turns it into an
+    `EnvTransition`; the postprocessor turns ``action`` into the command to execute.
     """
 
     action: torch.Tensor

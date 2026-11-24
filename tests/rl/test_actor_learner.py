@@ -431,8 +431,8 @@ def test_initial_and_periodic_weight_push_consistency():
     assert initial_decoded.keys() == periodic_decoded.keys()
 
 
-def test_actor_side_algorithm_select_action_and_load_weights():
-    """Simulate actor: create algorithm without optimizers, select_action, load_weights."""
+def test_actor_side_algorithm_predicts_and_loads_weights():
+    """Simulate actor: create algorithm without optimizers, predict an action, load_weights."""
     from lerobot.policies.gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
     from lerobot.rl.algorithms.factory import make_algorithm
     from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
@@ -456,10 +456,10 @@ def test_actor_side_algorithm_select_action_and_load_weights():
     assert isinstance(algorithm, SACAlgorithm)
     assert algorithm.optimizers == {}
 
-    # select_action should work
-    obs = {OBS_STATE: torch.randn(state_dim)}
-    action = policy.select_action(obs)
-    assert action.shape == (action_dim,)
+    # The actor executes the first (only) action of each predicted chunk
+    obs = {OBS_STATE: torch.randn(1, state_dim)}
+    action = policy.predict_action_chunk(obs)[ACTION]
+    assert action.shape == (1, 1, action_dim)
 
     # Simulate receiving weights from learner
     fake_weights = algorithm.get_weights()

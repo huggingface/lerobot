@@ -28,12 +28,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-from collections import deque
 from typing import TYPE_CHECKING, Any, Self
 
 import torch
 from torch import Tensor, nn
 
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
@@ -86,38 +87,12 @@ class LongWAMPolicy(PreTrainedPolicy):
         return [p for p in self.parameters() if p.requires_grad]
 
     def reset(self) -> None:
-        self._frames: deque[Tensor] = deque(maxlen=self.config.past_obs_steps + 1)
-        self._action_queue: deque[Tensor] = deque()
-        self._language_tokens: Tensor | None = None
-        self._language_mask: Tensor | None = None
+        # The encoded instruction, reused while the language tokens stay the same.
+        self._language: tuple[Tensor, Tensor] | None = None
         self._text_context: Tensor | None = None
-
-    def drop_queued_actions(self) -> None:
-        # Interactive rollout can change instructions without ending the environment episode.
-        self.reset()
 
     def _images(self, batch: dict[str, Tensor]) -> Tensor:
         return torch.cat([batch[key] for key in self.config.camera_keys], dim=-1)
-
-    def _observe(self, batch: dict[str, Tensor]) -> None:
-        tokens, mask = batch[OBS_LANGUAGE_TOKENS], batch[OBS_LANGUAGE_ATTENTION_MASK]
-        if self._language_tokens is not None and (
-            not torch.equal(tokens, self._language_tokens) or not torch.equal(mask, self._language_mask)
-        ):
-            self.reset()
-        if self._language_tokens is None:
-            self._language_tokens, self._language_mask = tokens.clone(), mask.clone()
-        image = self._images(batch)
-        if image.ndim != 4:
-            raise ValueError("Synchronous inference expects the current frame [B,3,H,W]")
-        if self._frames and self._frames[-1].shape != image.shape:
-            raise ValueError("Reset before changing inference batch size or camera shape")
-        self._frames.append(image.detach().clone())
-
-    def _history(self) -> Tensor:
-        frames = list(self._frames)
-        frames = [frames[0]] * (self.config.past_obs_steps + 1 - len(frames)) + frames
-        return torch.stack(frames[:: self.config.video_stride], dim=2)
 
     def _context(self, batch: dict[str, Tensor], state: Tensor, *, cache: bool = False) -> Tensor:
         if not cache or self._text_context is None:
@@ -224,26 +199,35 @@ class LongWAMPolicy(PreTrainedPolicy):
             "loss_action": loss_action.detach().mean().item(),
         }
 
-    @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        self.eval()
-        self._observe(batch)
-        return self._predict(batch)
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Predict ``prediction_steps`` actions and execute ``n_action_steps`` of them."""
+        return ChunkPolicySpec(
+            prediction_steps=self.config.prediction_steps, execution_steps=self.config.n_action_steps
+        )
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Predict from each camera's strided past window ``[B, T, 3, H, W]``, current frame last."""
         self.eval()
-        # Record every tick, including those that execute a previously predicted action.
-        self._observe(batch)
-        if not self._action_queue:
-            actions = self._predict(batch)
-            self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
-        return self._action_queue.popleft()
-
-    def _predict(self, batch: dict[str, Tensor]) -> Tensor:
         cfg = self.config
-        clean = self._encode_video(self._history())
-        context = self._context(batch, batch["observation.state"], cache=True)
+        tokens, mask = batch[OBS_LANGUAGE_TOKENS], batch[OBS_LANGUAGE_ATTENTION_MASK]
+        if self._language is None or not (
+            torch.equal(tokens, self._language[0]) and torch.equal(mask, self._language[1])
+        ):
+            self._language, self._text_context = (tokens.clone(), mask.clone()), None
+        images = self._images(batch)
+        if images.ndim == 4:  # no past frames (past_obs_steps=0)
+            images = images.unsqueeze(1)
+        if images.shape[1] != cfg.past_obs_steps // cfg.video_stride + 1:
+            raise ValueError(f"Inference needs the strided past window, got {tuple(images.shape)}")
+        state = batch["observation.state"]
+        current_state = state[:, -1] if state.ndim == 3 else state
+        return PolicyOutput(action=self._predict(batch, images.transpose(1, 2), current_state))
+
+    def _predict(self, batch: dict[str, Tensor], video: Tensor, state: Tensor) -> Tensor:
+        cfg = self.config
+        clean = self._encode_video(video)
+        context = self._context(batch, state, cache=True)
 
         def noise(shape):
             # Match released inference: separate, same-seeded draws per chunk.

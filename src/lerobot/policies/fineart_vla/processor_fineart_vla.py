@@ -37,13 +37,10 @@ from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
-    policy_action_to_transition,
-    transition_to_policy_action,
 )
 from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
 
@@ -436,7 +433,7 @@ def make_fineart_vla_pre_post_processors(
     dataset_meta: Any | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build FineART-VLA's pre/post-processor pipelines.
 
@@ -515,7 +512,6 @@ def make_fineart_vla_pre_post_processors(
         ),
         AbsoluteActionsProcessorStep(
             enabled=config.use_relative_actions,
-            relative_step=relative_step,
         ),
         DeviceProcessorStep(device="cpu"),
     ]
@@ -524,11 +520,9 @@ def make_fineart_vla_pre_post_processors(
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
         ),
     )
 

@@ -606,7 +606,7 @@ def make_wall_oss_05_pre_post_processors(
     dataset_stats: dict | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build the serializable Wall input/output pipelines."""
 

@@ -53,7 +53,6 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 """
 
 import math
-from collections import deque
 from typing import Any, Unpack
 
 import torch
@@ -61,7 +60,9 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import rtc_inputs
+from lerobot.utils.constants import ACTION, NOISE, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import require_package
 
@@ -80,9 +81,6 @@ from ..common.vla_utils import (
 )
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
-from ..utils import (
-    populate_queues,
-)
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
 
@@ -169,12 +167,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
         self.reset()
 
-    def reset(self):
-        """This should be called whenever the environment is reset."""
-        self._queues = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
@@ -201,15 +193,6 @@ class SmolVLAPolicy(PreTrainedPolicy):
         noise: Tensor | None = None,
         **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        # TODO: Check if this for loop is needed.
-        # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
-        # In the case of offline inference, we have the action in the batch
-        # that why without the k != ACTION check, it will raise an error because we are trying to stack
-        # on an empty container.
-        for k in batch:
-            if k in self._queues and k != ACTION:
-                batch[k] = torch.stack(list(self._queues[k]), dim=1)
-
         images, img_masks = self.prepare_images(batch)
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
@@ -237,55 +220,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        noise = batch.get(NOISE)
+        kwargs = rtc_inputs(batch)
         self.eval()
 
         batch = self._prepare_batch(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         actions = self._get_action_chunk(batch, noise=noise, **kwargs)
-        return actions
-
-    @torch.no_grad()
-    def select_action(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
-        """Select a single action given environment observations.
-
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
-        """
-
-        assert not self._rtc_enabled(), (
-            "RTC is not supported for select_action, use it with predict_action_chunk"
-        )
-
-        self.eval()
-        batch = self._prepare_batch(batch)
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-
-        if self._check_get_actions_condition():
-            actions = self._get_action_chunk(batch, noise=noise)
-
-            # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
-
-        return self._queues[ACTION].popleft()
-
-    def _check_get_actions_condition(self) -> bool:
-        return len(self._queues[ACTION]) == 0
+        return PolicyOutput(action=actions)
 
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled

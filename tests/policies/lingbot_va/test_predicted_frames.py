@@ -14,27 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LingBot-VA returns, with each action, the imagined camera frames that action belongs to."""
+"""LingBot-VA returns, with each chunk, the imagined camera frames its actions belong to."""
 
 from __future__ import annotations
 
-from collections import deque
 from types import SimpleNamespace
 
 import torch
 
 from lerobot.policies.lingbot_va.modeling_lingbot_va import LingBotVAPolicy
-from lerobot.processor import (
-    policy_output_to_transition,
-    transition_to_policy_action,
-    transition_to_prediction,
-)
+from lerobot.utils.constants import ACTION, PREDICTION
 
 CAMS = ["observation.images.image", "observation.images.image2"]
 
 
 def _policy(**state) -> SimpleNamespace:
-    config = SimpleNamespace(obs_cam_keys=CAMS, height=2, width=2, camera_layout="width_concat")
+    config = SimpleNamespace(
+        obs_cam_keys=CAMS, height=2, width=2, camera_layout="width_concat", return_predicted_video=True
+    )
     policy = SimpleNamespace(config=config, **state)
     policy._split_cameras = lambda frames: LingBotVAPolicy._split_cameras(policy, frames)
     return policy
@@ -53,47 +50,39 @@ def _clip(n_frames: int) -> torch.Tensor:
     return clip
 
 
-def _serve_chunk(chunk_len: int, n_frames: int) -> list[int | None]:
-    """Frame index returned with each action of one chunk (``None`` for a bare action)."""
-    policy = _policy(
-        _chunk_frames=_clip(n_frames),
-        _chunk_len=chunk_len,
-        _shown_frame=-1,
-        _action_queue=deque(range(chunk_len)),
-    )
-    shown: list[int | None] = []
-    for _ in range(chunk_len):
-        action = torch.zeros(2, 7) + policy._action_queue.popleft()
-        out = LingBotVAPolicy._with_predicted_frame(policy, action)
-        if isinstance(out, torch.Tensor):
-            shown.append(None)
-            continue
-        step = policy_output_to_transition(out)
-        assert transition_to_policy_action(step) is action
-        predicted = transition_to_prediction(step)["observation"]
-        assert list(predicted) == CAMS
-        for camera, offset in zip(CAMS, (0, 100), strict=True):
-            frames = predicted[camera]
-            assert frames.shape == (2, 3, 2, 2)  # [B, C, H, W], like camera frames
-            assert int(frames[1, 0, 0, 0]) == int(frames[0, 0, 0, 0]) + 10  # each env its own frame
-            assert 0 <= int(frames[0, 0, 0, 0]) - offset < 100  # its own camera
-        shown.append(int(predicted[CAMS[0]][0, 0, 0, 0]))
-    return shown
+def _predict(chunk_len: int, n_frames: int, *, video: bool = True):
+    """The first chunk's output, with stubbed sampling and decoding."""
+    actions = torch.zeros(2, chunk_len, 7)
+    policy = _policy(_first_chunk=True)
+    policy.config.return_predicted_video = video
+    policy._predict_chunk = lambda batch, keyframes, noise, video_noise: (actions, None)
+    policy._decode_video_batch = lambda latents: _clip(n_frames)
+    cameras = {key: torch.zeros(2, 1, 3, 2, 2) for key in CAMS}
+    return LingBotVAPolicy.predict_action_chunk(policy, cameras), actions
 
 
-def test_frames_are_spread_over_the_chunk_and_returned_once():
-    # 4 imagined frames over 8 actions: a new frame every 2 actions, bare actions in between.
-    assert _serve_chunk(chunk_len=8, n_frames=4) == [0, None, 1, None, 2, None, 3, None]
+def test_chunk_carries_its_imagined_clip_per_camera():
+    out, actions = _predict(chunk_len=8, n_frames=4)
+    assert out[ACTION] is actions
+    prediction = out[PREDICTION]
+    # 4 imagined frames over 8 actions: a new frame every 2 actions.
+    assert prediction["observation_steps"] == [0, 2, 4, 6]
+    assert list(prediction["observation"]) == CAMS
+    for camera, offset in zip(CAMS, (0, 100), strict=True):
+        frames = prediction["observation"][camera]
+        assert frames.shape == (2, 4, 3, 2, 2)  # [B, F, C, H, W]
+        assert frames[0, :, 0, 0, 0].tolist() == [offset + f for f in range(4)]  # its own camera
+        assert torch.equal(frames[1].int(), frames[0].int() + 10)  # each env its own frames
 
 
-def test_more_frames_than_actions_skips_frames():
-    assert _serve_chunk(chunk_len=2, n_frames=4) == [0, 2]
+def test_more_frames_than_actions_stay_within_the_chunk():
+    out, _ = _predict(chunk_len=2, n_frames=4)
+    assert out[PREDICTION]["observation_steps"] == [0, 1, 1, 1]
 
 
-def test_no_decoded_clip_returns_the_bare_action():
-    policy = SimpleNamespace(_chunk_frames=None)
-    action = torch.zeros(1, 7)
-    assert LingBotVAPolicy._with_predicted_frame(policy, action) is action
+def test_without_predicted_video_returns_the_chunk_alone():
+    out, actions = _predict(chunk_len=8, n_frames=4, video=False)
+    assert out == {ACTION: actions}
 
 
 def test_robotwin_frames_split_back_into_head_and_wrists():

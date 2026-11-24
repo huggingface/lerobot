@@ -297,7 +297,7 @@ def test_forward_matches_pi05_when_language_losses_are_off():
             torch.manual_seed(1)
             pi05_loss, _ = pi05.forward(batch)
             torch.manual_seed(2)
-            pi05_actions = pi05.predict_action_chunk(batch)
+            pi05_actions = pi05.predict_action_chunk(batch)[ACTION]
         weights = {key: value.cpu() for key, value in pi05.state_dict().items()}
         del pi05
         pi05 = None
@@ -321,7 +321,7 @@ def test_forward_matches_pi05_when_language_losses_are_off():
             torch.manual_seed(1)
             fineart_loss, _ = fineart.forward(batch)
             torch.manual_seed(2)
-            fineart_actions = fineart.predict_action_chunk(batch)
+            fineart_actions = fineart.predict_action_chunk(batch)[ACTION]
 
         torch.testing.assert_close(fineart_loss, pi05_loss, rtol=1e-4, atol=1e-5)
         torch.testing.assert_close(fineart_actions, pi05_actions, rtol=1e-4, atol=1e-4)

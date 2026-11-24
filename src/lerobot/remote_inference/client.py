@@ -55,6 +55,7 @@ from .chunk_contract import (
     validate_blend_settings,
 )
 from .codec import RGBImage, decode_message, encode_message
+from .history_wire import encode_history, history_from_wire
 from .protocol import (
     IDENTITY_KEYS,
     PROTOCOL_VERSION,
@@ -81,6 +82,7 @@ def parse_capabilities(value: dict[str, Any]) -> PolicyCapabilities:
     value["features"] = tuple(FeatureSpec(**feature) for feature in value["features"])
     value["action_feature"] = FeatureSpec(**value["action_feature"])
     value["modes"] = tuple(ExecutionMode(mode) for mode in value["modes"])
+    value["history"] = history_from_wire(value.get("history"))
     return PolicyCapabilities(**value)
 
 
@@ -400,7 +402,7 @@ class RemoteClient:
     def _observation_body(self, observation: ObservationSnapshot) -> dict:
         self._request_sequence += 1
         rgb = {feature.name for feature in self.capabilities.features if feature.kind == "rgb"}
-        return {
+        body = {
             "sequence": self._request_sequence,
             "artifact_identity": self.artifact_identity,
             "observation_id": observation.observation_id,
@@ -414,6 +416,11 @@ class RemoteClient:
                 for name, value in observation.features.items()
             },
         }
+        if observation.history is not None:
+            body["history"] = encode_history(
+                observation.history, self.capabilities, self.config.encoding, self.config.jpeg_quality
+            )
+        return body
 
     def _exchange(
         self, request: Envelope, suffix: str, channel: Any, timeout: float, cancelled: Callable[[], bool]
@@ -482,6 +489,9 @@ class RemoteClient:
         model = response.body.get("model_actions")
         caps = self.capabilities
         steps = caps.execution_steps if request.mode is ExecutionMode.CHUNK else caps.prediction_steps
+        if caps.complete_execution and isinstance(actions, np.ndarray) and 0 < len(actions) <= steps:
+            # A complete-execution policy may return shorter chunks (e.g. its first one).
+            steps = len(actions)
         if (
             not isinstance(actions, np.ndarray)
             or actions.shape != (steps, *caps.action_feature.shape)

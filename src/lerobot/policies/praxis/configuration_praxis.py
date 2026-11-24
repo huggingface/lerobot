@@ -251,7 +251,7 @@ class PraxisConfig(PreTrainedConfig):
 
     @property
     def command_dim(self) -> int:
-        """Values of one command row of `select_action`: the wire pose and gripper of each arm."""
+        """Values of one command row of `predict_action_chunk`: the wire pose and gripper of each arm."""
         return PRAXIS_COMMAND_DIM * self.n_arms
 
     @property
@@ -378,8 +378,10 @@ class PraxisConfig(PreTrainedConfig):
 
     @property
     def inference_deltas(self) -> Deltas:
-        """The current frame: the policy keeps the executed frames itself."""
-        return Deltas()
+        """The cameras and the state after every command of the longest executed chunk, the last
+        one current: the next chunk is conditioned on the executed one."""
+        window = range(1 - self.n_action_steps, 1)
+        return Deltas(observation={FeatureType.VISUAL: window, FeatureType.STATE: window})
 
     @property
     def action_key(self) -> str:

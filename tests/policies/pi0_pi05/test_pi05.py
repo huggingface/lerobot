@@ -27,6 +27,7 @@ from lerobot.policies.pi05 import (  # noqa: E402
     PI05Policy,
     make_pi05_pre_post_processors,  # noqa: E402
 )
+from lerobot.utils.constants import ACTION  # noqa: E402
 from lerobot.utils.random_utils import set_seed
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -113,8 +114,7 @@ def test_policy_instantiation():
         raise
     try:
         with torch.no_grad():
-            action = policy.select_action(batch)
-            action = postprocessor(action)
+            action = postprocessor(policy.predict_action_chunk(batch))[ACTION]
             print(f"Action: {action}")
         print(f"Action prediction successful. Action shape: {action.shape}")
     except Exception as e:

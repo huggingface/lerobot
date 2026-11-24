@@ -12,7 +12,7 @@ The implementation initializes the visual world-model components from `Wan-AI/Wa
 
 - Standard `policy.type=fastwam` configuration through LeRobot
 - Image, state, action, and language-task batch adaptation
-- Action chunk inference through `select_action` and `predict_action_chunk`
+- Action chunk inference through `predict_action_chunk`
 - Checkpoint save/load through the LeRobot policy APIs
 - Configurable LIBERO gripper action postprocessing
 
@@ -159,7 +159,7 @@ remains available on unsupported PyTorch or accelerator configurations.
 
 ### Predicted Video
 
-`--policy.return_predicted_video=true` makes `select_action` also return the predicted camera frames, shown by `lerobot-rollout --display_data=true`. Actions are unchanged. It adds a video denoising pass and a VAE decode per chunk.
+`--policy.return_predicted_video=true` makes each chunk also return the predicted camera frames, shown by `lerobot-rollout --display_data=true`. Actions are unchanged. It adds a video denoising pass and a VAE decode per chunk.
 
 ### LIBERO Action Toggle
 

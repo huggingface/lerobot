@@ -26,7 +26,6 @@ from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeatur
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -383,7 +382,7 @@ def make_eo1_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build pre/post processor pipelines for EO1."""
     if config.input_features is None:

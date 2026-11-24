@@ -23,7 +23,6 @@ from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05.memory import (
     causal_temporal_mask,
     encode_video_with_mem,
-    sample_observation_history,
     space_time_attention,
     temporal_sinusoidal_embedding,
 )
@@ -86,26 +85,6 @@ def test_delta_timestamps_respect_raw_robomme_rename_map():
 def test_pi05_memory_config_rejects_non_positive_values(field):
     with pytest.raises(ValueError, match=field):
         PI05Config(**{field: 0})
-
-
-def test_inference_history_order_and_padding():
-    history = [torch.full((2, 1), value) for value in range(11)]
-    values, padding = sample_observation_history(history, num_frames=3, stride=5, steps_seen=1)
-    assert values[:, :, 0].tolist() == [[0, 5, 10], [0, 5, 10]]
-    assert padding.tolist() == [[True, True, False], [True, True, False]]
-
-
-def test_inference_history_anchors_on_the_newest_frame():
-    """Ages are relative to the newest frame, so an over-long queue still ends at it."""
-    history = [torch.full((1, 1), value) for value in range(14)]
-    values, _ = sample_observation_history(history, num_frames=3, stride=5, steps_seen=99)
-    assert values[:, :, 0].tolist() == [[3, 8, 13]]
-
-
-def test_inference_history_rejects_a_too_short_queue():
-    history = [torch.zeros(1, 1) for _ in range(10)]
-    with pytest.raises(ValueError, match="need at least 11"):
-        sample_observation_history(history, num_frames=3, stride=5, steps_seen=99)
 
 
 @pytest.mark.dataset
@@ -336,39 +315,85 @@ def test_pi05_base_checkpoint_keeps_fresh_proprio_memory_projection():
     assert "model.proprio_history_proj.bias" in state_dict
 
 
-def _make_inference_memory_policy() -> PI05Policy:
+@pytest.mark.parametrize("visual,proprio", [(True, False), (False, True), (True, True)])
+def test_inference_windows_are_the_memory_training_windows(visual, proprio):
+    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.inference import policy_history
+    from lerobot.utils.constants import OBS_STATE
+
+    config = PI05Config(
+        use_visual_memory=visual, use_proprioceptive_memory=proprio, memory_frames=4, memory_stride=10
+    )
+    config.input_features = {
+        "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 224, 224)),
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+    }
     policy = PI05Policy.__new__(PI05Policy)
     nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(
-        n_action_steps=1,
-        use_visual_memory=True,
-        use_proprioceptive_memory=False,
-        memory_frames=3,
-        memory_stride=1,
-        image_features=["camera"],
+    policy.config = config
+    history = policy_history(config)
+    windows = {window.feature: list(window.offsets) for window in history.observations}
+    expected = {}
+    if visual:
+        expected["observation.images.top"] = [-30, -20, -10, 0]
+    if proprio:
+        expected[OBS_STATE] = [-30, -20, -10, 0]
+    assert windows == expected
+
+
+def test_predict_action_chunk_reads_memory_windows_and_padding_from_the_batch():
+    from lerobot.configs.types import FeatureType, PolicyFeature
+    from lerobot.utils.constants import (
+        ACTION,
+        OBS_LANGUAGE_ATTENTION_MASK,
+        OBS_LANGUAGE_TOKENS,
+        OBS_STATE,
     )
-    policy.reset()
-    return policy
 
+    camera = "observation.images.top"
+    config = PI05Config(
+        use_visual_memory=True,
+        use_proprioceptive_memory=True,
+        memory_frames=3,
+        memory_stride=2,
+        image_resolution=(16, 16),
+        device="cpu",
+    )
+    config.input_features = {
+        camera: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+    }
+    config.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))}
+    captured = {}
 
-def test_inference_memory_snapshots_observations_instead_of_storing_references():
-    policy = _make_inference_memory_policy()
-    observation = torch.ones(2, 1)
+    class SampleStub(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = nn.Parameter(torch.zeros(()))
 
-    policy._stack_inference_memory({"camera": observation})
-    observation.fill_(9)
-    history = policy._stack_inference_memory({"camera": observation})["camera"]
+        def sample_actions(self, images, img_masks, tokens, masks, *, states, state_masks, noise, **kwargs):
+            captured.update(images=images, img_masks=img_masks, states=states, state_masks=state_masks)
+            return torch.zeros(tokens.shape[0], config.chunk_size, config.max_action_dim)
 
-    assert history[:, :, 0].tolist() == [[1, 1, 9], [1, 1, 9]]
+    policy = PI05Policy.__new__(PI05Policy)
+    nn.Module.__init__(policy)
+    policy.config = config
+    policy.model = SampleStub()
+    # The first row starts its episode on this tick: its two past frames are padding.
+    is_pad = torch.tensor([[True, True, False], [False, False, False]])
+    batch = {
+        camera: torch.rand(2, 3, 3, 16, 16),
+        f"{camera}_is_pad": is_pad,
+        OBS_STATE: torch.randn(2, 3, 4),
+        f"{OBS_STATE}_is_pad": is_pad,
+        OBS_LANGUAGE_TOKENS: torch.ones(2, 5, dtype=torch.long),
+        OBS_LANGUAGE_ATTENTION_MASK: torch.ones(2, 5, dtype=torch.bool),
+    }
 
+    actions = policy.predict_action_chunk(batch)[ACTION]
 
-def test_inference_memory_requires_reset_before_batch_size_changes():
-    policy = _make_inference_memory_policy()
-    policy._stack_inference_memory({"camera": torch.ones(2, 1)})
-
-    with pytest.raises(ValueError, match="without policy.reset"):
-        policy._stack_inference_memory({"camera": torch.ones(1, 1)})
-
-    policy.reset()
-    history = policy._stack_inference_memory({"camera": torch.ones(1, 1)})["camera"]
-    assert history.shape == (1, 3, 1)
+    assert actions.shape == (2, config.chunk_size, 2)
+    assert captured["images"][0].shape == (2, 3, 3, 16, 16)
+    torch.testing.assert_close(captured["img_masks"][0], ~is_pad)
+    assert captured["states"].shape == (2, 3, config.max_state_dim)
+    torch.testing.assert_close(captured["state_masks"], ~is_pad)

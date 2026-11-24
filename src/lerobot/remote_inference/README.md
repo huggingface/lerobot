@@ -12,15 +12,15 @@ The objectives are uninterrupted local control while inference runs, explicit po
 
 The current system supports ordinary chunks, optional alignment/blending, and guided or trained RTC when the checkpoint supports the requested mode. Language generation uses the same serialized model worker and an immediate planned local wait. It does not overlap buffered policy motion today.
 
-One server process owns one deployment/model and admits one session. Sequential clients can acquire it after cleanup. Concurrent model sharing, batching, automatic reconnection, history-aware policy execution, model selection and public multi-tenant hosting remain outside this implementation.
+One server process owns one deployment/model and admits one session. Sequential clients can acquire it after cleanup. Concurrent model sharing, batching, automatic reconnection, model selection and public multi-tenant hosting remain outside this implementation.
 
 ### Local versus remote inference
 
-| Backend  | Model/processor owner            | Transport | Execution                                                                             |
-| -------- | -------------------------------- | --------- | ------------------------------------------------------------------------------------- |
-| `sync`   | Rollout control thread           | None      | Existing synchronous policy path, including the policy's own `select_action` behavior |
-| `rtc`    | Local inference worker           | None      | Asynchronous RTC through shared prediction/execution components                       |
-| `remote` | Server's exclusive policy worker | Zenoh     | Chunk, aligned/blended chunk, guided RTC or trained RTC                               |
+| Backend  | Model/processor owner            | Transport | Execution                                                                |
+| -------- | -------------------------------- | --------- | ------------------------------------------------------------------------ |
+| `sync`   | Rollout control thread           | None      | `ChunkExecutor`: each chunk predicted once the previous one has executed |
+| `rtc`    | Local inference worker           | None      | Asynchronous RTC through shared prediction/execution components          |
+| `remote` | Server's exclusive policy worker | Zenoh     | Chunk, aligned/blended chunk, guided RTC or trained RTC                  |
 
 A same-host server/client pair uses the remote backend. Local RTC means the separate, transport-free backend. Sync remains a distinct path; remote support cannot be inferred solely from a successful synchronous rollout.
 
@@ -116,9 +116,9 @@ Observation copying establishes ownership across threads, not distinct copies fo
 
 `FeatureSpec` describes data, not a captured value: name, shape, dtype, modality, ordered components and semantic convention. A six-joint state needs agreed order/units in addition to shape `(6,)`; a front RGB frame might have shape `(480, 640, 3)` and dtype `uint8`. Images are explicitly RGB HWC; arbitrary tensors are never inferred to be images. Action names/order/units describe canonical postprocessor output before robot-side processing and interpolation.
 
-The default policy contract requires current-observation inference and a truthful `predict_action_chunk` path. It bypasses the private per-step queues that `select_action` may maintain. Checkpoint history, temporal ensembling or executed-action feedback cannot be emulated by merely taking the latest frame. Policy-specific declarations may expose existing preparation, masking/resizing or horizon behavior; they cannot remove trained semantics to satisfy admission.
+The policy contract is `predict_action_chunk` on a batch in the training layout. The client records every tick and sends, with each request, the history the checkpoint declares: observation windows and past commands from its `inference_deltas`. The server validates that history against the declaration and lays it out as `[B, T, ...]` with `{key}_is_pad`; a session never reconstructs past ticks. Policy-specific declarations may expose existing preparation, masking/resizing or horizon behavior; they cannot remove trained semantics to satisfy admission.
 
-A policy's prediction length and intended ordinary execution slice are distinct. `ChunkPolicySpec` declares both, supported modes, whether the current observation suffices and whether session state is retained. `PolicyCapabilities` combines that declaration with the deployment's feature schema, action interval and language/RTC settings for admission. A server-owned plain-chunk slice may shorten execution but must fit the prediction and is unavailable for RTC deployments. Actual returned horizons must match declarations.
+A policy's prediction length and intended ordinary execution slice are distinct. `ChunkPolicySpec` declares both, supported modes, complete execution and whether session state is retained. `PolicyCapabilities` combines that declaration with the deployment's feature schema, action interval and language/RTC settings for admission. A server-owned plain-chunk slice may shorten execution but must fit the prediction and is unavailable for RTC deployments. Actual returned horizons must match declarations.
 
 ### Model versus canonical coordinates
 
@@ -159,11 +159,11 @@ This table distinguishes source-level compatibility from actual model execution 
 | π0-FAST                           | Candidate when `n_action_steps == chunk_size`; shorter decoded horizons need an accurate declaration.                                               | No remote HW acceptance established here.                                                                                |
 | EO1, WALL-X                       | Current-observation candidates with text heads. WALL-X FAST needs a complete saved generation-prompt/tokenizer pipeline.                            | Full checkpoint/action/text acceptance pending.                                                                          |
 | FastWAM                           | Needs a targeted declaration for `action_horizon` and training-only future frames, plus processor/schema validation.                                | Blocked by the inherited declaration; no real runner acceptance.                                                         |
-| FLUX.3                            | Frame conditioning needs declaration/processor work; history and previous-command conditioning need execution feedback support.                     | No compatible frame-conditioned checkpoint established.                                                                  |
-| LingBot-VA                        | Requires sampled keyframes, executed-action feedback, cache semantics and variable prediction horizons.                                             | Substantial execution extension; not a configuration-only adaptation.                                                    |
-| Diffusion, Multi-task DiT, VQ-BeT | Default history and/or per-step queue preparation do not satisfy the direct current-observation contract.                                           | Need sampling/preparation and horizon adaptation; single-observation exports require their own assessment.               |
-| TD-MPC                            | Queue preparation, time-major outputs and planning/action-repeat semantics need adaptation.                                                         | Unsupported by the current runner.                                                                                       |
-| Gaussian actor                    | No implemented `predict_action_chunk`; single-step and discrete outputs need a separate adapter/latency assessment.                                 | Unsupported by the current runner.                                                                                       |
+| FLUX.3                            | Image/state windows from its delta indices; past commands declared for past-action conditioning or command deltas. No RTC.                          | No compatible frame-conditioned checkpoint established.                                                                  |
+| LingBot-VA                        | Executes complete chunks and reads their keyframes as an observation window; the first chunk after a reset is shorter.                              | No remote HW acceptance established here.                                                                                |
+| Diffusion, Multi-task DiT, VQ-BeT | Observation windows from their delta indices, sent by the client.                                                                                   | No remote HW acceptance established here.                                                                                |
+| TD-MPC                            | Executes each planned chunk completely; MPC warm-starts from the previous plan until reset.                                                         | No remote HW acceptance established here.                                                                                |
+| Gaussian actor                    | One action per call; discrete outputs need a separate adapter/latency assessment.                                                                   | No remote HW acceptance established here.                                                                                |
 
 RTC and language are separate capabilities. Source declarations allow RTC for SmolVLA, π0, π0.5, FineART, EVO1, GR00T and continuous MolmoAct2, subject to each checkpoint's settings and continuation contract. Trained RTC additionally needs a trained delay/horizon declaration. FineART, EO1 and WALL-X expose text generation; this does not establish useful VQA or subtask planning. A checkpoint declaring an unregistered type such as `pi052` needs a faithful migration/export, not merely a renamed type or dropped configuration fields.
 
@@ -308,7 +308,7 @@ Client server-presence loss is latched. Returning liveliness does not restore th
 The deployment name supplies the configurable addressing namespace. Let:
 
 ```text
-D = lerobot/inference/v1/deployments/<deployment>
+D = lerobot/inference/v2/deployments/<deployment>
 I = D/instances/<instance>
 S = I/sessions/<session>
 ```
@@ -402,7 +402,6 @@ Each extension needs a concrete workload and a separate design decision before i
 | **Control budgets and operational reporting**                      | Revisit long serialized reset/invalidate waits or supervisor behavior after an unhealthy reset only when a concrete workload exposes a limitation. Preserve cleanup ordering, bounded cancellation, truthful readiness and unsuccessful CLI outcomes for terminal faults.                                   |
 | **Per-kind language capabilities**                                 | Consider separate VQA/subtask negotiation if actual model/processor behavior requires it. Do not infer one capability from useful output in the other.                                                                                                                                                      |
 | **Multiple clients sharing one loaded model**                      | Isolate policy/processor/planner state, bound per-session work, and define scheduling and latency-based admission before allowing two clients. Sharing weights does not make resets, language work or continuation state shareable.                                                                         |
-| **History- or feedback-aware policies**                            | Specify observation sampling, actual executed-action feedback, variable horizons and reset/cache semantics for one required policy. Latest-frame snapshots cannot reproduce synchronous history; alignment/blending makes predicted versus executed feedback especially important.                          |
 | **Task-based model selection**                                     | Select one compatible deployment/instance explicitly, invalidate incompatible continuation and establish the new policy state. Do not broadcast observations and race competing action outputs.                                                                                                             |
 | **Batching, concurrent text/action calls or recoverable sessions** | Introduce one capability at a time with explicit scheduling, protocol and state guarantees. These are broader changes than routed single-client operation; public multi-tenant serving requires further isolation and authorization design.                                                                 |
 

@@ -36,7 +36,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
 
 
 class FakeFastWAMCore(nn.Module):
@@ -158,7 +158,8 @@ def test_preprocessor_passes_images_through_and_postprocessor_toggles_actions(tm
     assert torch.equal(dataset_stats["observation.images.image"]["mean"], torch.full((3, 1, 1), 0.2))
     assert any(isinstance(step, FastWAMActionToggleProcessorStep) for step in loaded_postprocessor.steps)
     assert torch.equal(
-        loaded_postprocessor(torch.tensor([[0.25, 0.5, 1.0]])), torch.tensor([[0.25, 0.5, -1.0]])
+        loaded_postprocessor({ACTION: torch.tensor([[0.25, 0.5, 1.0]])})[ACTION],
+        torch.tensor([[0.25, 0.5, -1.0]]),
     )
 
 
@@ -208,7 +209,8 @@ def test_relative_actions_opt_in_on_a_saved_checkpoint(tmp_path, saved_with_rela
     state = torch.tensor([[1.0, 2.0, 3.0]])
     processed = preprocessor({OBS_STATE: state, ACTION: torch.tensor([[[2.0, 2.0, 0.5]]])})
     assert torch.equal(processed[ACTION], torch.tensor([[[1.0, 0.0, 0.5]]]))
-    assert torch.equal(postprocessor(torch.tensor([[[1.0, 0.0, 0.5]]])), torch.tensor([[[2.0, 2.0, 0.5]]]))
+    restored = postprocessor({**processed, ACTION: torch.tensor([[[1.0, 0.0, 0.5]]])})
+    assert torch.equal(restored[ACTION], torch.tensor([[[2.0, 2.0, 0.5]]]))
 
 
 def test_forward_returns_per_sample_losses_under_reduction_none(monkeypatch):
@@ -318,7 +320,7 @@ def test_policy_forward_and_predict_action_adapt_lerobot_batches(monkeypatch):
             OBS_STATE: torch.tensor([[0.0, 1.0], [2.0, 3.0]]),
             "task": ["task 0", "task 1"],
         }
-    )
+    )[ACTION]
 
     assert loss.item() == 1.0
     assert metrics["loss_action"] == 1.0
@@ -388,28 +390,23 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
         base_model_id=None,
     )
     policy = FastWAMPolicy(cfg)
-    # Rollout's --use_torch_compile wraps predict_action_chunk, so select_action must go through it.
-    chunk_calls = []
-    predict_action_chunk = policy.predict_action_chunk
-    policy.predict_action_chunk = lambda *args, **kwargs: chunk_calls.append(1) or predict_action_chunk(
-        *args, **kwargs
-    )
     batch = {
         "observation.images.top": torch.zeros(1, 3, 16, 16),
         "observation.images.wrist": torch.zeros(1, 3, 16, 16),
         "task": "task",
     }
 
-    outputs = [policy.select_action(batch) for _ in range(4)]
+    output = policy.predict_action_chunk(batch)
 
-    assert chunk_calls == [1]
-    assert [isinstance(output, dict) for output in outputs] == [True, False, True, False]
-    for output, t in ((outputs[0], 1), (outputs[2], 2)):
-        frames = output["prediction"]["observation"]
-        assert set(frames) == {"observation.images.top", "observation.images.wrist"}
-        assert frames["observation.images.top"].shape == (1, 3, 16, 16)
-        assert frames["observation.images.top"].unique().tolist() == [t]
-        assert frames["observation.images.wrist"].unique().tolist() == [10 + t]
+    assert output[ACTION].shape == (1, 8, 3)
+    # Of the 4 executed actions, the first shows clip frame 1 and the third frame 2.
+    assert output[PREDICTION]["observation_steps"] == [0, 2]
+    frames = output[PREDICTION]["observation"]
+    assert set(frames) == {"observation.images.top", "observation.images.wrist"}
+    assert frames["observation.images.top"].shape == (1, 2, 3, 16, 16)
+    for row, t in enumerate((1, 2)):
+        assert frames["observation.images.top"][:, row].unique().tolist() == [t]
+        assert frames["observation.images.wrist"][:, row].unique().tolist() == [10 + t]
 
 
 def test_cached_inference_paths_support_fullgraph_compile():

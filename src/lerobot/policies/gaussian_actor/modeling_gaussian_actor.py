@@ -17,6 +17,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -24,9 +25,11 @@ from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
 from lerobot.configs import PolicyFeature
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 from lerobot.utils.hub import split_hub_reference
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_gaussian_actor import GaussianActorConfig, is_image_feature
@@ -75,21 +78,13 @@ class GaussianActorPolicy(
         }
         return optim_params
 
-    def reset(self):
-        """Reset the policy"""
-        pass
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """One action per call."""
+        return ChunkPolicySpec(prediction_steps=1, execution_steps=1)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        raise NotImplementedError(
-            "GaussianActorPolicy does not support action chunking. It returns single actions!"
-        )
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select action for inference/evaluation"""
-
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Sample the next action, ``[B, 1, A]``; with discrete actions, the greedy one is appended."""
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
@@ -106,7 +101,7 @@ class GaussianActorPolicy(
                 )
             actions = torch.cat([actions, discrete_action], dim=-1)
 
-        return actions
+        return PolicyOutput(action=actions.unsqueeze(1))
 
     def forward(  # type: ignore[override]  # RL actor returns a dict
         self, batch: dict[str, Tensor | dict[str, Tensor]]
@@ -273,7 +268,7 @@ class GaussianActorObservationEncoder(nn.Module):
         - Caching these features can provide 2-4x speedup in training and inference
 
         Usage patterns:
-        - Called in select_action()
+        - Called in predict_action_chunk()
         - Called in learner.py's get_observation_features() to pre-compute features for all policy components
         - Called internally by forward()
 

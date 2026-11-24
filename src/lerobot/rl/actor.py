@@ -86,10 +86,11 @@ from torch.multiprocessing import Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.policies import make_policy, make_pre_post_processors
-from lerobot.processor import TransitionKey, policy_output_to_transition, transition_to_policy_action
+from lerobot.processor import TransitionKey
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed
@@ -313,9 +314,7 @@ def act_with_policy(
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             normalized_observation = preprocessor.process_observation(observation)
-            action = transition_to_policy_action(
-                policy_output_to_transition(policy.select_action(batch=normalized_observation))
-            )
+            action = policy.predict_action_chunk(normalized_observation)[ACTION][:, 0]
             # Unnormalize only the continuous part.
             if cfg.policy.num_discrete_actions is not None:
                 continuous_action = postprocessor.process_action(action[..., :-1])

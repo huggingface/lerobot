@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import time
-from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
@@ -38,16 +37,10 @@ from tests.utils import wait_for
 pytestmark = pytest.mark.dataset
 
 
-@pytest.mark.parametrize("temporal_contract", [False, True])
-def test_unsupported_local_policy_explains_sync_fallback_before_hardware(monkeypatch, temporal_contract):
+def test_undeclared_chunk_policy_is_refused_before_hardware(monkeypatch):
     policy = ControlledPolicy()
-    if temporal_contract:
-        spec = replace(policy.chunk_inference_spec(), current_observation_only=False)
-        monkeypatch.setattr(policy, "chunk_inference_spec", lambda: spec)
-        reason = "temporal observation sampling"
-    else:
-        policy.config.n_obs_steps = 2
-        reason = "n_obs_steps=1"
+    policy.config.chunk_size = None
+    reason = "no positive chunk_size"
     cfg = RolloutConfig(
         robot=MockRobotConfig(),
         policy=ACTConfig(device="cpu", pretrained_path=Path("unused")),
@@ -65,7 +58,7 @@ def test_unsupported_local_policy_explains_sync_fallback_before_hardware(monkeyp
         lambda: context.build_rollout_context(cfg, Event()),
         lambda: make_engine(policy=policy),
     ):
-        with pytest.raises(ValueError, match="--inference.type=sync") as raised:
+        with pytest.raises(ValueError, match="cannot run with local asynchronous inference") as raised:
             construct()
         assert reason in str(raised.value)
         assert isinstance(raised.value.__cause__, ValueError)

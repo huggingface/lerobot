@@ -223,10 +223,10 @@ def block_predict(worker):
     entered, release = Event(), Event()
     original = worker.runner.policy.predict_action_chunk
 
-    def predict(batch, **kwargs):
+    def predict(batch):
         entered.set()
         assert release.wait(5), "test did not release the policy worker"
-        return original(batch, **kwargs)
+        return original(batch)
 
     worker.runner.policy.predict_action_chunk = predict
     return entered, release

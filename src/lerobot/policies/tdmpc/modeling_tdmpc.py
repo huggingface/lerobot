@@ -23,10 +23,10 @@ The comments in this code may sometimes refer to these references:
 
 # ruff: noqa: N806
 
-from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
+from typing import Any
 
 import einops
 import numpy as np
@@ -35,10 +35,12 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_PREFIX, OBS_STATE, OBS_STR, REWARD
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy
-from ..utils import get_device_from_parameters, get_output_shape, populate_queues
+from ..utils import get_device_from_parameters, get_output_shape
 from .configuration_tdmpc import TDMPCConfig
 
 
@@ -88,40 +90,34 @@ class TDMPCPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def reset(self):
-        """
-        Clear observation and action queues. Clear previous means for warm starting of MPPI/CEM. Should be
-        called on `env.reset()`
-        """
-        self._queues = {
-            OBS_STATE: deque(maxlen=1),
-            ACTION: deque(maxlen=max(self.config.n_action_steps, self.config.n_action_repeats)),
-        }
-        if self.config.image_features:
-            self._queues[OBS_IMAGE] = deque(maxlen=1)
-        if self.config.env_state_feature:
-            self._queues[OBS_ENV_STATE] = deque(maxlen=1)
-        # Previous mean obtained from the cross-entropy method (CEM) used during MPC. It is used to warm start
-        # CEM for the next step.
+        """Clear the previous plan's mean, which warm starts MPPI/CEM. Call on `env.reset()`."""
         self._prev_mean: torch.Tensor | None = None
 
+    def _chunk_steps(self) -> int:
+        """Actions per call: the planned ``n_action_steps``, or the first one ``n_action_repeats`` times."""
+        return (
+            self.config.n_action_repeats if self.config.n_action_repeats > 1 else self.config.n_action_steps
+        )
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Execute every action of each call; planning restarts from the next observation."""
+        steps = self._chunk_steps()
+        return ChunkPolicySpec(prediction_steps=steps, execution_steps=steps)
+
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        batch = {key: torch.stack(list(self._queues[key]), dim=1) for key in batch if key in self._queues}
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Plan from the current observation and return the actions to execute, ``[B, T, A]``.
 
-        # Remove the time dimensions as it is not handled yet.
-        for key in batch:
-            assert batch[key].shape[1] == 1
-            batch[key] = batch[key][:, 0]
-
+        With MPC, consecutive calls warm start from the previous plan until ``reset()``.
+        """
         # NOTE: Order of observations matters here.
-        encode_keys = []
+        inputs = {}
         if self.config.image_features:
-            encode_keys.append(OBS_IMAGE)
+            inputs[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
         if self.config.env_state_feature:
-            encode_keys.append(OBS_ENV_STATE)
-        encode_keys.append(OBS_STATE)
-        z = self.model.encode({k: batch[k] for k in encode_keys})
+            inputs[OBS_ENV_STATE] = batch[OBS_ENV_STATE]
+        inputs[OBS_STATE] = batch[OBS_STATE]
+        z = self.model.encode(inputs)
         if self.config.use_mpc:  # noqa: SIM108
             actions = self.plan(z)  # (horizon, batch, action_dim)
         else:
@@ -129,39 +125,10 @@ class TDMPCPolicy(PreTrainedPolicy):
             # sequence dimension like in the MPC branch.
             actions = self.model.pi(z).unsqueeze(0)
 
-        actions = torch.clamp(actions, -1, +1)
-
-        return actions
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations."""
-        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
-        if ACTION in batch:
-            batch.pop(ACTION)
-
-        if self.config.image_features:
-            batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-            batch[OBS_IMAGE] = batch[next(iter(self.config.image_features))]
-        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
-        if ACTION in batch:
-            batch.pop(ACTION)
-
-        self._queues = populate_queues(self._queues, batch)
-
-        # When the action queue is depleted, populate it again by querying the policy.
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
-
-            if self.config.n_action_repeats > 1:
-                for _ in range(self.config.n_action_repeats):
-                    self._queues[ACTION].append(actions[0])
-            else:
-                # Action queue is (n_action_steps, batch_size, action_dim), so we transpose the action.
-                self._queues[ACTION].extend(actions[: self.config.n_action_steps])
-
-        action = self._queues[ACTION].popleft()
-        return action
+        actions = torch.clamp(actions, -1, +1).transpose(0, 1)
+        if self.config.n_action_repeats > 1:
+            return PolicyOutput(action=actions[:, :1].expand(-1, self.config.n_action_repeats, -1))
+        return PolicyOutput(action=actions[:, : self.config.n_action_steps])
 
     @torch.no_grad()
     def plan(self, z: Tensor) -> Tensor:

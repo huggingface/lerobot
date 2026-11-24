@@ -10,7 +10,6 @@ import itertools
 import json
 import math
 import re
-from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,7 +82,7 @@ from lerobot.policies.common.flow_matching import (
     sample_noise,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, PREDICTION
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 
 from .action_codec_g05 import G05NativeActionCodec, g05_codec_parts
@@ -1784,7 +1783,6 @@ class G05Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config, checkpoint_dir)
-        self._action_queue: deque[Tensor] = deque()
 
     def supports_text_generation(self) -> bool:
         """G0.5 can generate text."""
@@ -1866,10 +1864,6 @@ class G05Policy(PreTrainedPolicy):
             )
         policy.backend.load_action_codec()
         return policy
-
-    def reset(self) -> None:
-        """Clear the queued actions."""
-        self._action_queue.clear()
 
     def _apply_author_inference_precision(self) -> None:
         """Match the released serving path's BF16 weights with declared FP32 islands."""
@@ -1954,42 +1948,20 @@ class G05Policy(PreTrainedPolicy):
         return prediction
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """The action chunk, with what its same-pass chain of thought predicts in System 2.
 
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
         extends the prefill cache with the CoT tokens and the flow head then runs on
         that extended cache, so the action really is conditioned on this text rather
-        than merely accompanied by it. In System 2 the chunk comes back in a `PolicyOutput`
-        whose prediction holds each env's CoT subtask and boxes; System 1 generates no CoT
-        and returns the bare chunk.
+        than merely accompanied by it. In System 2 the prediction holds each env's CoT subtask
+        and boxes; System 1 generates no CoT and returns the chunk alone.
         """
         action, metadata = self._run_inference(batch)
         prediction = self._cot_prediction(metadata)
-        return PolicyOutput(action=action, prediction=prediction) if prediction else action
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
-        """Return the next action, refilling the queue when it empties.
-
-        The first action of a chunk carries the chunk's prediction (see `predict_action_chunk`).
-        """
-        prediction = None
-        if not self._action_queue:
-            output = self.predict_action_chunk(batch, **kwargs)
-            chunk, prediction = (
-                (output, None) if isinstance(output, Tensor) else (output[ACTION], output.get(PREDICTION))
-            )
-            if chunk.ndim != 3:
-                raise ValueError(f"G0.5 action chunk must be [B,T,D], got {tuple(chunk.shape)}.")
-            # LeRobot's synchronous select_action queue is intentionally batch-size one.
-            if chunk.shape[0] != 1:
-                raise ValueError(
-                    "G0.5 select_action requires batch size 1; use predict_action_chunk for B>1."
-                )
-            self._action_queue.extend(chunk[0, : self.config.n_action_steps])
-        action = self._action_queue.popleft().unsqueeze(0)
-        return PolicyOutput(action=action, prediction=prediction) if prediction else action
+        return (
+            PolicyOutput(action=action, prediction=prediction) if prediction else PolicyOutput(action=action)
+        )
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
         """Run the training forward pass."""

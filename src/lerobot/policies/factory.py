@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
-from lerobot.lerobot_types import PolicyAction
 from lerobot.processor import (
     PolicyProcessorPipeline,
     load_pretrained_policy_processors,
@@ -165,7 +164,7 @@ def make_pre_post_processors(
     **kwargs: Unpack[ProcessorConfigKwargs],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Create or load pre- and post-processor pipelines for a given policy.

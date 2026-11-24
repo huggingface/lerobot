@@ -17,7 +17,7 @@
 
 The sampling loop is a faithful re-implementation of the upstream streaming server
 (``wan_va/wan_va_server.py``) and LIBERO client (``evaluation/libero/client.py``), adapted
-to LeRobot's ``select_action`` interface:
+to LeRobot's chunk interface:
 
   * the trainable dual-stream transformer is owned as a sub-module and round-trips in the
     single ``model.safetensors`` checkpoint;
@@ -25,13 +25,13 @@ to LeRobot's ``select_action`` interface:
     ``config.wan_pretrained_path`` (not bundled), so the LeRobot checkpoint stays small;
   * ``predict_action_chunk`` runs one autoregressive chunk (video stream then action
     stream, each with CFG and its own flow-matching scheduler) and updates the KV cache;
-  * ``select_action`` drains a per-step action queue and records the real observed
-    keyframes that are fed back into the KV cache when the queue is refilled.
+  * the runner executes every chunk completely and hands the next call the real observed
+    keyframes, which are fed back into the KV cache (see ``predict_action_chunk``).
 
 NOTE: The streaming path is written for single-environment eval (``--eval.batch_size=1``).
 """
 
-from collections import deque
+from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -39,8 +39,9 @@ from einops import rearrange
 from torch import Tensor
 
 from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, PREDICTION
+from lerobot.utils.constants import ACTION, NOISE, VIDEO_NOISE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -151,32 +152,19 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return [p for p in self.transformer.parameters() if p.requires_grad]
 
     def reset(self):
-        """Reset all per-episode streaming state (KV cache, queues, frame counter)."""
+        """Reset all per-episode streaming state (KV cache, frame counter)."""
         cfg = self.config
-        self._action_queue: deque = deque(maxlen=cfg.n_action_steps)
-        self._obs_buffer: list = []  # raw keyframe obs (one per env substep) observed this chunk
         self._executed_actions: Tensor | None = (
             None  # last chunk's actions (model-normalized) for KV feedback
         )
-        self._started = False  # first select_action call uses the obs as the conditioning frame
-        self._exec_step = 0  # index of the action being executed within the current chunk
-        self._prev_j = 0  # sub-step index (within a predicted frame) of the last executed action
-        # Sample one keyframe every ``action_per_frame / temporal_downsample`` executed sub-steps so
-        # that exactly ``frame_chunk_size * temporal_downsample`` frames are VAE-encoded per chunk
-        # (the Wan2.2 VAE temporal downsample is 4 -> ``frame_chunk_size`` latent frames).
-        self._keyframe_stride = max(1, cfg.action_per_frame // 4)
         self._frame_st_id = 0
         self._first_chunk = True
+        self._chunk_steps = 0  # actions of the last chunk, whose keyframes the next call feeds back
         self._prompt: str | None = None
         self._prompt_embeds = None
         self._negative_prompt_embeds = None
         self.last_predicted_frames = None
         self.last_predicted_latents = None
-        # With ``return_predicted_video``: the current chunk's decoded clip, how many actions it
-        # spans, and the frame last returned (see ``_with_predicted_frame``).
-        self._chunk_frames: Tensor | None = None
-        self._chunk_len = 0
-        self._shown_frame = -1
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -404,76 +392,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         per_cam = [_encode(_clip(k), (self.config.height, self.config.width)) for k in keys]
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
-    @torch.no_grad()
-    def select_action(
-        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
-    ) -> Tensor | PolicyOutput:
-        """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
-
-        Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
-        the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
-        once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
-        into the KV cache before the next chunk is predicted.
-
-        With ``config.return_predicted_video``, returns a `PolicyOutput` whose prediction holds the
-        imagined camera frames matching the action being served (see ``_with_predicted_frame``).
-        """
-        self.eval()
-        self._ensure_frozen_modules()
-        self._maybe_init_prompt(batch)
-
-        if not self._started:
-            # First call: this observation conditions the first chunk (it is *not* a keyframe).
-            self._started = True
-            # [B, chunk_size, n_used]
-            actions = self._predict_and_decode(batch, noise=noise, video_noise=video_noise)
-            self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
-            self._obs_buffer = []
-            self._exec_step = 0
-        else:
-            # This observation is the result of the previously executed action -> a candidate
-            # keyframe. Buffer it on the sub-step boundary the upstream client samples on.
-            if (self._prev_j + 1) % self._keyframe_stride == 0:
-                self._obs_buffer.append(self._extract_raw_obs(batch))
-            if len(self._action_queue) == 0:
-                # All actions for the current chunk have been executed; feed the observed
-                # keyframes + executed actions back and predict the next chunk.
-                actions = self._predict_and_decode(None, noise=noise, video_noise=video_noise)
-                self._action_queue.extend(actions.transpose(0, 1))
-                self._exec_step = 0
-
-        self._prev_j = self._exec_step % self.config.action_per_frame
-        self._exec_step += 1
-        return self._with_predicted_frame(self._action_queue.popleft())
-
-    def _predict_and_decode(
-        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
-    ) -> Tensor:
-        """Predict the next chunk; with ``return_predicted_video``, also decode its imagined clip."""
-        actions, latents = self._predict_chunk(batch, noise=noise, video_noise=video_noise)
-        if self.config.return_predicted_video:
-            self._chunk_frames = self._decode_video_batch(latents)  # [B, T, H, W, 3] uint8
-            self._chunk_len = actions.shape[1]
-            self._shown_frame = -1
-        return actions
-
-    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
-        """Pair ``action`` with the imagined frame it belongs to, when that frame changes.
-
-        The clip's frames are spread evenly over the chunk's actions, so the imagined video plays
-        as the chunk executes. Returns the bare action when there is no new frame to show.
-        """
-        if self._chunk_frames is None:
-            return action
-        n_frames = self._chunk_frames.shape[1]
-        served = self._chunk_len - len(self._action_queue) - 1  # index of ``action`` in its chunk
-        index = min(served * n_frames // self._chunk_len, n_frames - 1)
-        if index == self._shown_frame:
-            return action
-        self._shown_frame = index
-        frames = self._chunk_frames[:, index].permute(0, 3, 1, 2)  # [B, 3, H, W], like camera frames
-        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
-
     def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
         """Split decoded ``[B, 3, H, W]`` frames back into the cameras they tile (inverse of the layout)."""
         keys, h, w = self.config.obs_cam_keys, self.config.height, self.config.width
@@ -483,26 +401,75 @@ class LingBotVAPolicy(PreTrainedPolicy):
             return {keys[0]: head, keys[1]: left, keys[2]: right}
         return dict(zip(keys, frames.split(w, dim=3), strict=True))
 
-    @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        video_noise: Tensor | None = None,
-    ) -> Tensor:
-        """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized).
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Complete chunks: the KV cache holds the executed actions and the frames they led to.
 
-        ``noise`` is the starting action sample ``[1, action_dim, frame_chunk_size, action_per_frame, 1]``
-        and ``video_noise`` the starting video latent ``[1, 48, frame_chunk_size, latent_h, latent_w]``. When
-        None, each is drawn with ``torch.randn``.
+        The first chunk after a reset is one frame of actions shorter.
         """
-        return self._predict_chunk(batch, noise=noise, video_noise=video_noise)[0]
+        cfg = self.config
+        return ChunkPolicySpec(
+            prediction_steps=cfg.chunk_size, execution_steps=cfg.chunk_size, complete_execution=True
+        )
+
+    @torch.no_grad()
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Run one autoregressive chunk and return actions ``[B, T, n_used]`` (normalized).
+
+        The cameras hold the frame after every ``frame_stride``-th action of the last chunk,
+        ``[B, K, C, H, W]``, the last one current (the config's ``inference_deltas``). The first
+        call after a reset conditions on the current frame and returns
+        ``chunk_size - action_per_frame`` actions; every later call feeds the KV cache the
+        keyframes of the previous chunk, in the upstream client's pattern, so that exactly
+        ``frame_chunk_size * 4`` frames are VAE-encoded per chunk, and returns ``chunk_size``
+        actions.
+
+        With ``return_predicted_video``, the prediction holds the imagined clip per camera,
+        ``[B, F, 3, H, W]``, its frames spread evenly over the chunk's actions
+        (``observation_steps``).
+
+        The batch's ``noise`` is the starting action sample
+        ``[1, action_dim, frame_chunk_size, action_per_frame, 1]`` and its ``video_noise`` the
+        starting video latent ``[1, 48, frame_chunk_size, latent_h, latent_w]``. When absent,
+        each is drawn with ``torch.randn``.
+        """
+        keys = self.config.obs_cam_keys
+        if not all(batch[key].ndim == 5 for key in keys):
+            raise ValueError("LingBot-VA reads its camera windows [B, K, C, H, W] (see inference_deltas).")
+        fed = 1 if self._first_chunk else self._chunk_steps // self.config.frame_stride
+        keyframes = [{key: batch[key][:, index] for key in keys} for index in range(-fed, 0)]
+        batch = {**batch, **keyframes[-1]}  # the current frame
+        actions, latents = self._predict_chunk(
+            batch,
+            [] if self._first_chunk else keyframes,
+            noise=batch.get(NOISE),
+            video_noise=batch.get(VIDEO_NOISE),
+        )
+        self._chunk_steps = actions.shape[1]
+        if not self.config.return_predicted_video:
+            return PolicyOutput(action=actions)
+        clip = self._decode_video_batch(latents)  # [B, F, H, W, 3] uint8
+        n_frames, n_actions = clip.shape[1], actions.shape[1]
+        cameras = self._split_cameras(clip.flatten(0, 1).permute(0, 3, 1, 2))
+        observation = {key: value.unflatten(0, clip.shape[:2]) for key, value in cameras.items()}
+        # Frame f shows from the first action whose evenly spread frame index reaches it; with
+        # more frames than actions, the trailing frames belong to the chunk's last action.
+        steps = [min(-(-f * n_actions // n_frames), n_actions - 1) for f in range(n_frames)]
+        return PolicyOutput(
+            action=actions, prediction={"observation": observation, "observation_steps": steps}
+        )
 
     def _predict_chunk(
-        self, batch: dict[str, Tensor] | None, *, noise: Tensor | None, video_noise: Tensor | None
+        self,
+        batch: dict[str, Tensor],
+        keyframes: list[dict[str, Tensor]],
+        *,
+        noise: Tensor | None,
+        video_noise: Tensor | None,
     ) -> tuple[Tensor, Tensor]:
-        """Run one autoregressive chunk; return its actions and predicted video latents."""
+        """Run one autoregressive chunk; return its actions and predicted video latents.
+
+        ``keyframes`` are the observations fed back after the previous chunk (none for the first).
+        """
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)
@@ -512,13 +479,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
             init_latent = self._encode_frames([self._extract_raw_obs(batch)])
             self._init_latent = init_latent
             self._init_streaming_cache(init_latent)
-            self._obs_buffer = []  # frame 0 (the init obs) conditions the chunk; it is not fed back
             actions, latents = self._infer(init_latent, frame_st_id=0, noise=noise, video_noise=video_noise)
             self._first_chunk = False
         else:
             # Feed the real observed keyframes + the executed actions back into the KV cache.
-            self._compute_kv_cache(self._obs_buffer, self._executed_actions)
-            self._obs_buffer = []
+            self._compute_kv_cache(keyframes, self._executed_actions)
             actions, latents = self._infer(
                 None, frame_st_id=self._frame_st_id, noise=noise, video_noise=video_noise
             )

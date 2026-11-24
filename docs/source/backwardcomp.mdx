@@ -52,8 +52,8 @@ preprocessor, postprocessor = make_pre_post_processors(
 
 # Process data through pipeline
 processed_batch = preprocessor(raw_batch)
-action = policy.select_action(processed_batch)
-final_action = postprocessor(action)
+actions = policy.predict_action_chunk(processed_batch)
+final_actions = postprocessor(actions)
 ```
 
 ## Hardware API redesign
@@ -135,10 +135,9 @@ Then, add these same transformations to your inference script (shown here for a 
 ```diff
 action_values = predict_action(
     observation_frame,
-    policy,
+    engine,
+    timestamp,
     get_safe_torch_device(policy.config.device),
-    preprocessor,
-    postprocessor,
     policy.config.use_amp,
     task=single_task,
     robot_type=robot.robot_type,

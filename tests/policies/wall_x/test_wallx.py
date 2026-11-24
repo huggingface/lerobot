@@ -46,7 +46,7 @@ from lerobot.processor import (  # noqa: E402
     batch_to_transition,
     transition_to_batch,
 )
-from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
+from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT  # noqa: E402
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
@@ -501,8 +501,7 @@ def test_policy_instantiation():
     batch = preprocessor(batch)
     try:
         with torch.no_grad():
-            action = policy.select_action(batch)
-            action = postprocessor(action)
+            action = postprocessor(policy.predict_action_chunk(batch))[ACTION]
             print(f"Action: {action}")
         print(f"Action prediction successful. Action shape: {action.shape}")
     except Exception as e:

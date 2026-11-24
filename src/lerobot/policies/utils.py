@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-from collections import deque
 
 import torch
 from torch import nn
@@ -24,31 +23,6 @@ from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
-
-
-def populate_queues(
-    queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
-):
-    """Append the batch's values to their per-key deques (filling them on first use).
-
-    Policies using this helper hold the dict as ``self._queues``, one of the names
-    ``PreTrainedPolicy._action_queue_attrs`` knows how to clear.
-    """
-    if exclude_keys is None:
-        exclude_keys = []
-    for key in batch:
-        # Ignore keys not in the queues already (leaving the responsibility to the caller to make sure the
-        # queues have the keys they want).
-        if key not in queues or key in exclude_keys:
-            continue
-        if len(queues[key]) != queues[key].maxlen:
-            # initialize by copying the first observation several times until the queue is full
-            while len(queues[key]) != queues[key].maxlen:
-                queues[key].append(batch[key])
-        else:
-            # add latest observation to the queue
-            queues[key].append(batch[key])
-    return queues
 
 
 def get_device_from_parameters(module: nn.Module) -> torch.device:

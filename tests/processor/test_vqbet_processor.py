@@ -153,7 +153,7 @@ def test_vqbet_processor_cuda():
     assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION])
+    postprocessed = postprocessor({ACTION: processed[TransitionKey.ACTION]})[ACTION]
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"

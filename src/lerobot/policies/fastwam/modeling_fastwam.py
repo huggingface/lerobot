@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +22,10 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.lerobot_types import PolicyOutput
+from lerobot.lerobot_types import PolicyOutput, PolicyPrediction
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
+from lerobot.utils.constants import NOISE, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
@@ -226,7 +225,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         return [p for p in params if p.requires_grad]
 
     def reset(self) -> None:
-        self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
         # Per-episode text-embedding cache (mirrors LingBot-VA's `_prompt_embeds`). The task is
         # fixed for an episode, so the ~11GB UMT5 encoder runs once on the first chunk and every
         # later chunk reuses the result. Cleared here so a new episode's task is re-encoded.
@@ -234,10 +232,6 @@ class FastWAMPolicy(PreTrainedPolicy):
         self._cached_prompt: Any = None
         self._cached_context: Tensor | None = None
         self._cached_context_mask: Tensor | None = None
-        # return_predicted_video state
-        self._chunk_clip: Tensor | None = None
-        self._served = 0
-        self._shown_frame = -1
 
     def _encode_prompt_cached(self, prompt: Any) -> tuple[Tensor, Tensor]:
         """Encode `prompt` to `(context, context_mask)`, reusing the cache when the prompt is
@@ -303,25 +297,32 @@ class FastWAMPolicy(PreTrainedPolicy):
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
-            noise (Tensor | None): Optional starting action sample of shape
-                `[B, action_horizon, action_dim]`. When None, each sample draws it with
-                the seed in `batch["seed"]`, or `config.inference_seed` if the batch has none.
+                `batch["noise"]` optionally holds the starting action sample `[B, action_horizon,
+                action_dim]`; without it each sample draws one with the seed in `batch["seed"]`, or
+                `config.inference_seed` if the batch has none.
 
         Returns:
-            Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
+            PolicyOutput: The chunk `[B, action_horizon, action_dim]` under `"action"` and, with
+            `return_predicted_video`, the predicted frames per camera under `"prediction"`.
         """
+        noise = batch.get(NOISE)
+
         self.eval()
         per_item = self._per_item_infer_kwargs(batch, noise=noise)
-        action = torch.cat(
+        actions = torch.cat(
             [_action_from_model_output(self.model.infer_action(**kwargs)) for kwargs in per_item], dim=0
+        ).to(device=batch_device(batch), dtype=torch.float32)
+        if not self.config.return_predicted_video:
+            return PolicyOutput(action=actions)
+        return PolicyOutput(
+            action=actions, prediction=self._video_prediction(self._predict_video(batch, actions))
         )
-        return action.to(device=batch_device(batch), dtype=torch.float32)
 
     def _per_item_infer_kwargs(
         self, batch: dict[str, Tensor], *, noise: Tensor | None
@@ -357,41 +358,28 @@ class FastWAMPolicy(PreTrainedPolicy):
             ]
         )
 
-    @torch.no_grad()
-    def select_action(
-        self, batch: dict[str, Tensor], *, noise: Tensor | None = None
-    ) -> Tensor | PolicyOutput:
-        self.eval()
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._chunk_clip = (
-                self._predict_video(batch, actions) if self.config.return_predicted_video else None
-            )
-            self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
-            self._served = 0
-            self._shown_frame = -1
-        return self._with_predicted_frame(self._action_queue.popleft())
+    def _video_prediction(self, clip: Tensor) -> PolicyPrediction:
+        """The clip's frames per camera, each with the first executed action it shows.
 
-    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
-        """Attach the predicted frame for `action`, only when it changes."""
-        served = self._served
-        self._served += 1
-        if self._chunk_clip is None:
-            return action
-        n_frames = self._chunk_clip.shape[1]
-        horizon = self.config.action_horizon
-        index = min(((served + 1) * (n_frames - 1) + horizon - 1) // horizon, n_frames - 1)
-        if index == self._shown_frame:
-            return action
-        self._shown_frame = index
-        frames = self._chunk_clip[:, index].permute(0, 3, 1, 2)
-        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
+        Action ``s`` of the chunk shows frame ``ceil((s + 1) * (F - 1) / action_horizon)``: the
+        clip spans the whole horizon and its first frame is the current observation.
+        """
+        n_frames, horizon = clip.shape[1], self.config.action_horizon
+        frames: list[int] = []
+        steps: list[int] = []
+        for step in range(self.config.n_action_steps):
+            index = min(((step + 1) * (n_frames - 1) + horizon - 1) // horizon, n_frames - 1)
+            if not frames or frames[-1] != index:
+                frames.append(index)
+                steps.append(step)
+        views = self._split_cameras(clip[:, frames].permute(0, 1, 4, 2, 3))  # [B, F, 3, H, W]
+        return {"observation": views, "observation_steps": steps}
 
     def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
         """Inverse of the width-wise camera concat in `_stack_video_from_images` (equal widths)."""
         keys = sorted(self.config.image_features)
         width = int(self.config.image_size[1]) // len(keys)
-        return dict(zip(keys, frames[..., : width * len(keys)].split(width, dim=3), strict=True))
+        return dict(zip(keys, frames[..., : width * len(keys)].split(width, dim=-1), strict=True))
 
     def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.

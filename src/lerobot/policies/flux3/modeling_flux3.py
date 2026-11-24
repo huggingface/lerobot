@@ -22,7 +22,7 @@ and computes the configured flow-matching loss. The conditioning layout, action 
 pooling are explicit config choices rather than robot-name modes.
 
 Inference (``predict_action_chunk``) starts the unknown future streams from noise and denoises them jointly.
-``select_action`` queues the configured execution horizon. Saved processors own normalization, observation
+Runners execute the configured execution horizon. Saved processors own normalization, observation
 history and reconstruction of absolute commands when consecutive command deltas are used.
 
 """
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from typing import Any, cast
@@ -39,6 +39,7 @@ from typing import Any, cast
 import torch
 from torch import Tensor, nn
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.policies.flux3.f3 import (
@@ -63,8 +64,8 @@ from lerobot.policies.flux3.f3 import (
     unused_content_key,
 )
 from lerobot.policies.flux3.processor_flux3 import PAST_ACTIONS
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.policies.pretrained import PreTrainedPolicy, rtc_inputs
+from lerobot.utils.constants import ACTION, NOISE, OBS_STATE, VIDEO_NOISE
 
 from .utils import resolve_weights
 
@@ -236,9 +237,6 @@ class Flux3Policy(PreTrainedPolicy):
                 {"params": heads, "lr": self.config.optimizer_lr * self.config.optimizer_lr_heads_multiplier}
             )
         return groups
-
-    def reset(self) -> None:
-        self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         """LoRA on every attention / MLP projection of the DiT; the fresh heads train in full."""
@@ -593,20 +591,16 @@ class Flux3Policy(PreTrainedPolicy):
         return out[ak][0].float() / cfg.action_scale
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Any],
-        *,
-        noise: Tensor | None = None,
-        video_noise: Tensor | None = None,
-        **kwargs: Any,
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Observation batch -> ``(B, chunk_size, action_dim)`` in the (normalized) action space of the dataset.
 
         ``noise`` is the starting action sample ``(B, action_dim, chunk_size)`` and ``video_noise`` the
         starting video latent ``(B, 96, n_pred, *latent_hw)``, where ``n_pred`` is the number of predicted
         latent frames. When None, each is drawn from a CPU generator seeded with ``inference_seed``.
         """
+        noise = batch.get(NOISE)
+        video_noise = batch.get(VIDEO_NOISE)
+        kwargs = rtc_inputs(batch)
         if kwargs:
             raise NotImplementedError("flux3 does not implement RTC inference arguments yet")
         self.eval()
@@ -640,28 +634,4 @@ class Flux3Policy(PreTrainedPolicy):
                     video_noise=video_noise[i : i + 1] if video_noise is not None else None,
                 )
             )
-        return self._flip(torch.stack(chunks)).float()
-
-    @torch.no_grad()
-    def select_action(
-        self,
-        batch: dict[str, Any],
-        *,
-        noise: Tensor | None = None,
-        video_noise: Tensor | None = None,
-        **kwargs: Any,
-    ) -> Tensor:
-        if self.config.use_relative_actions:
-            raise NotImplementedError(
-                "flux3 relative-action execution requires RTC, which is not implemented yet. "
-                "predict_action_chunk is available for offline evaluation; training remains supported."
-            )
-        if kwargs:
-            raise NotImplementedError("flux3 does not implement RTC inference arguments yet")
-        self.eval()
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise, video_noise=video_noise)[
-                :, : self.config.n_action_steps
-            ]
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        return PolicyOutput(action=self._flip(torch.stack(chunks)).float())

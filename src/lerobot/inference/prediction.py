@@ -20,32 +20,22 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 import torch
 
-from lerobot.lerobot_types import PolicyOutput, PolicyPrediction
+from lerobot.lerobot_types import PolicyPrediction, TransitionKey
 from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
-    RelativeActionsProcessorStep,
-    policy_output_to_transition,
-    transition_to_policy_action,
-    transition_to_prediction,
+    PolicyProcessorStep,
+    batch_to_transition,
+    transition_to_batch,
 )
+from lerobot.utils.constants import ACTION, ACTION_ANCHOR, RTC_INFERENCE_DELAY, RTC_PREV_CHUNK_LEFT_OVER
 
 from .contracts import ChunkPolicySpec, ExecutionMode
-
-
-class _RTCPredictActionChunk(Protocol):
-    def __call__(
-        self,
-        batch: dict[str, Any],
-        *,
-        inference_delay: int,
-        prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor | PolicyOutput: ...
 
 
 @contextmanager
@@ -61,7 +51,7 @@ def chunk_inference_context(mode: ExecutionMode) -> Iterator[None]:
 
 @dataclass(frozen=True)
 class ChunkPrediction:
-    """Validated unbatched actions on the policy device, before transport packing.
+    """Validated ``[B, T, A]`` actions on the policy device, before transport packing.
 
     Model coordinates are detached and cloned before canonical postprocessing can
     mutate them. ``predicted_at`` separates policy and postprocessing diagnostics.
@@ -70,7 +60,7 @@ class ChunkPrediction:
     model_actions: torch.Tensor
     canonical_actions: torch.Tensor
     predicted_at: float
-    # What the policy returned besides the actions (see `PreTrainedPolicy.select_action`), if anything.
+    # What the policy returned besides the actions (see `PreTrainedPolicy.predict_action_chunk`), if anything.
     prediction: PolicyPrediction | None = None
 
 
@@ -81,7 +71,7 @@ def _prepare_continuation(
     model_action_dim: int,
     horizon: int,
     device: str | torch.device,
-    relative_step: RelativeActionsProcessorStep | None,
+    anchor: torch.Tensor | None,
     normalizer_step: NormalizerProcessorStep | None,
 ) -> torch.Tensor | None:
     if model is None or model.numel() == 0:
@@ -93,13 +83,10 @@ def _prepare_continuation(
         or not torch.isfinite(model).all()
     ):
         raise ValueError("Invalid model-space continuation.")
-    if relative_step is not None:
+    if anchor is not None:
         if canonical is None or canonical.shape != model.shape or not torch.isfinite(canonical).all():
             raise ValueError("Relative RTC requires matching finite canonical continuation.")
-        state = relative_step.get_cached_state()
-        if state is None:
-            raise ValueError("Relative RTC preprocessor did not cache the current raw state.")
-        model = reanchor_relative_rtc_prefix(canonical, state, relative_step, normalizer_step, device)
+        model = reanchor_relative_rtc_prefix(canonical, anchor, normalizer_step, device)
     model = model.to(device)
     if len(model) < horizon:
         # Zero in normalized coordinates decodes to the dataset mean, not hold.
@@ -121,25 +108,30 @@ def predict_chunk(
     inference_delay: int = 0,
     model_continuation: torch.Tensor | None = None,
     canonical_continuation: torch.Tensor | None = None,
-    relative_step: RelativeActionsProcessorStep | None = None,
+    relative: bool = False,
     normalizer_step: NormalizerProcessorStep | None = None,
 ) -> ChunkPrediction:
     """Predict and validate under exclusive policy/processor ownership.
 
-    Retain the first model width across calls. Canonical postprocessing may crop
-    padding; relative RTC requires matching widths. This function owns no scheduling.
+    ``prepared`` is the preprocessor's output. The policy runs as a
+    :class:`~lerobot.processor.PolicyProcessorStep` and the postprocessor on what it
+    returned, so the model chunk (``prediction["action"]``) and the canonical command
+    (``action``) come out of one pass. Retain the first model width across calls; canonical
+    postprocessing may crop padding; relative RTC requires matching widths and re-anchors
+    the continuation on the batch's ``action_anchor``. A complete-execution policy may
+    return fewer than ``prediction_steps`` actions. Plain chunks may be batched (batched
+    environments); RTC continues a single robot's chunk. This function owns no scheduling.
     """
+    batch = dict(prepared)
     with chunk_inference_context(mode):
-        if mode is ExecutionMode.CHUNK:
-            predicted = policy.predict_action_chunk(prepared)
-        else:
+        if mode is not ExecutionMode.CHUNK:
             prefix = _prepare_continuation(
                 model_continuation,
                 canonical_continuation,
                 model_action_dim=model_action_dim or canonical_action_dim,
                 horizon=rtc_horizon,
                 device=device,
-                relative_step=relative_step,
+                anchor=batch.get(ACTION_ANCHOR) if relative else None,
                 normalizer_step=normalizer_step,
             )
             if inference_delay < 0:
@@ -150,42 +142,42 @@ def predict_chunk(
                 available = 0 if model_continuation is None else len(model_continuation)
                 if inference_delay > min(spec.training_max_delay, available, rtc_horizon):
                     raise ValueError("Trained RTC delay exceeds checkpoint or available continuation limits.")
-            predict = cast(_RTCPredictActionChunk, policy.predict_action_chunk)
-            predicted = predict(prepared, inference_delay=inference_delay, prev_chunk_left_over=prefix)
+            batch[RTC_INFERENCE_DELAY] = inference_delay
+            batch[RTC_PREV_CHUNK_LEFT_OVER] = prefix
+        transition = PolicyProcessorStep(policy)(batch_to_transition(batch))
         predicted_at = time.perf_counter()
-        # A policy may return the chunk with a prediction; only the actions are validated and postprocessed.
-        output = policy_output_to_transition(predicted)
-        predicted = transition_to_policy_action(output)
+        prediction: dict[str, Any] = dict(transition[TransitionKey.PREDICTION] or {})
+        predicted = prediction.pop("action")
         if (
-            not isinstance(predicted, torch.Tensor)
-            or predicted.ndim != 3
-            or predicted.shape[:2] != (1, spec.prediction_steps)
+            predicted.ndim != 3
+            or (predicted.shape[0] != 1 and mode is not ExecutionMode.CHUNK)
+            or not spec.accepts(predicted.shape[1])
             or predicted.shape[2] <= 0
             or not predicted.is_floating_point()
             or not torch.isfinite(predicted).all()
         ):
             raise ValueError(
-                "Policy must return finite floating actions with its declared batch and horizon."
+                f"{type(policy).__name__} must return [B, {spec.prediction_steps}, A] finite floating "
+                f"actions (B = 1 with RTC), got {tuple(predicted.shape)}."
             )
         if model_action_dim is not None and predicted.shape[2] != model_action_dim:
             raise ValueError("Policy model action width changed after initial prediction.")
         # Older local policies can omit action feature metadata. Keep their
         # existing model-width fallback; remote admission requires explicit width.
         canonical_width = canonical_action_dim or predicted.shape[2]
-        if relative_step is not None and rtc_horizon and predicted.shape[2] != canonical_width:
+        if relative and rtc_horizon and predicted.shape[2] != canonical_width:
             raise ValueError("Relative RTC with different model/canonical widths requires a custom adapter.")
-        # Preserve coordinates before a postprocessor may modify its argument.
-        original = predicted.detach().clone()
-        canonical = postprocessor(predicted)
-        expected = (1, spec.prediction_steps, canonical_width)
+        canonical = postprocessor(transition_to_batch(transition))[ACTION]
+        prediction_steps = predicted.shape[1]
+        expected = (predicted.shape[0], prediction_steps, canonical_width)
         if not isinstance(canonical, torch.Tensor) or tuple(canonical.shape) != expected:
             raise ValueError(f"Policy/processor must return action shape {expected}.")
         if not canonical.is_floating_point() or not torch.isfinite(canonical).all():
             raise ValueError("Policy/processor returned non-finite or non-floating actions.")
-        steps = spec.execution_steps if mode is ExecutionMode.CHUNK else spec.prediction_steps
+        steps = spec.steps_to_execute(prediction_steps) if mode is ExecutionMode.CHUNK else prediction_steps
         return ChunkPrediction(
-            original[0, :steps],
-            canonical[0, :steps].detach(),
+            predicted.detach()[:, :steps],
+            canonical[:, :steps].detach(),
             predicted_at,
-            transition_to_prediction(output) or None,
+            cast(PolicyPrediction, prediction) if prediction else None,
         )

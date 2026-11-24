@@ -16,7 +16,6 @@
 
 import builtins
 import logging
-from collections import deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
@@ -50,8 +49,11 @@ else:
     sdpa_attention_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs import PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import rtc_inputs
 from lerobot.utils.constants import (
     ACTION,
+    NOISE,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
@@ -75,7 +77,7 @@ from ..common.vla_utils import (
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
-from .memory import encode_video_with_mem, sample_observation_history
+from .memory import encode_video_with_mem
 
 
 def _prepare_trained_rtc_prefix(
@@ -1313,33 +1315,6 @@ class PI05Policy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):
-        """Reset internal state at the shared boundary of a batched rollout.
-
-        ``lerobot-eval`` calls this before every rollout and before resetting the
-        vector environment. MEM inference queues therefore assume all batch rows
-        share episode boundaries; independently autoresetting rows is unsupported.
-        """
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-        self._queues = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
-            # The sampled ages are relative to the current step, so every step shifts
-            # all of them: a dense ring buffer spanning the whole horizon is the
-            # smallest structure that keeps inference aligned with the training
-            # `delta_indices`. Storing only `memory_frames` observations would pin the
-            # history to an absolute grid and drift up to `memory_stride` out of phase.
-            history_length = (self.config.memory_frames - 1) * self.config.memory_stride + 1
-            memory_keys = []
-            if self.config.use_visual_memory:
-                memory_keys.extend(self.config.image_features)
-            if self.config.use_proprioceptive_memory:
-                memory_keys.append(OBS_STATE)
-            self._memory_queues = {key: deque(maxlen=history_length) for key in memory_keys}
-            self._memory_steps_seen = 0
-            self._memory_batch_size = None
-
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
@@ -1451,86 +1426,23 @@ class PI05Policy(PreTrainedPolicy):
         )
         return states, state_masks
 
-    def _stack_inference_memory(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        """Record one homogeneous-batch observation and attach MEM histories."""
-        if not (self.config.use_visual_memory or self.config.use_proprioceptive_memory):
-            return batch
-        result = dict(batch)
-        for key, queue in self._memory_queues.items():
-            if key not in batch:
-                continue
-            value = batch[key]
-            batch_size = value.shape[0]
-            if self._memory_batch_size is None:
-                self._memory_batch_size = batch_size
-            elif batch_size != self._memory_batch_size:
-                raise ValueError(
-                    "MEM inference batch size changed without policy.reset(); "
-                    f"expected {self._memory_batch_size}, got {batch_size}"
-                )
-            if not queue:
-                # Queue entries are snapshots that are never mutated in place, so the
-                # pre-episode fill can share one clone instead of `maxlen` copies.
-                queue.extend([value.clone()] * queue.maxlen)
-            else:
-                queue.append(value.clone())
-            result[key], result[f"{key}_is_pad"] = sample_observation_history(
-                list(queue),
-                num_frames=self.config.memory_frames,
-                stride=self.config.memory_stride,
-                steps_seen=self._memory_steps_seen + 1,
-            )
-        self._memory_steps_seen += 1
-        return result
-
     def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Select a single action given environment observations."""
-        assert not self._rtc_enabled(), (
-            "RTC is not supported for select_action, use it with predict_action_chunk"
-        )
-
-        self.eval()
-        if self.config.use_visual_memory or self.config.use_proprioceptive_memory:
-            batch = self._stack_inference_memory(batch)
-
-        # Action queue logic for n_action_steps > 1
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
-            # Transpose to get shape (n_action_steps, batch_size, action_dim)
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
-
-    @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions given environment observations.
 
-        `noise` is the starting sample of the denoising loop, shaped
-        (batch_size, chunk_size, max_action_dim). When it is None, fresh noise is drawn.
+        With MEM, the memorized cameras and/or state come as their ``memory_frames`` window
+        ``[B, T, ...]`` with ``{key}_is_pad``, like in training. `noise` is the starting sample
+        of the denoising loop, shaped (batch_size, chunk_size, max_action_dim). When it is
+        None, fresh noise is drawn.
         """
+        noise = batch.get(NOISE)
+        kwargs = rtc_inputs(batch)
         self.eval()
-
-        # Direct chunk callers provide single observations. ``select_action``
-        # already supplies a temporal batch, so avoid recording it twice.
-        has_temporal_input = any(
-            key in batch and batch[key].ndim == 5 for key in self.config.image_features
-        ) or (OBS_STATE in batch and batch[OBS_STATE].ndim == 3)
-        if (
-            self.config.use_visual_memory or self.config.use_proprioceptive_memory
-        ) and not has_temporal_input:
-            batch = self._stack_inference_memory(batch)
 
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
@@ -1548,7 +1460,7 @@ class PI05Policy(PreTrainedPolicy):
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 
-        return actions
+        return PolicyOutput(action=actions)
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.

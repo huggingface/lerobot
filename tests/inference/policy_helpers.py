@@ -14,7 +14,6 @@
 
 """Small policies and real processor pipelines for inference contract tests."""
 
-from collections import deque
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,7 +25,7 @@ from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, P
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
 from lerobot.policies.evo1.processor_evo1 import Evo1ActionProcessorStep
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy, rtc_inputs
 from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, QUERY_KIND, QUERY_TEXT
 
@@ -63,9 +62,8 @@ def processors(config, relative=False):
     }
     pre, post = make_act_pre_post_processors(config, stats)
     if relative:
-        step = RelativeActionsProcessorStep(enabled=True)
-        pre.steps.insert(3, step)
-        post.steps.insert(1, AbsoluteActionsProcessorStep(enabled=True, relative_step=step))
+        pre.steps.insert(3, RelativeActionsProcessorStep(enabled=True))
+        post.steps.insert(1, AbsoluteActionsProcessorStep(enabled=True))
     return pre, post
 
 
@@ -133,17 +131,13 @@ class ConformingPolicy(PreTrainedPolicy):
 
     def reset(self):
         self.resets += 1
-        self._action_queue = deque()
 
     def forward(self, batch):
         raise NotImplementedError
 
-    def select_action(self, batch, **kwargs):
-        raise AssertionError("The runner must not call select_action")
-
-    def predict_action_chunk(self, batch, **kwargs):
-        self.last_kwargs = kwargs
-        return torch.arange(24, dtype=torch.float32).reshape(1, 8, 3)
+    def predict_action_chunk(self, batch):
+        self.last_kwargs = rtc_inputs(batch)
+        return {ACTION: torch.arange(24, dtype=torch.float32).reshape(1, 8, 3)}
 
     def supports_rtc(self):
         return True
@@ -185,6 +179,6 @@ class PaddedPolicy(ConformingPolicy):
         super().__init__(config)
         self.width = 6
 
-    def predict_action_chunk(self, batch, **kwargs):
-        self.last_kwargs = kwargs
-        return torch.arange(8 * self.width, dtype=torch.float32).reshape(1, 8, self.width)
+    def predict_action_chunk(self, batch):
+        self.last_kwargs = rtc_inputs(batch)
+        return {ACTION: torch.arange(8 * self.width, dtype=torch.float32).reshape(1, 8, self.width)}

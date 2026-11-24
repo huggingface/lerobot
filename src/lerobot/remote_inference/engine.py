@@ -32,6 +32,7 @@ import torch
 from lerobot.inference import (
     ChunkRuntime,
     ExecutionMode,
+    ExecutionRecord,
     HoldState,
     InferenceEngine,
     InferenceRobot,
@@ -100,7 +101,16 @@ class RemoteInferenceEngine(InferenceEngine):
             blend_steps=config.blend_steps,
             blend_weight=config.blend_weight,
             blend_indices=client.blend_indices,
+            complete_execution=client.capabilities.complete_execution,
         )
+        caps = client.capabilities
+        # Every published capture and dispatched action, sampled into each request.
+        self._record = ExecutionRecord(
+            caps.history,
+            interval=caps.action_interval,
+            action_padding_value=lambda: np.zeros(caps.action_feature.shape, dtype=np.float32),
+        )
+        self._pending_dispatch: np.ndarray | None = None
         self.latency = self.runtime.latency
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
@@ -389,6 +399,12 @@ class RemoteInferenceEngine(InferenceEngine):
             generation = self.runtime.invalidate(held=True)
             self._observation = None
             self._hold.clear()
+            if self.runtime.complete_execution:
+                # An interrupted chunk ends a fed-back episode context on both sides.
+                operation = "reset"
+            if operation == "reset":
+                self._record.clear()
+                self._pending_dispatch = None
             # A later motion invalidation must not erase a pending full reset.
             if self._control is not None and self._control[0] == "reset":
                 operation = "reset"
@@ -525,6 +541,7 @@ class RemoteInferenceEngine(InferenceEngine):
             # may replace the future, but never advance the commitment cursor.
             if self.config.chunk_merge == "aligned":
                 snapshot = self.runtime.anchor_observation(snapshot)
+            self._record.observe(capture_time, snapshot.features)
             self._observation = snapshot
 
     def dispatch_allowed(self) -> bool:
@@ -568,6 +585,10 @@ class RemoteInferenceEngine(InferenceEngine):
             )
             self._observation = None
             operation = "reset" if self._control is not None and self._control[0] == "reset" else "invalidate"
+            if reason != "action starvation" and self.runtime.complete_execution:
+                operation = "reset"
+                self._record.clear()
+                self._pending_dispatch = None
             self._control = (operation, generation)
             self._event("planned_hold", reason=reason)
 
@@ -596,7 +617,18 @@ class RemoteInferenceEngine(InferenceEngine):
             return None
         action, provenance = item
         self._set_dispatched_task(provenance.task)
+        if self._record.active:
+            with self._lock:
+                self._pending_dispatch = action.detach().cpu().numpy().astype(np.float32)
         return action
+
+    def record_dispatch(self) -> None:
+        """Attach a policy action that reached the robot to the tick that pulled it."""
+        super().record_dispatch()
+        with self._lock:
+            if self._pending_dispatch is not None:
+                self._record.dispatched(self._pending_dispatch)
+                self._pending_dispatch = None
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         observation = self._query_observation
@@ -770,6 +802,13 @@ class RemoteInferenceEngine(InferenceEngine):
                                 observation = replace(
                                     observation, task=self._task, task_version=self._task_version
                                 )
+                        if self._record.active and self.runtime.observes_last_action(
+                            observation.capture_time
+                        ):
+                            observation = replace(
+                                observation,
+                                history=self._record.sample(observation.capture_time),
+                            )
                         request = self.runtime.begin(observation)
                     else:
                         request = None

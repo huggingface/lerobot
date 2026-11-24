@@ -38,8 +38,6 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import (
     batch_to_transition,
-    policy_action_to_transition,
-    transition_to_policy_action,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -385,7 +383,7 @@ def make_evo1_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load the serialized EVO1 pipelines and reconcile them with the current config."""
     # EVO1 stats reach the (un)normalizers through the overrides, then get re-padded by reconcile.
@@ -407,7 +405,7 @@ def make_evo1_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
@@ -453,10 +451,8 @@ def make_evo1_pre_post_processors(
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
             to_transition=evo1_batch_to_transition,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
         ),
     )

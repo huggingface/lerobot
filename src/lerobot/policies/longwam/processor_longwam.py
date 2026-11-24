@@ -82,6 +82,9 @@ class LongWAMObservations(ObservationProcessorStep):
     image_dtype: str = "float32"
 
     def observation(self, observation: RobotObservation) -> RobotObservation:
+        # Training batches carry their action targets; inference windows do not.
+        transition = self._current_transition
+        training = transition is not None and transition.get(TransitionKey.ACTION) is not None
         for key in self.camera_keys:
             image = observation[key]
             if image.ndim not in (4, 5) or image.shape[-3] != 3:
@@ -95,8 +98,9 @@ class LongWAMObservations(ObservationProcessorStep):
             scale = max(width / input_width, height / input_height)
             resized_height, resized_width = round(input_height * scale), round(input_width * scale)
             top, left = (resized_height - height) // 2, (resized_width - width) // 2
-            if image.ndim == 4:
-                # Released inference resized uint8 frames with PIL; reproduce its pixels on the input device.
+            if not training:
+                # Released inference resized uint8 frames with PIL; reproduce its pixels on the input
+                # device, for the current frame [B,3,H,W] and past windows [B,T,3,H,W] alike.
                 frames = _pil_bilinear_resize(
                     image.mul(255).round().to(torch.uint8), resized_height, resized_width
                 )

@@ -207,18 +207,12 @@ def test_cosmos3_inference(case):
     action_dim = len(case["action_names"])
 
     torch.manual_seed(1)
-    chunk = policy.predict_action_chunk(preprocessor(observation))
+    chunk = policy.predict_action_chunk(preprocessor(observation))[ACTION]
     assert chunk.shape == (BATCH_SIZE, CHUNK_SIZE, action_dim)
 
-    # `select_action` samples one chunk and returns its actions one by one.
-    policy.reset()
-    torch.manual_seed(1)
-    actions = [policy.select_action(preprocessor(observation)) for _ in range(CHUNK_SIZE)]
-    torch.testing.assert_close(torch.stack(actions, dim=1), chunk, rtol=0, atol=0)
-
-    action = postprocessor(actions[0])
-    assert action.shape == (BATCH_SIZE, action_dim)
-    assert torch.isfinite(action).all()
+    actions = postprocessor({ACTION: chunk})[ACTION]
+    assert actions.shape == (BATCH_SIZE, CHUNK_SIZE, action_dim)
+    assert torch.isfinite(actions).all()
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -241,7 +235,7 @@ def test_cosmos3_save_and_load(case, tmp_path):
 
     observation = make_batch(case, training=False)
     torch.manual_seed(1)
-    action = postprocessor(policy.select_action(preprocessor(observation)))
+    action = postprocessor(policy.predict_action_chunk(preprocessor(observation)))
     torch.manual_seed(1)
-    loaded_action = loaded_postprocessor(loaded_policy.select_action(loaded_preprocessor(observation)))
+    loaded_action = loaded_postprocessor(loaded_policy.predict_action_chunk(loaded_preprocessor(observation)))
     torch.testing.assert_close(loaded_action, action, rtol=0, atol=0)

@@ -559,7 +559,7 @@ def make_lawam_pre_post_processors(
     rename_map: dict[str, str] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build LaWAM input normalization and action postprocessing pipelines."""
     config.validate_features()
@@ -645,7 +645,7 @@ def make_lawam_pre_post_processors_from_pretrained(
 ) -> (
     tuple[
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-        PolicyProcessorPipeline[PolicyAction, PolicyAction],
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     ]
     | None
 ):

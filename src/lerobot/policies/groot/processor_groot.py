@@ -56,16 +56,13 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     load_pretrained_policy_processors,
-    policy_action_to_transition,
     to_relative_actions,
-    transition_to_policy_action,
 )
 from lerobot.utils.constants import (
     ACTION,
@@ -485,7 +482,7 @@ def make_groot_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load Groot processors for a raw N1.7 checkpoint or a serialized LeRobot pipeline."""
 
@@ -1081,7 +1078,7 @@ def make_groot_pre_post_processors(
     dataset_meta: Any | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Create preprocessor and postprocessor for Groot policy.
 
@@ -1273,7 +1270,7 @@ def make_groot_pre_post_processors(
 
     output_steps: list[ProcessorStep] = [action_decode_step]
     if relative_step is not None:
-        output_steps.append(AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step))
+        output_steps.append(AbsoluteActionsProcessorStep(enabled=True))
     output_steps.append(DeviceProcessorStep(device="cpu"))
 
     return (
@@ -1281,11 +1278,9 @@ def make_groot_pre_post_processors(
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
         ),
     )
 

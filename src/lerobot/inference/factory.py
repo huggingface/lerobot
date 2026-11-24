@@ -181,7 +181,6 @@ def create_inference_engine(
     postprocessor: PolicyProcessorPipeline,
     robot_wrapper: InferenceRobot,
     dataset_features: dict,
-    ordered_action_keys: list[str],
     task: str,
     fps: float,
     device: str | None,
@@ -198,14 +197,15 @@ def create_inference_engine(
         )
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
-            policy=policy,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            dataset_features=dataset_features,
-            ordered_action_keys=ordered_action_keys,
+            policy,
+            preprocessor,
+            postprocessor,
+            fps=fps,
             task=task,
             device=device,
+            dataset_features=dataset_features,
             robot_type=robot_wrapper.robot_type,
+            robot_wrapper=robot_wrapper,
         )
     if isinstance(config, RTCInferenceConfig):
         return RTCInferenceEngine(

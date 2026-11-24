@@ -18,6 +18,7 @@ from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from transformers import PreTrainedTokenizerFast
 
 from lerobot.configs import FeatureType
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.configuration_longwam import LongWAMConfig
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
@@ -116,6 +117,19 @@ def batch(cfg, temporal=False, value=0.25, task="pick"):
     return result
 
 
+def window(cfg, value=0.25, task="pick"):
+    """An inference batch: the strided past window of every camera, current frame last, and the current state."""
+    steps = len(cfg.inference_deltas.observation[FeatureType.VISUAL])
+    result = {
+        **{key: torch.full((1, steps, 3, 16, 16), value) for key in cfg.camera_keys},
+        "observation.state": torch.full((1, cfg.proprio_dim), value),
+        "task": [task],
+    }
+    for key in cfg.camera_keys:
+        result[f"{key}_is_pad"] = torch.zeros(1, steps, dtype=torch.bool)
+    return result
+
+
 @pytest.mark.parametrize(
     "saved_dimensions,active_dimensions", [([-1], []), ([-1], [0]), ([], [-1]), ([-1], [-1]), ([], [])]
 )
@@ -130,7 +144,9 @@ def test_pretrained_postprocessor_honors_active_toggle(config, tmp_path, saved_d
     _, fresh = make_pre_post_processors(config, dataset_stats=stats(config))
     actions = torch.tensor([[-0.5, 0.25, -0.5], [0.5, -0.25, 0.5]])
     unchanged = actions.clone()
-    torch.testing.assert_close(loaded(actions), fresh(actions), atol=0, rtol=0)
+    torch.testing.assert_close(
+        loaded({"action": actions})["action"], fresh({"action": actions})["action"], atol=0, rtol=0
+    )
     torch.testing.assert_close(actions, unchanged, atol=0, rtol=0)
     post.save_pretrained(tmp_path / "saved-again")
     assert (saved / "policy_postprocessor.json").read_bytes() == (
@@ -162,7 +178,7 @@ def test_pretrained_postprocessor_preserves_explicit_overrides(config, tmp_path,
     )
     actions = torch.tensor([[-0.5, 0.25, -0.5], [0.5, -0.25, 0.5]])
     expected = torch.tensor([[1.0, 0.5, -1.0], [-1.0, -0.5, 1.0]])
-    torch.testing.assert_close(loaded(actions), expected, atol=0, rtol=0)
+    torch.testing.assert_close(loaded({"action": actions})["action"], expected, atol=0, rtol=0)
     assert overrides == {step_key: {"dimensions": [0]}}
     assert config.toggle_action_dimensions == []
 
@@ -181,7 +197,9 @@ def test_pretrained_toggle_preserves_normalization_override(config, tmp_path):
         postprocessor_overrides={"unnormalizer_processor": {"stats": replacement}},
     )
     actions = torch.tensor([[0.25, -0.25, 0.5]])
-    torch.testing.assert_close(loaded(actions), torch.tensor([[1.0, -1.0, 2.0]]), atol=0, rtol=0)
+    torch.testing.assert_close(
+        loaded({"action": actions})["action"], torch.tensor([[1.0, -1.0, 2.0]]), atol=0, rtol=0
+    )
 
 
 @pytest.mark.parametrize("malformed", ["duplicate_toggle", "missing_unnormalizer"])
@@ -236,8 +254,12 @@ def test_training_and_inference_camera_geometry(config, input_size, camera_size)
             "task": ["pick"] * frames.shape[0],
         }
 
-    training = pre(inputs(video))
+    training = pre({**inputs(video), "action": torch.zeros(2, config.action_horizon, config.action_dim)})
     inference = pre(inputs(video.flatten(0, 1)))
+    # Inference windows get the released per-frame pixels.
+    torch.testing.assert_close(
+        pre(inputs(video))[config.camera_keys[0]].flatten(0, 1), inference[config.camera_keys[0]]
+    )
     for key in config.camera_keys:
         expected = inference[key].reshape(2, 2, 3, *camera_size)
         # Tensor training interpolation need not reproduce PIL's uint8 rounding.
@@ -313,28 +335,26 @@ def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointin
     post.save_pretrained(save, config_filename="policy_postprocessor.json")
     restored = LongWAMPolicy.from_pretrained(save, strict=True)
     loaded_pre, loaded_post = make_pre_post_processors(config, pretrained_path=save)
-    observation = batch(config)
     policy.eval()
-    expected = post(policy.select_action(pre(observation)))
-    actual = loaded_post(restored.select_action(loaded_pre(observation)))
-    torch.testing.assert_close(expected, actual, atol=0, rtol=0)
-    assert actual.shape == (1, config.action_dim)
-    assert len(restored._frames) == 1
-    restored.select_action(loaded_pre(batch(config, value=0.5)))
-    assert len(restored._frames) == 2
-    restored.reset()
-    chunk = restored.predict_action_chunk(loaded_pre(observation))
+    original = SyncInferenceEngine(policy, pre, post)
+    loaded = SyncInferenceEngine(restored, loaded_pre, loaded_post)
+    for tick in range(config.n_action_steps + 1):  # two chunks
+        observation = batch(config, value=tick / 4)
+        expected = original.step(dict(observation), float(tick))
+        actual = loaded.step(dict(observation), float(tick))
+        torch.testing.assert_close(expected, actual, atol=0, rtol=0)
+        assert actual.shape == (1, config.action_dim)
+    chunk = restored.predict_action_chunk(loaded_pre(window(config)))["action"]
     assert chunk.shape == (1, config.prediction_steps, config.action_dim)
     assert torch.isfinite(chunk).all()
+    # An instruction switch re-encodes the text context.
+    context = restored._text_context
+    changed = loaded_pre(window(config, value=0.75, task="place"))
+    restored.predict_action_chunk(changed)
+    torch.testing.assert_close(restored._language[0], changed[OBS_LANGUAGE_TOKENS])
+    assert restored._text_context is not context
     restored.reset()
-    torch.testing.assert_close(restored.select_action(loaded_pre(observation)), chunk[:, 0])
-    # Interactive instruction switch must discard old actions and old history.
-    changed = loaded_pre(batch(config, value=0.75, task="place"))
-    restored.select_action(changed)
-    assert len(restored._frames) == 1
-    torch.testing.assert_close(restored._language_tokens, changed[OBS_LANGUAGE_TOKENS])
-    restored.drop_queued_actions()
-    assert not restored._frames and not restored._action_queue and restored._text_context is None
+    assert restored._language is None and restored._text_context is None
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -390,16 +410,29 @@ def test_training_parameter_and_optimizer_precision(config, tmp_path, device, mo
 
 
 @pytest.mark.parametrize("mode", ["idm", "cod"])
-def test_history_eviction_and_padding(config, mode):
+def test_strided_history_window_and_padding(config, mode):
     config.denoising, config.imagine_sigma = mode, 0 if mode == "cod" else 0.9
     policy = LongWAMPolicy(config)
-    pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    seen = []
+    predict = policy.predict_action_chunk
+
+    def record(batch, **kwargs):
+        seen.append(batch)
+        return predict(batch, **kwargs)
+
+    policy.predict_action_chunk = record
+    executor = SyncInferenceEngine(policy, pre, post)
     for step in range(25):
-        policy._observe(pre(batch(config, value=step / 25)))
-    assert len(policy._frames) == 17
-    values = policy._history()[0, 0, :, 0, 0]
+        executor.step(batch(config, value=step / 25), float(step))
+    # Every 4th of the last 16 ticks; before the episode, the first frame, marked as padding.
+    camera = config.camera_keys[0]
+    first, last = seen[0], seen[-1]
     expected_pixels = (torch.tensor([8, 12, 16, 20, 24]) / 25 * 255).round()
-    torch.testing.assert_close(values, expected_pixels * (2 / 255) - 1)
+    torch.testing.assert_close(last[camera][0, :, 0, 0, 0], expected_pixels * (2 / 255) - 1)
+    assert not last[f"{camera}_is_pad"].any()
+    assert first[f"{camera}_is_pad"].tolist() == [[True] * 4 + [False]]
+    assert torch.equal(first[camera][:, 0], first[camera][:, -1])
     data = pre(batch(config, temporal=True))
     data["action_is_pad"].fill_(True)
     for key in config.camera_keys:
@@ -414,12 +447,12 @@ def test_inference_seed_across_chunks_and_reset(config, mode, seed):
     config.denoising, config.inference_seed = mode, seed
     policy = LongWAMPolicy(config).eval()
     pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
-    observation = pre(batch(config))
+    observation = pre(window(config))
     before = torch.get_rng_state().clone()
-    first = policy.predict_action_chunk(observation)
-    second = policy.predict_action_chunk(observation)
+    first = policy.predict_action_chunk(observation)["action"]
+    second = policy.predict_action_chunk(observation)["action"]
     policy.reset()
-    third = policy.predict_action_chunk(observation)
+    third = policy.predict_action_chunk(observation)["action"]
     if seed is not None:
         torch.testing.assert_close(first, second, atol=0, rtol=0)
         torch.testing.assert_close(first, third, atol=0, rtol=0)

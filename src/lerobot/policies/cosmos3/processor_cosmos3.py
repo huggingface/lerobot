@@ -586,7 +586,7 @@ def make_cosmos3_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Pre/post-processor pipelines of the Cosmos3 policy.
@@ -649,7 +649,7 @@ def make_cosmos3_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Load the processors of a checkpoint, with the data layout and recipe fields of the active config (action
@@ -722,7 +722,7 @@ class Cosmos3LiberoActionProcessorStep(PolicyActionProcessorStep):
 
 def make_cosmos3_libero_pre_post_processors() -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Env processors of LIBERO for a Cosmos3 policy trained on the rot6d LIBERO dataset. The LIBERO integration
@@ -731,7 +731,7 @@ def make_cosmos3_libero_pre_post_processors() -> tuple[
     """
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](steps=[]),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](steps=[Cosmos3LiberoActionProcessorStep()]),
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](steps=[Cosmos3LiberoActionProcessorStep()]),
     )
 
 

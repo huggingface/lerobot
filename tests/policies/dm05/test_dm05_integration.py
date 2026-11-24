@@ -30,7 +30,7 @@ pytest.importorskip("transformers")
 
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
-from lerobot.inference import FeatureSpec, ObservationSnapshot, PolicyRunner
+from lerobot.inference import FeatureSpec, ObservationSnapshot, PolicyRunner, SyncInferenceEngine
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
 from lerobot.policies.dm05.core.modeling import (
     DM05CoreModelConfig,
@@ -53,12 +53,12 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
-    bind_relative_anchor,
     create_transition,
     load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
     ACTION,
+    NOISE,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
@@ -350,15 +350,17 @@ def test_dm05_processors_roundtrip(tmp_path):
     absolute_step = next(
         step for step in loaded_postprocessor.steps if isinstance(step, AbsoluteActionsProcessorStep)
     )
-    assert not relative_step.enabled and absolute_step.relative_step is relative_step
+    assert not relative_step.enabled and not absolute_step.enabled
     torch.testing.assert_close(default_processed[ACTION], torch.tensor([[0.4, 0.5, 0.6]]))
     torch.testing.assert_close(
-        loaded_postprocessor(default_processed[ACTION]),
+        loaded_postprocessor(default_processed)[ACTION],
         torch.tensor([[4.0, 5.0, 6.0]]),
         atol=2e-6,
         rtol=0,
     )
-    numpy_action = loaded_postprocessor(default_processed[ACTION].to(torch.bfloat16))
+    numpy_action = loaded_postprocessor(
+        {**default_processed, ACTION: default_processed[ACTION].to(torch.bfloat16)}
+    )[ACTION]
     assert numpy_action.dtype == torch.float32
 
     replacement_stats = {
@@ -472,29 +474,22 @@ def test_dm05_relative_actions_use_generation_state_for_training_and_inference(t
     policy._prepare_model_inputs = lambda _batch, include_actions: {
         "input_ids": torch.ones(1, 1, dtype=torch.long)
     }
-    policy.reset()
-    # The chunk anchor is held by the shared relative-action step for as long as the policy is
-    # still serving the chunk generated against it. Binding is what every rollout entry point
-    # does; without it the anchor would advance on the second observation.
-    assert bind_relative_anchor(policy, preprocessor) is not None
-
     observation = {"observation.images.front": torch.zeros(3, 16, 16)}
     generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0]), **observation})
     direct_chunk = policy.predict_action_chunk(generation_batch)
     torch.testing.assert_close(
-        postprocessor(direct_chunk),
+        postprocessor({**generation_batch, ACTION: direct_chunk[ACTION]})[ACTION],
         torch.tensor([[[11.0, 22.0, 3.0], [14.0, 25.0, 6.0]]]),
         atol=2e-5,
         rtol=0,
     )
 
-    policy.reset()
-    generation_batch = preprocessor({OBS_STATE: torch.tensor([10.0, 20.0, 30.0]), **observation})
-    first = policy.select_action(generation_batch)
-    first = postprocessor(first)
-    current_batch = preprocessor({OBS_STATE: torch.tensor([100.0, 200.0, 300.0]), **observation})
-    second = policy.select_action(current_batch)
-    second = postprocessor(second)
+    # The whole chunk is converted against the state it was generated from: the second action
+    # keeps that anchor even though the state has moved on when it executes.
+    executor = SyncInferenceEngine(policy, preprocessor, postprocessor)
+    image = {"observation.images.front": torch.zeros(1, 3, 16, 16)}
+    first = executor.step({OBS_STATE: torch.tensor([[10.0, 20.0, 30.0]]), **image}, 0)
+    second = executor.step({OBS_STATE: torch.tensor([[100.0, 200.0, 300.0]]), **image}, 1)
 
     torch.testing.assert_close(first, torch.tensor([[11.0, 22.0, 3.0]]), atol=2e-5, rtol=0)
     torch.testing.assert_close(second, torch.tensor([[14.0, 25.0, 6.0]]), atol=2e-5, rtol=0)
@@ -609,15 +604,13 @@ def test_dm05_action_dim_mask_and_fixed_noise_cover_training_and_inference():
     assert policy.config.device == "cpu"
 
     policy_noise = torch.arange(6, dtype=torch.float32).reshape(1, 2, 3)
-    actions = policy.predict_action_chunk({}, noise=policy_noise)
+    actions = policy.predict_action_chunk({NOISE: policy_noise})[ACTION]
 
     assert policy.model.kwargs["initial_noise"].shape == (1, 2, 32)
     torch.testing.assert_close(actions, policy_noise)
     assert torch.count_nonzero(policy.model.kwargs["initial_noise"][..., 3:]) == 0
     with pytest.raises(ValueError, match="noise action dimension"):
-        policy.predict_action_chunk({}, noise=torch.zeros(1, 2, 1))
-    with pytest.raises(ValueError, match="diffusion_steps must be positive"):
-        policy.predict_action_chunk({}, noise=policy_noise, diffusion_steps=0)
+        policy.predict_action_chunk({NOISE: torch.zeros(1, 2, 1)})
     with pytest.raises(ValueError, match="diffusion_steps must be positive"):
         model.inference_action(**common, diffusion_steps=0, initial_noise=noise)
 
@@ -856,12 +849,9 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
             "task": "pick",
         }
     )
-    predicted_actions = reloaded.predict_action_chunk(
-        inference_batch,
-        noise=torch.zeros(1, 2, 4),
-        diffusion_steps=1,
-    )
-    actions = postprocessor(predicted_actions)
+    reloaded.config.diffusion_steps = 1
+    predicted_actions = reloaded.predict_action_chunk({**inference_batch, NOISE: torch.zeros(1, 2, 4)})
+    actions = postprocessor({**inference_batch, **predicted_actions})[ACTION]
     assert actions.shape == (1, 2, 4)
     assert actions.dtype == torch.float32
     assert torch.isfinite(actions).all()
@@ -883,7 +873,9 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
         action_feature=FeatureSpec(ACTION, (4,), "float32", names=joint_names, semantics="joint positions"),
     )
     torch.manual_seed(42)
-    expected_actions = postprocessor(reloaded.predict_action_chunk(inference_batch))[0]
+    expected_actions = postprocessor({**inference_batch, **reloaded.predict_action_chunk(inference_batch)})[
+        ACTION
+    ][0]
     torch.manual_seed(42)
     chunk = runner.predict(
         ObservationSnapshot(

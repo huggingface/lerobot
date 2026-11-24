@@ -38,15 +38,15 @@ class MyPolicyConfig(PreTrainedConfig):
 
     Args:
         n_obs_steps: Number of observation steps to use as input
-        horizon: Action prediction horizon
-        n_action_steps: Number of action steps to execute
+        chunk_size: Number of actions predicted per call
+        n_action_steps: Number of actions executed from each chunk before the next call
         hidden_dim: Hidden dimension for the policy network
         # Add your policy-specific parameters here
     """
 
     dtype: torch.dtype | None = torch.bfloat16
 
-    horizon: int = 50
+    chunk_size: int = 50
     n_action_steps: int = 50
     hidden_dim: int = 256
 
@@ -55,8 +55,8 @@ class MyPolicyConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.n_action_steps > self.horizon:
-            raise ValueError("n_action_steps cannot exceed horizon")
+        if self.n_action_steps > self.chunk_size:
+            raise ValueError("n_action_steps cannot exceed chunk_size")
 
     def validate_features(self) -> None:
         """Validate input/output feature compatibility.
@@ -87,7 +87,7 @@ class MyPolicyConfig(PreTrainedConfig):
         lists the targets, e.g. `range(-20, 11, 10)` for VISUAL gives 2 past frames at stride 10,
         the current one and 1 future frame.
         """
-        return FrameSampler(Deltas(action=range(self.horizon)))
+        return FrameSampler(Deltas(action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:
@@ -138,20 +138,12 @@ class MyPolicy(PreTrainedPolicy):
         self.config = config
         self.model = ...  # your nn.Module here
 
-    def reset(self):
-        """Reset per-episode state. Called by lerobot-eval at the start of each episode."""
-        ...
-
     def get_optim_params(self) -> dict:
         """Return parameters to pass to the optimizer (e.g. with per-group lr/wd)."""
         return {"params": self.parameters()}
 
     def predict_action_chunk(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        """Return the full action chunk (B, chunk_size, action_dim) for the current observation."""
-        ...
-
-    def select_action(self, batch: dict[str, torch.Tensor], **kwargs) -> torch.Tensor:
-        """Return a single action for the current timestep (called every step at inference)."""
+        """Return the next actions (B, chunk_size, action_dim) for a batch in the training layout."""
         ...
 
     def forward(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict | None]:
@@ -160,8 +152,8 @@ class MyPolicy(PreTrainedPolicy):
         Returns `(loss, output_dict)`. `output_dict` may be `None`; everything in it must be
         logging-friendly Python natives (no tensors with gradients).
 
-        `batch["action_is_pad"]` is a bool mask of shape (B, horizon) that marks
-        timesteps padded because the episode ended before `horizon` steps; you
+        `batch["action_is_pad"]` is a bool mask of shape (B, chunk_size) that marks
+        timesteps padded because the episode ended before `chunk_size` steps; you
         can exclude those from your loss.
         """
         actions = batch[ACTION]
@@ -170,16 +162,16 @@ class MyPolicy(PreTrainedPolicy):
         return loss, {"some_loss_component": some_loss_component.item()}
 ```
 
-The methods called by the train/eval loops:
+The methods called by the train and inference loops:
 
-| Method                                                            | Used by           | What it does                                                                                                                                                                                                                                                                                 |
-| ----------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset() -> None`                                                 | `lerobot-eval`    | Clear per-episode state at the start of each episode.                                                                                                                                                                                                                                        |
-| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`    | Return the next action `(B, action_dim)`. Called every step.                                                                                                                                                                                                                                 |
-| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | the policy itself | Return an action chunk `(B, chunk_size, action_dim)`. Currently abstract on the base class — raise `NotImplementedError` if your policy doesn't chunk.                                                                                                                                       |
-| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`   | Return `(loss, output_dict)`. Accept `reduction="none"` if you want to support per-sample weighting.                                                                                                                                                                                         |
-| `get_optim_params() -> dict`                                      | the optimizer     | Return `self.parameters()` for simple policies; return a named parameter dict for multi-optimizer policies (see `get_optim_params` in [`modeling_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/modeling_act.py) for a per-group learning-rate example). |
-| `update() -> None` _(optional)_                                   | `lerobot-train`   | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                                                                   |
+| Method                                                            | Used by                | What it does                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `predict_action_chunk(batch, **kwargs) -> Tensor`                 | every inference runner | Return the next actions `(B, chunk_size, action_dim)` for a batch in the training layout. The only inference entry point (see [Inference](#inference)).                                                                                                                                      |
+| `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train`        | Return `(loss, output_dict)`. Accept `reduction="none"` if you want to support per-sample weighting.                                                                                                                                                                                         |
+| `get_optim_params() -> dict`                                      | the optimizer          | Return `self.parameters()` for simple policies; return a named parameter dict for multi-optimizer policies (see `get_optim_params` in [`modeling_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/modeling_act.py) for a per-group learning-rate example). |
+| `reset() -> None` _(optional)_                                    | every inference runner | Clear state the policy keeps between `predict_action_chunk` calls, at the start of each episode. The default does nothing.                                                                                                                                                                   |
+| `chunk_inference_spec() -> ChunkPolicySpec` _(optional)_          | every inference runner | Say how runners drive `predict_action_chunk`. The default reads `chunk_size` and `n_action_steps` from the config.                                                                                                                                                                           |
+| `update() -> None` _(optional)_                                   | `lerobot-train`        | Called after each optimizer step _if defined_. Use for EMA, target nets, replay buffers (TDMPC uses this).                                                                                                                                                                                   |
 
 Batches are flat dictionaries keyed by the constants in [`lerobot.utils.constants`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/utils/constants.py): `OBS_STATE` (`observation.state.<motor>`), `OBS_IMAGES` (`observation.images.<camera>`), `OBS_LANGUAGE`, `ACTION`, etc. Reuse the constants — don't invent new prefixes.
 
@@ -192,6 +184,39 @@ class MyPolicy(PreTrainedPolicy):
 ```
 
 With this one declaration, `--parallelism.dp_shard=N` works out of the box for your policy (users can still override it with `--accelerator.fsdp.wrap_modules`). Without any wrap source, sharded runs fail at startup by design.
+
+### Inference
+
+`predict_action_chunk` is the only inference entry point. Every runner (`lerobot-eval`, synchronous and asynchronous rollouts, remote inference) records the observations of each control tick, builds a batch in the training layout, runs the preprocessor, calls `predict_action_chunk` when the previous chunk has executed, runs the postprocessor on the whole chunk and plays the actions back. Your policy keeps no action queue. In your own scripts, [`lerobot.inference.SyncInferenceEngine`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/inference/sync.py), the engine behind synchronous rollouts and `lerobot-eval`, does the same:
+
+```python
+from lerobot.inference import SyncInferenceEngine
+
+engine = SyncInferenceEngine(policy, preprocessor, postprocessor, fps=fps)
+engine.reset()  # at the start of each episode
+action = engine.step(observation, timestamp)  # every control tick, (B, action_dim)
+```
+
+`observation` is the batch the preprocessor receives, and `timestamp` its capture time, increasing within an episode, in seconds at `fps`. In a simulator, pass the step index and leave `fps` unset.
+
+Observation history is declared only through the config's `inference_deltas` (see [Configuration class](#configuration-class)). Runners deliver each declared feature as `[B, T, ...]` with a `{key}_is_pad` mask, in the layout the dataset loader uses in training, sampling each offset by capture time, one frame per control interval; `observation.action` holds the commands executed at its offsets. An undeclared feature is the current frame, without a time axis.
+
+`chunk_inference_spec()` returns a `ChunkPolicySpec` (`lerobot.policies`). The default predicts `chunk_size` actions and executes `n_action_steps` of them (all when the config has no `n_action_steps`). Override it only to:
+
+- return another chunk length (`prediction_steps`, `execution_steps`),
+- execute every chunk completely before the next call (`complete_execution`), for a policy whose state follows the executed actions, such as a video memory. Such a policy may return shorter chunks, and the frames observed while a chunk executed are an `inference_deltas` window ending at the current frame.
+
+```python
+from dataclasses import replace
+
+from lerobot.policies import ChunkPolicySpec
+
+
+class MyPolicy(PreTrainedPolicy):
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        # Every chunk executes fully before the next call.
+        return replace(super().chunk_inference_spec(), complete_execution=True)
+```
 
 ### Processor functions
 
@@ -268,50 +293,46 @@ For working examples, see [`processor_evo1.py`](https://github.com/huggingface/l
 
 A policy may return what it expects or believes besides the action it takes, such as a world
 model's imagined frames, a predicted subtask or bounding boxes, so `--display_data` shows it live in
-Rerun or Foxglove. `select_action` and `predict_action_chunk` take a batch and return either a bare
-action tensor (the default for every policy) or a `PolicyOutput` (`lerobot.lerobot_types`): a batch,
-keyed like the input batch, with the action under `"action"` and a `PolicyPrediction` under
-`"prediction"`. The prediction is batched like the action, one value per environment, and every
-entry is keyed by what it refers to:
+Rerun or Foxglove. `predict_action_chunk` always returns a `PolicyOutput` (`lerobot.lerobot_types`):
+a batch with the chunk under `"action"` and, optionally, a `PolicyPrediction` under `"prediction"`.
+The prediction is batched like
+the action, one value per environment and one per chunk, and every entry is keyed by what it refers
+to:
 
 - `observation`: the predicted future observation, by observation key
   (`"observation.images.top"` -> `[B, C, H, W]` frames). It is shown as `prediction.images.top`.
+  Frames predicted for several actions of the chunk are stacked `[B, F, C, H, W]`, with the chunk
+  index of each frame, ascending, in the prediction's `"observation_steps"`.
 - `language`: one string per environment, by annotation style (`"subtask"`, `"plan"`, `"memory"`),
   the styles of the annotation pipeline's language columns. It is shown as `prediction.subtask`.
 - `boxes`: by the observation image key they are drawn on, one bbox answer per environment in the
   annotation VQA schema (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions
   0 to 1).
 
-Callers normalize the two return types with `policy_output_to_transition`, which turns a
-`PolicyOutput` into the `EnvTransition` processors use, so only policies that predict something
-change. The viewers show the first environment.
+`SyncInferenceEngine.prediction` holds the prediction on the tick that starts its chunk. The
+viewers show the first environment.
 
 ```python
 from lerobot.utils.constants import ACTION, PREDICTION
 
 
 class MyPolicy(PreTrainedPolicy):
-    def select_action(self, batch, **kwargs) -> Tensor | PolicyOutput:
-        if not self._action_queue:
-            chunk, extras = self.model.sample(batch)
-            self._action_queue.extend(chunk.transpose(0, 1))
-            if self.config.return_prediction:  # a config field of your choosing
-                # The prediction goes with the step that computed it; the others return a bare action.
-                prediction = {
-                    "observation": {"observation.images.top": extras.next_frames},  # [B, C, H, W]
-                    "language": {"subtask": extras.subtasks},  # list[str], one per env
-                    "boxes": {
-                        "observation.images.top": [
-                            {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
-                        ]
-                    },
-                }
-                return {ACTION: self._action_queue.popleft(), PREDICTION: prediction}
-        return self._action_queue.popleft()
+    def predict_action_chunk(self, batch) -> PolicyOutput:
+        chunk, extras = self.model.sample(batch)  # chunk: [B, chunk_size, action_dim]
+        if not self.config.return_prediction:  # a config field of your choosing
+            return {ACTION: chunk}
+        prediction = {
+            "observation": {"observation.images.top": extras.next_frames},  # [B, C, H, W]
+            "language": {"subtask": extras.subtasks},  # list[str], one per env
+            "boxes": {
+                "observation.images.top": [
+                    {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
+                ]
+            },
+        }
+        return {ACTION: chunk, PREDICTION: prediction}
 ```
 
-- A prediction holds values for this step. One that spans a chunk, such as an imagined clip, is
-  returned piece by piece: each step returns the part matching the action it serves.
 - Each entry stays displayed until it is returned again. Return empty `detections` to clear a
   camera's boxes.
 - Predicting is opt-in through your policy's config, and should cost nothing when disabled.

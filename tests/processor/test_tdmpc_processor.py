@@ -121,7 +121,7 @@ def test_tdmpc_processor_normalization():
     assert processed[TransitionKey.ACTION].shape == (1, 6)
 
     # Process action through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION])
+    postprocessed = postprocessor({ACTION: processed[TransitionKey.ACTION]})[ACTION]
 
     # Check that action is unnormalized (but still batched)
     assert postprocessed.shape == (1, 6)
@@ -159,7 +159,7 @@ def test_tdmpc_processor_cuda():
     assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION])
+    postprocessed = postprocessor({ACTION: processed[TransitionKey.ACTION]})[ACTION]
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"

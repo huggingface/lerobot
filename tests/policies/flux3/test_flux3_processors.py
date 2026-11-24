@@ -33,7 +33,7 @@ from lerobot.processor.pipeline import (
     ObservationProcessorStep,
     PolicyProcessorPipeline,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_ACTION, OBS_STATE
 from tests.policies.flux3.helpers import rich_task_config, single_config
 
 
@@ -84,7 +84,7 @@ def test_saved_frame_processors_keep_overrides_and_reconnect_relative_actions(tm
     }
     prepared = pre(batch)
     torch.testing.assert_close(prepared[ACTION][..., :5], torch.full((1, 32, 5), 0.5))
-    torch.testing.assert_close(post(prepared[ACTION]).reshape_as(actions), actions)
+    torch.testing.assert_close(post(prepared)[ACTION].reshape_as(actions), actions)
 
 
 @pytest.mark.parametrize("history", [1, 8])
@@ -102,18 +102,23 @@ def test_history_steps_change_only_their_own_fields(history, representation):
     assert isinstance(observation_step, ObservationProcessorStep)
     assert isinstance(action_step, ActionProcessorStep)
     commands = torch.arange(history + cfg.chunk_size).float()[None, :, None].repeat(2, 1, 6) / 4
+    # Executed commands come as observation.action, the targets after them as action.
+    targets = commands[:, history:]
     states = torch.full((2, history, 6), 0.4)
     transition = {
-        TransitionKey.OBSERVATION: {OBS_STATE: states},
-        TransitionKey.ACTION: commands,
+        TransitionKey.OBSERVATION: {OBS_STATE: states, OBS_ACTION: commands[:, :history]},
+        TransitionKey.ACTION: targets,
         TransitionKey.REWARD: 7.0,
     }
     observed = observation_step(transition)
-    assert observed[TransitionKey.ACTION] is commands
+    assert observed[TransitionKey.ACTION] is targets
     assert transition[TransitionKey.OBSERVATION][OBS_STATE] is states and torch.all(states == 0.4)
     assert PAST_ACTIONS not in transition[TransitionKey.OBSERVATION]
     processed = action_step(observed)
-    assert processed[TransitionKey.OBSERVATION] is observed[TransitionKey.OBSERVATION]
+    # The action step only consumes observation.action; every other observation is untouched.
+    observations = observed[TransitionKey.OBSERVATION]
+    assert processed[TransitionKey.OBSERVATION].keys() == observations.keys() - {OBS_ACTION}
+    assert all(value is observations[key] for key, value in processed[TransitionKey.OBSERVATION].items())
     assert processed[TransitionKey.REWARD] == 7.0
     expected = commands[:, 1:].clone()
     if representation == "delta":
@@ -123,9 +128,7 @@ def test_history_steps_change_only_their_own_fields(history, representation):
     torch.testing.assert_close(processed[TransitionKey.ACTION], expected[:, history - 1 :], rtol=0, atol=0)
     past = torch.cat([torch.zeros(2, 1, 6), expected[:, : history - 1]], 1)
     torch.testing.assert_close(observed[TransitionKey.OBSERVATION][PAST_ACTIONS], past, rtol=0, atol=1e-7)
-    changed = commands.clone()
-    changed[:, history:] += 100
-    changed_observations = observation_step({**transition, TransitionKey.ACTION: changed})
+    changed_observations = observation_step({**transition, TransitionKey.ACTION: targets + 100})
     assert torch.equal(changed_observations[TransitionKey.OBSERVATION][PAST_ACTIONS], past)
     inference = {TransitionKey.OBSERVATION: {OBS_STATE: states}}
     assert action_step(inference)[TransitionKey.OBSERVATION] is inference[TransitionKey.OBSERVATION]

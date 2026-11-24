@@ -27,7 +27,6 @@ from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     EnvTransition,
     ObservationProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -236,7 +235,7 @@ def make_vla_jepa_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     if config.input_features is None or config.output_features is None:
         raise ValueError(
@@ -295,9 +294,7 @@ def make_vla_jepa_pre_post_processors(
     )
     # Reverse the relative conversion on the unnormalized action, before gripper binarization.
     # gripper is kept absolute by relative_exclude_joints, so the two steps touch disjoint dims.
-    output_steps.append(
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step)
-    )
+    output_steps.append(AbsoluteActionsProcessorStep(enabled=config.use_relative_actions))
     if config.binarize_gripper_action:
         output_steps.append(
             BinarizeGripperProcessorStep(gripper_dim=gripper_dim, threshold=config.gripper_threshold)

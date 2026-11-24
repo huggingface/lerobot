@@ -29,7 +29,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 class TestDeclarativeAttributes:
     def test_base_defaults(self):
         assert PreTrainedPolicy._fsdp_wrap_modules is None
-        assert PreTrainedPolicy._fsdp_forward_methods == ("select_action", "predict_action_chunk")
+        assert PreTrainedPolicy._fsdp_forward_methods == ("predict_action_chunk",)
         assert PreTrainedPolicy.supports_gradient_checkpointing is False
         assert PreTrainedPolicy._cp_plan is None
 

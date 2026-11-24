@@ -203,24 +203,26 @@ Point the LeRobot runner's `--policy.path` at the trained adapter checkpoint; it
 base and saved processors. For direct calls with a **complete base**, load the processors alongside it:
 
 ```python
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.flux3 import Flux3Policy
 
 checkpoint = "black-forest-labs/flux-3-action-so101"
 policy = Flux3Policy.from_pretrained(checkpoint).eval()
 preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=checkpoint)
+engine = SyncInferenceEngine(policy, preprocessor, postprocessor, fps=policy.config.fps)
 
-# Run on every control tick, including while actions are queued:
-prepared = preprocessor(observation)
-normalized_action = policy.select_action(prepared)
-absolute_command = postprocessor(normalized_action)
+# At each episode start and after intervention:
+engine.reset()
+# On every control tick, with the observation's capture time in seconds:
+absolute_command = engine.step(observation, timestamp)
 ```
 
-The preprocessor buffers observation/command history. The postprocessor undoes normalization, integrates
-deltas and updates shared command history on every tick. The first command is anchored to measured
-state; later commands integrate from the preceding command. Direct policy outputs are normalized and
-must be postprocessed. Reset the policy and both processors at episode boundaries or after intervention;
-LeRobot's synchronous runner does this. RTC/asynchronous inference is not supported.
+The engine records every tick and serves the image/state window and, when the checkpoint conditions on
+past commands or predicts command deltas, the preceding commands as `observation.command_history`. The
+postprocessor undoes normalization and integrates deltas over the whole chunk from the last command.
+Commands before the first one of an episode are taken as the measured state. Direct policy outputs are
+normalized and must be postprocessed. RTC is not supported.
 
 For the default single-timestep policy, current images and measured state are sufficient. For offline
 prediction with an explicit delta anchor, supply `observation.command_history` with one preceding command;

@@ -42,7 +42,6 @@ def _fake_run_one(task_group, task_id, env, **kwargs):
         "max_rewards": [1.0] * len(successes),
         "successes": list(successes),
         "video_paths": [],
-        "predicted_video_paths": [],
     }
     return task_group, task_id, metrics
 

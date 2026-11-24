@@ -36,6 +36,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies.multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from lerobot.policies.multi_task_dit.modeling_multi_task_dit import MultiTaskDiTPolicy
 from lerobot.policies.multi_task_dit.processor_multi_task_dit import (
@@ -84,6 +85,13 @@ def create_observation_batch(
         f"{OBS_IMAGES}.laptop": torch.rand(batch_size, 3, height, width),
         "task": ["pick up the red cube"] * batch_size,
     }
+
+
+def create_window_batch(batch_size: int = 2, n_obs_steps: int = 2, state_dim: int = 10) -> dict:
+    """Create an inference batch: the ``[B, n_obs_steps, ...]`` observation windows, no actions."""
+    batch = create_train_batch(batch_size=batch_size, n_obs_steps=n_obs_steps, state_dim=state_dim)
+    batch.pop(ACTION)
+    return batch
 
 
 def create_config(
@@ -258,9 +266,9 @@ def test_multi_task_dit_pre_post_processors():
     assert processed_batch[f"{OBS_IMAGES}.laptop"].device.type == "cpu"
     assert processed_batch[ACTION].device.type == "cpu"
 
-    # Test postprocessor with sample action (PolicyAction is just a torch.Tensor)
+    # Test postprocessor with a sample action batch
     action = torch.randn(1, action_dim)
-    processed_action = postprocessor(action)
+    processed_action = postprocessor({ACTION: action})[ACTION]
 
     # Check that action is unnormalized and on CPU
     assert processed_action.shape == (1, action_dim)
@@ -329,15 +337,15 @@ def test_multi_task_dit_pre_post_processors_normalization():
 
     # Test unnormalization: should recover original values
     normalized_action_tensor = processed_batch[ACTION][0:1]  # Keep batch dimension
-    unnormalized_action = postprocessor(normalized_action_tensor)
+    unnormalized_action = postprocessor({ACTION: normalized_action_tensor})[ACTION]
 
     # Should recover original action values
     assert torch.allclose(unnormalized_action[0], input_action, atol=1e-4)
 
 
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 10, 10), (1, 6, 6)])
-def test_multi_task_dit_policy_select_action(batch_size: int, state_dim: int, action_dim: int):
-    """Test select_action (inference mode)."""
+def test_multi_task_dit_policy_executes_chunks(batch_size: int, state_dim: int, action_dim: int):
+    """Per-tick playback: one chunk of ``n_action_steps`` actions, then the next."""
     n_obs_steps = 2
     horizon = 16
     n_action_steps = 8
@@ -353,7 +361,6 @@ def test_multi_task_dit_policy_select_action(batch_size: int, state_dim: int, ac
     policy = MultiTaskDiTPolicy(config=config)
     policy.to(config.device)
     policy.eval()
-    policy.reset()  # Reset queues before inference
 
     # Create processors - use IDENTITY normalization when no stats provided
     config.normalization_mapping = {
@@ -363,14 +370,12 @@ def test_multi_task_dit_policy_select_action(batch_size: int, state_dim: int, ac
     }
     preprocessor, postprocessor = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
 
-    with torch.no_grad():
+    executor = SyncInferenceEngine(policy, preprocessor, postprocessor)
+    for tick in range(n_action_steps + 1):
         observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-        # Process observation through preprocessor
-        processed_obs = preprocessor(observation_batch)
-        selected_action = policy.select_action(processed_obs)
-        # Process action through postprocessor (PolicyAction is just a torch.Tensor)
-        processed_action = postprocessor(selected_action)
-        assert processed_action.shape == (batch_size, action_dim)
+        action = executor.step(observation_batch, float(tick))
+        assert action.shape == (batch_size, action_dim)
+        assert executor.queued_actions == (n_action_steps - 1 - tick) % n_action_steps
 
 
 def test_multi_task_dit_policy_diffusion_objective():
@@ -443,13 +448,9 @@ def test_multi_task_dit_policy_diffusion_objective():
     }
     preprocessor, postprocessor = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
     with torch.no_grad():
-        observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-        # Process observation through preprocessor
-        processed_obs = preprocessor(observation_batch)
-        selected_action = policy.select_action(processed_obs)
-        # Process action through postprocessor (PolicyAction is just a torch.Tensor)
-        processed_action = postprocessor(selected_action)
-        assert processed_action.shape == (batch_size, action_dim)
+        observation_batch = create_window_batch(batch_size, n_obs_steps, state_dim)
+        chunk = postprocessor(policy.predict_action_chunk(preprocessor(observation_batch)))[ACTION]
+        assert chunk.shape == (batch_size, n_action_steps, action_dim)
 
 
 def test_multi_task_dit_policy_flow_matching_objective():
@@ -522,13 +523,9 @@ def test_multi_task_dit_policy_flow_matching_objective():
     }
     preprocessor, postprocessor = make_multi_task_dit_pre_post_processors(config=config, dataset_stats=None)
     with torch.no_grad():
-        observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-        # Process observation through preprocessor
-        processed_obs = preprocessor(observation_batch)
-        selected_action = policy.select_action(processed_obs)
-        # Process action through postprocessor (PolicyAction is just a torch.Tensor)
-        processed_action = postprocessor(selected_action)
-        assert processed_action.shape == (batch_size, action_dim)
+        observation_batch = create_window_batch(batch_size, n_obs_steps, state_dim)
+        chunk = postprocessor(policy.predict_action_chunk(preprocessor(observation_batch)))[ACTION]
+        assert chunk.shape == (batch_size, n_action_steps, action_dim)
 
 
 def test_multi_task_dit_policy_save_and_load(tmp_path):
@@ -582,10 +579,8 @@ def test_multi_task_dit_policy_save_and_load(tmp_path):
             # Collect policy values before saving
             loss, _ = policy.forward(processed_batch)
 
-            observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-            # Process observation through preprocessor
-            processed_obs = preprocessor(observation_batch)
-            actions = policy.select_action(processed_obs)
+            observation_batch = create_window_batch(batch_size, n_obs_steps, state_dim)
+            actions = policy.predict_action_chunk(preprocessor(observation_batch))[ACTION]
 
         with seeded_context(12):
             # Process batch through preprocessor
@@ -593,9 +588,8 @@ def test_multi_task_dit_policy_save_and_load(tmp_path):
             # Collect policy values after loading
             loaded_loss, _ = loaded_policy.forward(processed_batch)
 
-            loaded_observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-            processed_obs = preprocessor(loaded_observation_batch)
-            loaded_actions = loaded_policy.select_action(processed_obs)
+            loaded_observation_batch = preprocessor(create_window_batch(batch_size, n_obs_steps, state_dim))
+            loaded_actions = loaded_policy.predict_action_chunk(loaded_observation_batch)[ACTION]
 
         # Compare state dicts
         assert policy.state_dict().keys() == loaded_policy.state_dict().keys()

@@ -6,9 +6,8 @@ NAT VLA is a vision-language-action model built on LFM2-VL that writes robot act
 
 The NAT tokenizer encodes a chunk of actions into tokens ordered in time: the first tokens describe the first steps, and its causal decoder turns a prefix of the tokens into exactly those steps. Actions with more columns than the tokenizer encodes at once are split into groups, each tokenized on its own.
 
-The policy builds on this in three ways:
+The policy builds on this in two ways:
 
-- **Streaming.** `select_action` hands over each step's action as soon as the tokens that describe it are generated, so the robot starts moving before the chunk is finished, and a chunk of `n_action_steps` steps generates only the tokens those steps need.
 - **Token-prefix real-time chunking.** The actions that run while the next chunk is generated are tokenized, and their tokens start the next chunk. The model continues these actions from the new observation instead of starting a new chunk, so consecutive chunks join without a jump and the robot never waits.
 - **A prompt in a processor.** `NATVLATokenizerProcessorStep` writes each sample's prompt token ids (the camera images, the task, the robot's `setup`, its binned state and its `control_mode`) and the image inputs. It is saved with the checkpoint, with the VLM's processor as `vlm/`, so a checkpoint loads offline and serves remotely.
 
@@ -56,18 +55,15 @@ lerobot-eval \
 
 ## Deploy with real-time chunking
 
-Token-prefix real-time chunking works with each `lerobot-rollout` inference backend. With the default tokenizer, it needs actions of at most 7 dimensions, and `rtc_steps` can be 8, 16 or 24; another tokenizer lists its values in `prefix_token_counts`.
-
-- **Synchronous** (`--inference.type=sync`, the default): with `--policy.rtc_steps`, `select_action` generates the next chunk in the background while the current chunk's last `rtc_steps` actions run, starting from their tokens. It needs `rtc_steps <= n_action_steps <= chunk_size - rtc_steps`.
-- **Asynchronous** (`--inference.type=rtc`) and **remote** (a [policy server](./remote_inference) serving `rtc_guided`, with `--inference.mode=rtc_guided` on the client): the inference engine passes `predict_action_chunk` the number of steps that run during inference (`inference_delay`) and the rest of the previous chunk, and the new chunk starts from the tokens of the smallest of those step counts that covers the delay. Keep `--inference.rtc.execution_horizon` at least that long. The guidance settings do not apply.
+Token-prefix real-time chunking runs with the asynchronous engine (`--inference.type=rtc`) and remote inference (a [policy server](./remote_inference) serving `rtc_guided`, with `--inference.mode=rtc_guided` on the client). With the default tokenizer, it needs actions of at most 7 dimensions. The inference engine passes `predict_action_chunk` the number of steps that run during inference (`inference_delay`) and the rest of the previous chunk, and the new chunk starts from the tokens of the smallest step count of `prefix_token_counts` (8, 16 or 24 with the default tokenizer) that covers the delay. Keep `--inference.rtc.execution_horizon` at least that long. The guidance settings do not apply.
 
 Deploy a checkpoint fine-tuned on your robot, here an SO-100:
 
 ```bash
 lerobot-rollout \
   --policy.path=${HF_USER}/nat_vla_so100 \
-  --policy.n_action_steps=16 \
-  --policy.rtc_steps=8 \
+  --inference.type=rtc \
+  --inference.rtc.execution_horizon=16 \
   --robot.type=so100_follower \
   --robot.port=/dev/ttyACM0 \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
@@ -75,11 +71,9 @@ lerobot-rollout \
   --duration=60
 ```
 
-or, with the asynchronous engine, `--inference.type=rtc --inference.rtc.execution_horizon=16` in place of `--policy.n_action_steps=16 --policy.rtc_steps=8`.
-
 ## Another NAT tokenizer
 
-A new policy loads its tokenizer from `--policy.action_tokenizer`, a Hub repository or local folder holding a NAT tokenizer's `config.json` and `model.safetensors` (default [`ahad-j/nat-tokenizer-h32-l4-c6400`](https://huggingface.co/ahad-j/nat-tokenizer-h32-l4-c6400)). The policy takes its chunk length, token counts, streaming boundaries and number of action-token rows from that tokenizer and saves the tokenizer in its checkpoint. Set `--policy.chunk_size` to the tokenizer's time horizon and `--policy.n_action_steps` to it or less.
+A new policy loads its tokenizer from `--policy.action_tokenizer`, a Hub repository or local folder holding a NAT tokenizer's `config.json` and `model.safetensors` (default [`ahad-j/nat-tokenizer-h32-l4-c6400`](https://huggingface.co/ahad-j/nat-tokenizer-h32-l4-c6400)). The policy takes its chunk length, token counts and number of action-token rows from that tokenizer and saves the tokenizer in its checkpoint. Set `--policy.chunk_size` to the tokenizer's time horizon and `--policy.n_action_steps` to it or less.
 
 Hub downloads are pinned to the commits in `--policy.vlm_revision` and `--policy.action_tokenizer_revision`; set them together with `--policy.vlm` or `--policy.action_tokenizer`.
 

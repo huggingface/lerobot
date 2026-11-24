@@ -84,7 +84,7 @@ def finalize_sharded_policy(policy: nn.Module, parallel_dims: "ParallelDims") ->
 
     1. Strip accelerate's CP mask hooks (only attached when cp > 1 was declared).
     2. Register the policy's non-`forward` entry points (`_fsdp_forward_methods`) so FSDP2
-       unshards parameters around `select_action` & co. — without this, any inference-style
+       unshards parameters around `predict_action_chunk` & co. — without this, any inference-style
        call on a sharded policy crashes on mixed Tensor/DTensor.
 
     No-op for DDP/single-process runs.

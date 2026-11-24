@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 # Remote inference protocol version, used in its keys. Separate from the envelope version.
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 IDENTITY_KEYS = ("artifact_identity", "observation_id", "capture_time", "task", "task_version")
 
 

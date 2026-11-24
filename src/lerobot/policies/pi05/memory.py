@@ -65,30 +65,6 @@ def _validate_siglip_layer(layer, *, layer_index: int) -> None:
         )
 
 
-def sample_observation_history(
-    history: list[Tensor], *, num_frames: int, stride: int, steps_seen: int
-) -> tuple[Tensor, Tensor]:
-    """Subsample a homogeneous-batch inference queue and mark pre-episode padding.
-
-    Frames are addressed by age relative to ``history[-1]``, the newest observation,
-    so the current frame is always the last sampled frame regardless of queue length.
-
-    ``steps_seen`` applies to every batch row. Pi05 clears the queue at each
-    batched rollout boundary; independently resetting vector rows is unsupported.
-    """
-    # Descending ages, so the returned frames run oldest -> current.
-    required_ages = list(range((num_frames - 1) * stride, -1, -stride))
-    if len(history) <= required_ages[0]:
-        raise ValueError(
-            f"observation history holds {len(history)} frames, need at least "
-            f"{required_ages[0] + 1} to sample {num_frames} frames at stride {stride}"
-        )
-    values = torch.stack([history[-1 - age] for age in required_ages], dim=1)
-    valid = torch.tensor([steps_seen > age for age in required_ages], dtype=torch.bool, device=values.device)
-    padding_mask = (~valid)[None, :].expand(values.shape[0], -1)
-    return values, padding_mask
-
-
 def temporal_sinusoidal_embedding(
     num_frames: int, hidden_size: int, *, device: torch.device, dtype: torch.dtype
 ) -> Tensor:

@@ -158,12 +158,25 @@ class ChunkRuntime:
         blend_steps: int = 0,
         blend_weight: float = 0.5,
         blend_indices: tuple[int, ...] = (),
+        complete_execution: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """Allocate one action queue and a bounded steady-state latency window."""
-        for value in (action_interval, max_observation_age_s, action_timeout_s, startup_timeout_s):
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError("Execution intervals, ages and deadlines must be finite and positive")
+        """Allocate one action queue and a bounded steady-state latency window.
+
+        With ``complete_execution`` every chunk is executed fully before the next
+        request, which observes the result of its last action: the robot holds at
+        each chunk boundary while the next chunk is predicted. This is synchronous
+        execution, for policies whose state follows the executed actions.
+
+        Ages and deadlines may be infinite, for callers that predict inline and on a
+        clock of their own (e.g. simulation steps). Plain chunks may carry a batch axis
+        after the time axis (``[T, B, A]``), for batched environments.
+        """
+        if not math.isfinite(action_interval) or action_interval <= 0:
+            raise ValueError("Execution intervals must be finite and positive")
+        for value in (max_observation_age_s, action_timeout_s, startup_timeout_s):
+            if not value > 0:
+                raise ValueError("Execution ages and deadlines must be positive")
         if not math.isfinite(refill_seconds) or refill_seconds < 0:
             raise ValueError("Refill playback threshold must be finite and nonnegative")
         if not math.isfinite(action_starvation_grace_s) or action_starvation_grace_s < 0:
@@ -184,6 +197,14 @@ class ChunkRuntime:
             raise ValueError("Blending requires alignment and explicit continuous components")
         if blend_indices and not blend_steps:
             raise ValueError("Blend components require a positive blend window")
+        # Requests start from an empty queue, so aligned merging trims nothing and
+        # blending has nothing to overlap: both merges behave like appending.
+        if complete_execution and mode is not ExecutionMode.CHUNK:
+            raise ValueError("Complete chunk execution requires plain chunks")
+        self.complete_execution = complete_execution
+        # When an action was popped last; complete execution requests the next
+        # chunk from a capture taken after that last pop.
+        self._last_pop_at: float | None = None
         self.mode = mode
         self.chunk_merge = chunk_merge
         self.blend_steps = blend_steps
@@ -260,6 +281,7 @@ class ChunkRuntime:
             self.prediction = None
             self.held = held
             self.has_executed = False
+            self._last_pop_at = None
             self._last_anchor = None
             self.started_at = self.clock()
             self.starvation_deadline = waiting_deadline
@@ -365,6 +387,8 @@ class ChunkRuntime:
             if self.failure or not self.active or self.held or self.pending is not None:
                 return False
             snapshot = self.queue.snapshot()
+            if self.complete_execution:
+                return self.queue.qsize() == 0
             if (
                 self.chunk_merge == "aligned"
                 and task_version is not None
@@ -383,6 +407,13 @@ class ChunkRuntime:
             playback = self.queue.qsize() * self.interval
             return playback <= self.effective_refill + 1e-9
 
+    def observes_last_action(self, capture_time: float) -> bool:
+        """Whether a capture can start the next complete-execution chunk."""
+        with self.lock:
+            return (
+                not self.complete_execution or self._last_pop_at is None or capture_time > self._last_pop_at
+            )
+
     def begin(self, observation: ObservationSnapshot) -> ChunkRequest | None:
         """Reserve inference against one atomic cursor/continuation snapshot."""
         with self.lock:
@@ -396,6 +427,8 @@ class ChunkRuntime:
                 or observation.capture_time < self._starvation_capture_after
             ):
                 return None
+            if not self.observes_last_action(observation.capture_time):
+                return None  # wait for the result of the chunk's last action
             snapshot = self.queue.snapshot()
             if self.chunk_merge == "aligned":
                 if (
@@ -457,8 +490,8 @@ class ChunkRuntime:
             actions = chunk.canonical_actions
             model = chunk.model_actions if chunk.model_actions is not None else actions
             if (
-                actions.ndim != 2
-                or model.ndim != 2
+                actions.ndim not in ((2, 3) if self.mode is ExecutionMode.CHUNK else (2,))
+                or model.ndim != actions.ndim
                 or len(actions) != len(model)
                 or not len(actions)
                 or type(chunk.execution_steps) is not int
@@ -605,7 +638,10 @@ class ChunkRuntime:
                 return None
             item = self.queue.get_with_provenance()
             if item is None:
-                if self.has_executed:
+                if self.complete_execution:
+                    # A planned boundary: the robot holds until the next chunk is accepted.
+                    self.current = None
+                elif self.has_executed:
                     self._wait_for_actions()
                 return None
             action, _, provenance = item
@@ -614,6 +650,7 @@ class ChunkRuntime:
                 return None
             self.current = provenance
             self.has_executed = True
+            self._last_pop_at = self.clock()
             if not self.dispatch_allowed():
                 return None
             return action, provenance

@@ -29,11 +29,13 @@ from torch import Tensor
 from torch.nn import functional
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import (
     ACTION,
     ACTION_CODE_TOKEN_MASK,
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
+    NOISE,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
@@ -53,7 +55,7 @@ from ..pi05.modeling_pi05 import (
     PI05Policy,
     PI05Pytorch,
 )
-from ..pretrained import RTCActionSelectKwargs
+from ..pretrained import RTCActionSelectKwargs, rtc_inputs
 from ..utils import log_model_loading_keys
 from .configuration_fineart_vla import FineARTVLAConfig
 from .processor_fineart_vla import (  # noqa: F401
@@ -1598,17 +1600,14 @@ class FineARTVLAPolicy(PI05Policy):
         return groups
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        *,
-        noise: Tensor | None = None,
-        **kwargs: Unpack[RTCActionSelectKwargs],
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         marks = batch.get(OBS_LANGUAGE_CAUSAL_MARKS)
         if marks is None:
-            return super().predict_action_chunk(batch, noise=noise, **kwargs)
-        return self._predict_action_chunk_with_marks(batch, marks, noise=noise, **kwargs)
+            return super().predict_action_chunk(batch)
+        actions = self._predict_action_chunk_with_marks(
+            batch, marks, noise=batch.get(NOISE), **rtc_inputs(batch)
+        )
+        return PolicyOutput(action=actions)
 
     @torch.no_grad()
     def _predict_action_chunk_with_marks(

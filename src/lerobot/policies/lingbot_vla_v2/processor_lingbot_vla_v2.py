@@ -354,7 +354,7 @@ def make_lingbot_vla_v2_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build the LingBot-VLA 2.0 pre- and post-processing pipelines.
 
@@ -401,7 +401,7 @@ def make_lingbot_vla_v2_pre_post_processors(
             action_spans=config.slot_spans(ACTION), canonical_joints=config.canonical_joints
         ),
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions),
         steps.to_cpu,
     ]
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
@@ -424,7 +424,7 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load the saved pipelines, re-pinning the settings the active config owns.
 

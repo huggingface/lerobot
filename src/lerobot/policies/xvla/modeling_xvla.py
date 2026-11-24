@@ -22,21 +22,20 @@ import builtins
 import logging
 import os
 import re
-from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.utils.constants import ACTION, NOISE, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..common.vla_utils import pad_vector, resize_with_pad
 from ..pretrained import PreTrainedPolicy, T
-from ..utils import populate_queues
 from .action_hub import build_action_space
 from .configuration_xvla import XVLAConfig
 from .soft_transformer import SoftPromptedTransformer
@@ -287,11 +286,6 @@ class XVLAPolicy(PreTrainedPolicy):
         self.model = XVLAModel(config=config, florence_config=florence_config, proprio_dim=proprio_dim)
         self.reset()
 
-    def reset(self) -> None:
-        self._queues: dict[str, deque[Tensor]] = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-
     def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
         """Declare XVLA's existing image masks/resizing and state zero-padding.
 
@@ -444,25 +438,15 @@ class XVLAPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions.
 
         `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, model.dim_action)`.
         When it is None, it is drawn with `torch.randn`.
         """
+        noise = batch.get(NOISE)
         self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-        return self._get_action_chunk(batch, noise=noise)
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        self.eval()
-        if len(self._queues[ACTION]) == 0:
-            # Through predict_action_chunk, so a wrapper installed on it also covers this path.
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
-
-        return self._queues[ACTION].popleft()
+        return PolicyOutput(action=self._get_action_chunk(batch, noise=noise))
 
     @classmethod
     def from_pretrained(

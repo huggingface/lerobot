@@ -111,17 +111,13 @@ GB300, a B200 and an RTX PRO 6000 Blackwell.
 
 The policy keeps its own history: a ring buffer of the last 25 observations per environment of the
 batch (the executed chunk plus the current frame) feeds the next call as context, so
-`n_obs_steps` stays 1 and `select_action` must be called at every 15 Hz tick with the observation
-of that tick. The first call of a context window returns 21 commands, every later call 24. With
-`n_action_steps` below 24 every call is a cold start without context, as in praxis.
-`drop_queued_actions` (a new instruction mid-rollout, for example) also restarts the temporal
-context, since the model conditions on the whole previous chunk having been executed. A caller
-that executes whole chunks (`predict_action_chunk`) hands over the frames executed since its
-previous call as a stack, `(B, T, 3, H, W)` cameras with `(B, T, 7)` states, oldest first; the
-next chunk is then the one of a call-per-tick rollout. The first chunk of a context window has 21
-real commands and is padded to 24 with the last one; the frames observed during its padded rows are
-dropped, so the context is the one of a caller that executed the 21 real commands. A chunk call
-with one frame starts the context again.
+`n_obs_steps` stays 1. Every runner executes each chunk completely and hands the next call the
+last `n_action_steps` frames as a stack, `(B, T, 3, H, W)` cameras with `(B, T, 7)` states, oldest
+first (`PraxisConfig.inference_deltas`); the policy keeps the frames observed after the commands of
+the previous chunk, so the next chunk is the one of a call-per-tick rollout. The first call of a
+context window returns 21 commands, every later call 24, cut to `n_action_steps`. A chunk cut short
+(a new instruction mid-rollout, for example) resets the policy, since the model conditions on the
+whole previous chunk having been executed; a call with one frame starts the context again.
 
 ### Processors
 
@@ -544,7 +540,7 @@ ported.
 - Praxis outputs Cartesian pose targets for an arm with an impedance controller; LeRobot's robot
   classes do not include a Franka, so real-robot use goes through a client that executes
   Cartesian targets.
-- A `select_action` batch runs its environments sequentially (one model call per environment).
+- A batch runs its environments sequentially (one model call per environment).
 - Remote serving is not supported. The default chunk runner (`lerobot/inference/policy_runner.py`)
   refuses a policy that conditions on past observations, and Praxis conditions on the frames of the
   executed chunks (`current_observation_only=False` in `chunk_inference_spec`); the tile step also

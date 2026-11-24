@@ -199,20 +199,19 @@ def _make_algorithm(config: GaussianActorConfig) -> tuple[SACAlgorithm, Gaussian
 
 
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 6, 6), (1, 10, 10)])
-def test_gaussian_actor_policy_select_action(batch_size: int, state_dim: int, action_dim: int):
+def test_gaussian_actor_policy_predict_action_chunk(batch_size: int, state_dim: int, action_dim: int):
     config = create_default_config(state_dim=state_dim, continuous_action_dim=action_dim)
     policy = GaussianActorPolicy(config=config)
     policy.eval()
 
     with torch.no_grad():
         observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-        selected_action = policy.select_action(observation_batch)
-        # squeeze(0) removes batch dim when batch_size==1
-        assert selected_action.shape[-1] == action_dim
+        chunk = policy.predict_action_chunk(observation_batch)[ACTION]
+        assert chunk.shape == (batch_size, 1, action_dim)
 
 
-def test_gaussian_actor_policy_select_action_with_discrete():
-    """select_action should return continuous + discrete actions."""
+def test_gaussian_actor_policy_predict_action_chunk_with_discrete():
+    """predict_action_chunk should return continuous + discrete actions."""
     config = create_default_config(state_dim=10, continuous_action_dim=6)
     config.num_discrete_actions = 3
     policy = GaussianActorPolicy(config=config)
@@ -220,10 +219,8 @@ def test_gaussian_actor_policy_select_action_with_discrete():
 
     with torch.no_grad():
         observation_batch = create_observation_batch(batch_size=1, state_dim=10)
-        # Squeeze to unbatched (single observation)
-        observation_batch = {k: v.squeeze(0) for k, v in observation_batch.items()}
-        selected_action = policy.select_action(observation_batch)
-        assert selected_action.shape[-1] == 7  # 6 continuous + 1 discrete
+        chunk = policy.predict_action_chunk(observation_batch)[ACTION]
+        assert chunk.shape == (1, 1, 7)  # 6 continuous + 1 discrete
 
 
 @pytest.mark.parametrize("batch_size,state_dim,action_dim", [(2, 6, 6), (1, 10, 10)])
@@ -300,8 +297,8 @@ def test_gaussian_actor_training_with_visual_input(batch_size: int, state_dim: i
         observation_batch = create_observation_batch_with_visual_input(
             batch_size=batch_size, state_dim=state_dim
         )
-        selected_action = policy.select_action(observation_batch)
-        assert selected_action.shape[-1] == action_dim
+        chunk = policy.predict_action_chunk(observation_batch)[ACTION]
+        assert chunk.shape == (batch_size, 1, action_dim)
 
 
 @pytest.mark.parametrize(
@@ -404,9 +401,9 @@ def test_gaussian_actor_training_with_discrete_critic():
         observation_batch = create_observation_batch_with_visual_input(
             batch_size=batch_size, state_dim=state_dim
         )
-        # Policy.select_action now handles both continuous + discrete
-        selected_action = policy.select_action({k: v.squeeze(0) for k, v in observation_batch.items()})
-        assert selected_action.shape[-1] == continuous_action_dim + 1
+        # The policy returns both continuous + discrete actions
+        chunk = policy.predict_action_chunk(observation_batch)[ACTION]
+        assert chunk.shape == (batch_size, 1, continuous_action_dim + 1)
 
 
 def test_sac_algorithm_target_entropy():
@@ -501,11 +498,11 @@ def test_gaussian_actor_policy_save_and_load(tmp_path):
     with torch.no_grad():
         with seeded_context(12):
             observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-            actions = policy.select_action(observation_batch)
+            actions = policy.predict_action_chunk(observation_batch)[ACTION]
 
         with seeded_context(12):
             loaded_observation_batch = create_observation_batch(batch_size=batch_size, state_dim=state_dim)
-            loaded_actions = loaded_policy.select_action(loaded_observation_batch)
+            loaded_actions = loaded_policy.predict_action_chunk(loaded_observation_batch)[ACTION]
 
         assert torch.allclose(actions, loaded_actions)
 

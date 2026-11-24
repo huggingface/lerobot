@@ -22,6 +22,13 @@ from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedu
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig  # noqa: F401
+from lerobot.utils.constants import (
+    ACTION,
+    NOISE,
+    RTC_EXECUTION_HORIZON,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+)
 from lerobot.utils.random_utils import set_seed
 from tests.utils import require_cuda, skip_if_package_missing
 
@@ -148,16 +155,18 @@ def test_smolvla_rtc_inference_with_prev_chunk():
 
         # Test with RTC and previous chunk
         actions_with_rtc = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=prev_chunk,
-            inference_delay=4,
-            execution_horizon=10,
-        )
+            {
+                **batch,
+                NOISE: noise.clone(),
+                RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+                RTC_INFERENCE_DELAY: 4,
+                RTC_EXECUTION_HORIZON: 10,
+            }
+        )[ACTION]
 
         # Test without RTC for comparison
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})[ACTION]
         policy.config.rtc_config.enabled = True
 
     # Verify shapes
@@ -226,15 +235,11 @@ def test_smolvla_rtc_inference_without_prev_chunk():
         noise = policy.model.sample_noise((1, config.chunk_size, 7), device)
 
         # Test with RTC enabled but no previous chunk
-        actions_with_rtc_no_prev = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=None,
-        )
+        actions_with_rtc_no_prev = policy.predict_action_chunk({**batch, NOISE: noise.clone()})[ACTION]
 
         # Test without RTC
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})[ACTION]
         policy.config.rtc_config.enabled = True
 
     # Without previous chunk, RTC should have no effect
@@ -306,16 +311,18 @@ def test_smolvla_rtc_validation_rules():
 
         # Test with RTC
         actions_with_rtc = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=prev_chunk,
-            inference_delay=inference_delay,
-            execution_horizon=execution_horizon,
-        )
+            {
+                **batch,
+                NOISE: noise.clone(),
+                RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+                RTC_INFERENCE_DELAY: inference_delay,
+                RTC_EXECUTION_HORIZON: execution_horizon,
+            }
+        )[ACTION]
 
         # Test without RTC
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})[ACTION]
         policy.config.rtc_config.enabled = True
 
     assert not torch.allclose(actions_with_rtc, actions_without_rtc, rtol=1e-3)

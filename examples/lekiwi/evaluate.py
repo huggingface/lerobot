@@ -19,6 +19,7 @@ import time
 
 from lerobot.common.control_utils import predict_action
 from lerobot.datasets import LeRobotDataset
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.act import ACTPolicy
 from lerobot.policies.utils import make_robot_action
@@ -74,6 +75,8 @@ def main():
         # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
         preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
     )
+    # Predicts a chunk when the previous one has executed and plays it back one action per tick
+    engine = SyncInferenceEngine(policy, preprocessor, postprocessor, fps=FPS)
 
     # Connect the robot
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
@@ -97,6 +100,7 @@ def main():
             log_say(f"Running inference, recording eval episode {recorded_episodes} of {NUM_EPISODES}")
 
             # Inline evaluation loop: predict actions and send to robot
+            engine.reset()
             timestamp = 0
             start_episode_t = time.perf_counter()
             while timestamp < EPISODE_TIME_SEC:
@@ -108,16 +112,16 @@ def main():
 
                 # Get robot observation
                 obs = robot.get_observation()
+                capture_t = time.perf_counter()
                 obs_processed = robot_observation_processor(obs)
                 observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
                 # Predict action using the policy
                 action_tensor = predict_action(
                     observation=observation_frame,
-                    policy=policy,
+                    engine=engine,
+                    timestamp=capture_t,
                     device=policy.config.device,
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
                     use_amp=policy.config.device.type == "cuda",
                     task=TASK_DESCRIPTION,
                     robot_type=robot.name,

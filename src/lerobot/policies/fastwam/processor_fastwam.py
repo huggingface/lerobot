@@ -100,7 +100,7 @@ def make_fastwam_pre_post_processors(
     # NOTE: no resize step here. The model is the single authority on input resolution: it resizes
     # each camera to the per-camera target (image_size split across cameras) in
     # `_stack_video_from_images` / `_prepare_infer_image`, on every path (train forward, rollout and
-    # eval select_action). A preprocessor resize step would be both redundant (the model re-resizes
+    # eval). A preprocessor resize step would be both redundant (the model re-resizes
     # anyway) and unsafe across fine-tuning: its `resize_size` would be inherited from the base
     # checkpoint's camera geometry, not this dataset's, making the concatenation N_cameras x too wide.
 
@@ -124,7 +124,7 @@ def make_fastwam_pre_post_processors(
     ]
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions),
     ]
     if config.toggle_action_dimensions:
         output_steps.append(
@@ -178,9 +178,7 @@ def make_fastwam_pre_post_processors_from_pretrained(
             exclude_joints=config.relative_exclude_joints,
             action_names=config.action_feature_names,
         )
-        absolute_step = AbsoluteActionsProcessorStep(
-            enabled=config.use_relative_actions, relative_step=relative_step
-        )
+        absolute_step = AbsoluteActionsProcessorStep(enabled=config.use_relative_actions)
         pre_steps = list(preprocessor.steps)
         pre_steps.insert(_step_index(pre_steps, NormalizerProcessorStep), relative_step)
         preprocessor.steps = pre_steps

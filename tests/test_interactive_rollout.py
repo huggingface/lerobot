@@ -53,6 +53,7 @@ from lerobot.rollout import (  # noqa: E402
 )
 from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
 from lerobot.rollout.planner import PlannerConfig, VlmPlanner, training_vocabulary  # noqa: E402
+from lerobot.utils.constants import ACTION  # noqa: E402
 from tests.interactive_helpers import _FakeEngine, _loop_ctx, _make_ctx
 
 pytestmark = pytest.mark.dataset
@@ -607,135 +608,75 @@ def test_session_subtask_sets_and_reports_task(capsys):
 # --- InferenceEngine task holder (the /subtask plumbing) ---
 
 
-def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
-    """A /subtask switch must reach the policy and drop stale queued actions."""
-    from lerobot.inference import SyncInferenceEngine
+def _chunk_policy_double(steps: int = 3):
+    """A policy double predicting ``steps``-action chunks of zeros."""
+    from lerobot.policies import ChunkPolicySpec
 
     policy = MagicMock()
-    policy.config.use_amp = False
-    policy.select_action.return_value = torch.zeros(1, 2)
+    policy.config = SimpleNamespace(use_amp=False, input_features=None, output_features=None)
+    policy.chunk_inference_spec.return_value = ChunkPolicySpec(prediction_steps=steps, execution_steps=steps)
+    policy.predict_action_chunk.side_effect = lambda batch: {ACTION: torch.zeros(1, steps, 2)}
+    return policy
 
-    class _Postprocessor:
-        """Matches the pipeline interface: callable, and rewindable like the real one."""
 
-        def __init__(self):
-            self.resets = 0
+def _sync_engine(policy):
+    from lerobot.inference import SyncInferenceEngine
 
-        def __call__(self, action):
-            return action
-
-        def reset(self):
-            self.resets += 1
-
-    postprocessor = _Postprocessor()
-
-    engine = SyncInferenceEngine(
+    return SyncInferenceEngine(
         policy=policy,
-        preprocessor=lambda obs: obs,
-        postprocessor=postprocessor,
+        preprocessor=_IdentityPipeline(),
+        postprocessor=_IdentityPipeline(),
         dataset_features={
             "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
         },
-        ordered_action_keys=["j1.pos", "j2.pos"],
         task="pick up the cube",
         device="cpu",
         robot_type="mock",
     )
 
-    first = engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
-    assert first is not None
+
+def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
+    """A /subtask switch must reach the policy and drop stale queued actions."""
+    policy = _chunk_policy_double()
+    engine = _sync_engine(policy)
+    frame = {"observation.state": np.zeros(1, dtype=np.float32)}
+
+    assert engine.get_action(frame) is not None
     assert engine.dispatched_task == "pick up the cube"
-    assert policy.drop_queued_actions.call_count == 0
-    assert policy.select_action.call_args[0][0]["task"] == "pick up the cube"
+    assert policy.predict_action_chunk.call_count == 1
+    assert policy.predict_action_chunk.call_args[0][0]["task"] == "pick up the cube"
 
     engine.set_task("fold the towel")
-    switched = engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
-    assert switched is not None
+    assert engine.get_action(frame) is not None
     assert engine.dispatched_task == "fold the towel"
-    # Precomputed chunk actions are dropped so the new task applies immediately,
-    # without the wider episode reset (which would perturb observation history).
-    assert policy.drop_queued_actions.call_count == 1
+    # The precomputed chunk is dropped so the new task applies immediately, without the
+    # wider episode reset.
+    assert policy.predict_action_chunk.call_count == 2
+    assert policy.predict_action_chunk.call_args[0][0]["task"] == "fold the towel"
     assert policy.reset.call_count == 0
-    # Dropping the chunk also rewinds postprocessor steps that track a position inside it,
-    # such as G0.5's per-timestep unnormalizer.
-    assert postprocessor.resets == 1
-    assert policy.select_action.call_args[0][0]["task"] == "fold the towel"
 
     # Only the first call after a switch flushes.
-    engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
-    assert policy.drop_queued_actions.call_count == 1
+    engine.get_action(frame)
+    assert policy.predict_action_chunk.call_count == 2
 
 
 def test_sync_engine_vqa_drops_precomputed_actions():
     """Inline text generation stales any queued chunk by its duration, so a VQA flushes it."""
-    from lerobot.inference import SyncInferenceEngine
-
-    policy = MagicMock()
-    policy.config.use_amp = False
+    policy = _chunk_policy_double()
     policy.supports_text_generation.return_value = True
     policy.generate_text.return_value = "a red cube"
-
-    engine = SyncInferenceEngine(
-        policy=policy,
-        preprocessor=lambda obs: obs,
-        postprocessor=lambda action: action,
-        dataset_features={
-            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
-        },
-        ordered_action_keys=["j1.pos", "j2.pos"],
-        task="pick up the cube",
-        device="cpu",
-        robot_type="mock",
-    )
+    engine = _sync_engine(policy)
     delivered = []
     engine.set_answer_observer(delivered.append)
+    frame = {"observation.state": np.zeros(1, dtype=np.float32)}
 
+    engine.get_action(frame)
     assert engine.ask("what do you see?")
-    assert engine.pump_query({"observation.state": np.zeros(1, dtype=np.float32)})
-    assert policy.drop_queued_actions.call_count == 1
+    assert engine.pump_query(frame)
+    engine.get_action(frame)
+    assert policy.predict_action_chunk.call_count == 2
     assert policy.reset.call_count == 0
     assert [answer.answer for answer in delivered] == ["a red cube"]
-
-
-def test_drop_queued_actions_clears_the_queues_dict_convention():
-    """The /subtask fast switch relies on the smolvla-style ``_queues`` dict too, not only
-    on act/pi0's ``_action_queue`` (covered against a real policy in the policy tests)."""
-    from collections import deque
-
-    from lerobot.policies.pretrained import PreTrainedPolicy
-    from lerobot.utils.constants import ACTION
-
-    policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
-        _action_queue_attrs=PreTrainedPolicy._action_queue_attrs,
-        _queues={ACTION: deque([1, 2, 3]), "observation.state": deque([9])},
-    )
-    PreTrainedPolicy.drop_queued_actions(policy)
-    assert len(policy._queues[ACTION]) == 0
-    assert len(policy._queues["observation.state"]) == 1  # other episode state is left alone
-
-
-def test_count_queued_actions_reads_both_queue_conventions():
-    """The sync engine keys the relative-action anchor hold off this count, so it must agree
-    with drop_queued_actions() on both the bare-deque and the ``_queues`` dict conventions."""
-    from collections import deque
-
-    from lerobot.policies.pretrained import PreTrainedPolicy
-    from lerobot.utils.constants import ACTION
-
-    bare_deque_policy = SimpleNamespace(  # act / pi0 / fastwam / lingbot-va style
-        _action_queue_attrs=PreTrainedPolicy._action_queue_attrs,
-        _action_queue=deque([1, 2, 3]),
-    )
-    assert PreTrainedPolicy.count_queued_actions(bare_deque_policy) == 3
-
-    queues_dict_policy = SimpleNamespace(  # smolvla / diffusion / vqbet / wall_x style
-        _action_queue_attrs=PreTrainedPolicy._action_queue_attrs,
-        _queues={ACTION: deque([1, 2]), "observation.state": deque([9, 9, 9])},
-    )
-    assert PreTrainedPolicy.count_queued_actions(queues_dict_policy) == 2  # history is not counted
-
-    never_chunks_policy = SimpleNamespace(_action_queue_attrs=PreTrainedPolicy._action_queue_attrs)
-    assert PreTrainedPolicy.count_queued_actions(never_chunks_policy) == 0
 
 
 # --- Sentry strategy: restartable run() segments + dispatched-action task labels ---
@@ -1369,21 +1310,19 @@ class _StubChunkPolicy:
         """Wake any predict parked on the gate so teardown never stalls."""
         self._release.release(3)
 
-    def predict_action_chunk(self, batch, inference_delay=0, prev_chunk_left_over=None):
+    def predict_action_chunk(self, batch):
         self.in_inference.set()
         released = self._release.acquire(timeout=2.0)
         self.in_inference.clear()
         if not released:
             raise TimeoutError("test never released the inference gate")
         self.predicted_tasks.append(batch["task"][0])
-        return torch.zeros(1, self.chunk_len, self.action_dim)
+        return {ACTION: torch.zeros(1, self.chunk_len, self.action_dim)}
 
     def reset(self):
         pass
 
     chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
-    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
-    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
 
     def supports_rtc(self):
         return True
@@ -2099,14 +2038,13 @@ def test_planner_failure_on_first_turn_lifts_the_hold():
 def test_sync_engine_holds_dispatch_while_planner_has_not_spoken():
     from lerobot.inference import SyncInferenceEngine
 
-    policy = MagicMock()
+    policy = _chunk_policy_double()
     policy.supports_text_generation.return_value = False
     engine = SyncInferenceEngine(
         policy=policy,
-        preprocessor=lambda obs: obs,
-        postprocessor=lambda action: action,
+        preprocessor=_IdentityPipeline(),
+        postprocessor=_IdentityPipeline(),
         dataset_features={},
-        ordered_action_keys=[],
         task="pick up the cube",
         device="cpu",
         robot_type="mock",

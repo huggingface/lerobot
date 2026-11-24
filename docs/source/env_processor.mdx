@@ -19,8 +19,7 @@ The processing order during evaluation is:
 
 ```python
 observation = env_preprocessor(observation)   # environment-specific
-observation = preprocessor(observation)       # policy's saved preprocessing (normalization, ...)
-action = postprocessor(policy.select_action(observation))
+action = engine.step(observation, step)       # SyncInferenceEngine: policy preprocessor, predict_action_chunk, postprocessor
 action = env_postprocessor(action)            # environment-specific
 ```
 

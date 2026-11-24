@@ -56,7 +56,7 @@ robot.connect()
 
 # Read observation and send action
 obs = robot.get_observation()
-action = model.select_action(obs)
+action = my_controller(obs)  # e.g. a teleoperator or a policy
 robot.send_action(action)
 ```
 

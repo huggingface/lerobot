@@ -155,7 +155,7 @@ def run_actor(
 
                 # Get action from policy (returns full action: continuous + discrete)
                 policy_obs = make_policy_obs(obs, device=device)
-                action_tensor = policy_actor.select_action(policy_obs)
+                action_tensor = policy_actor.predict_action_chunk(policy_obs)[:, 0]
                 action = action_tensor.squeeze(0).cpu().numpy()
 
                 # Step environment

@@ -27,7 +27,6 @@ from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
-    PolicyOutput,
     PolicyPrediction,
     RobotAction,
     RobotObservation,
@@ -35,15 +34,21 @@ from lerobot.lerobot_types import (
 )
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_ANCHOR,
     DONE,
     INFO,
     MESSAGES_RENDERED,
+    NOISE,
     OBS_PREFIX,
     PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
     REWARD,
+    RTC_EXECUTION_HORIZON,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
     TRUNCATED,
+    VIDEO_NOISE,
 )
 
 
@@ -173,6 +178,12 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
 
 
 _COMPLEMENTARY_KEYS = (
+    ACTION_ANCHOR,
+    NOISE,
+    VIDEO_NOISE,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+    RTC_EXECUTION_HORIZON,
     "task",
     "index",
     "task_index",
@@ -353,28 +364,6 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
-
-
-def policy_output_to_transition(output: PolicyAction | PolicyOutput) -> EnvTransition:
-    """
-    Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
-
-    A policy returns a bare `PolicyAction`, or a `PolicyOutput` batch carrying the action and its
-    prediction (see `transition_to_prediction`).
-    """
-    if isinstance(output, torch.Tensor):
-        return policy_action_to_transition(output)
-    return batch_to_transition(dict(output))
-
-
-def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
-    """
-    Extract what a policy predicted besides its action.
-
-    Returns an empty `PolicyPrediction` when the transition carries none.
-    """
-    prediction = transition.get(TransitionKey.PREDICTION)
-    return prediction if prediction is not None else PolicyPrediction()
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:

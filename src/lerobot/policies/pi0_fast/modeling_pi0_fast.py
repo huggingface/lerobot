@@ -16,10 +16,9 @@
 
 import builtins
 import logging
-from collections import deque
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 import torch
@@ -49,7 +48,10 @@ else:
     PiGemmaModel = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
+from typing import Any
+
 from lerobot.configs import PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -967,13 +969,6 @@ class PI0FastPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         return self.parameters()
 
-    def reset(self):
-        """Reset internal state - called when environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-        self._queues = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
@@ -1218,24 +1213,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         return actions_tensor
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations."""
-        assert not self._rtc_enabled(), (
-            "RTC is not supported for select_action, use it with predict_action_chunk"
-        )
-
-        self.eval()
-
-        # Action queue logic for n_action_steps > 1
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
-            # Transpose to get shape (n_action_steps, batch_size, action_dim)
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
-
-    @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions given environment observations."""
         self.eval()
         # Prepare inputs
@@ -1279,7 +1257,7 @@ class PI0FastPolicy(PreTrainedPolicy):
             action_tokens, action_horizon=action_horizon, action_dim=action_dim
         )
 
-        return continuous_actions
+        return PolicyOutput(action=continuous_actions)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training."""

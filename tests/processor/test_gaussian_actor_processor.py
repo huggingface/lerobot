@@ -114,7 +114,7 @@ def test_gaussian_actor_processor_normalization_modes():
     assert processed[TransitionKey.ACTION].shape == (1, 5)
 
     # Process action through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION])
+    postprocessed = postprocessor({ACTION: processed[TransitionKey.ACTION]})[ACTION]
 
     # Check that action is unnormalized (but still batched)
     assert postprocessed.shape == (1, 5)
@@ -146,7 +146,7 @@ def test_gaussian_actor_processor_cuda():
     assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION])
+    postprocessed = postprocessor({ACTION: processed[TransitionKey.ACTION]})[ACTION]
 
     # Check that action is back on CPU
     assert postprocessed.device.type == "cpu"

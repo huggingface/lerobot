@@ -21,7 +21,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-from collections import deque
 from types import SimpleNamespace
 
 import draccus
@@ -343,7 +342,7 @@ def test_pretrained_molmoact2_processors_apply_masked_finetuning_stats(tmp_path)
     )
     assert torch.equal(processed[OBS_STATE], torch.tensor([[0.0, 0.5]]))
     assert torch.equal(processed[ACTION], torch.tensor([[0.0, 0.5]]))
-    assert torch.equal(postprocessor(processed[ACTION]), torch.tensor([[5.0, 0.5]]))
+    assert torch.equal(postprocessor({ACTION: processed[ACTION]})[ACTION], torch.tensor([[5.0, 0.5]]))
 
 
 def test_pretrained_molmoact2_processor_resume_keeps_saved_masks(tmp_path):
@@ -392,7 +391,7 @@ def test_pretrained_molmoact2_processor_resume_keeps_saved_masks(tmp_path):
     )
     assert torch.equal(processed[OBS_STATE], torch.tensor([[0.0, 0.25]]))
     assert torch.equal(processed[ACTION], torch.tensor([[0.0, 0.25]]))
-    assert torch.equal(postprocessor(processed[ACTION]), torch.tensor([[-5.0, 0.25]]))
+    assert torch.equal(postprocessor({ACTION: processed[ACTION]})[ACTION], torch.tensor([[-5.0, 0.25]]))
 
 
 def test_molmoact2_optimizer_preset_uses_component_clipping():
@@ -2998,7 +2997,7 @@ def test_load_hf_model_rejects_legacy_action_horizon_schema(monkeypatch):
         policy._load_hf_model()
 
 
-def test_rtc_processor_initialization_and_select_action_guard():
+def test_rtc_processor_initialization():
     policy = object.__new__(MolmoAct2Policy)
     torch.nn.Module.__init__(policy)
     policy.config = SimpleNamespace(rtc_config=RTCConfig(enabled=True))
@@ -3006,36 +3005,6 @@ def test_rtc_processor_initialization_and_select_action_guard():
     policy.init_rtc_processor()
 
     assert policy.rtc_processor is not None
-    with pytest.raises(AssertionError, match="RTC is not supported for select_action"):
-        policy.select_action({})
-
-
-def test_select_action_uses_single_full_batch_queue():
-    policy = object.__new__(MolmoAct2Policy)
-    torch.nn.Module.__init__(policy)
-    policy.config = SimpleNamespace(rtc_config=None, n_action_steps=2)
-    policy._action_queue = deque(maxlen=2)
-    calls = 0
-
-    def predict_action_chunk(batch, **kwargs):
-        nonlocal calls
-        del batch, kwargs
-        calls += 1
-        return torch.tensor(
-            [
-                [[1.0], [2.0]],
-                [[3.0], [4.0]],
-            ]
-        )
-
-    policy.predict_action_chunk = predict_action_chunk
-
-    first = policy.select_action({})
-    second = policy.select_action({})
-
-    assert calls == 1
-    assert torch.equal(first, torch.tensor([[1.0], [3.0]]))
-    assert torch.equal(second, torch.tensor([[2.0], [4.0]]))
 
 
 def test_inference_action_mode_is_explicit_and_has_no_action_mode_alias():
@@ -3122,7 +3091,7 @@ def test_saved_continuous_checkpoint_forwards_outer_mask_to_hf_generation():
         "attention_mask": torch.tensor([[0, 1, 1, 1, 1]], dtype=torch.long),
     }
 
-    actions = policy.predict_action_chunk(batch, generator=torch.Generator().manual_seed(0))
+    actions = policy.predict_action_chunk(batch)[ACTION]
 
     assert actions.shape == (1, 2, 7)
     assert torch.equal(
@@ -3133,7 +3102,7 @@ def test_saved_continuous_checkpoint_forwards_outer_mask_to_hf_generation():
     # An original HF checkpoint has no saved outer LeRobot action mode and
     # must retain the checkpoint's own BOTH-mode inference behavior.
     policy._checkpoint_action_mode = None
-    policy.predict_action_chunk(batch, generator=torch.Generator().manual_seed(0))
+    policy.predict_action_chunk(batch)
     assert "encoder_attention_mask" not in backbone.calls[1]
 
 
@@ -3632,7 +3601,7 @@ def test_discrete_predict_action_chunk_uses_hf_cached_generation_path():
             "input_ids": torch.ones(1, 3, dtype=torch.long),
             "attention_mask": torch.ones(1, 3, dtype=torch.long),
         }
-    )
+    )[ACTION]
 
     assert policy.model.index == 4
     assert actions.shape == (1, 1, 2)
@@ -3730,7 +3699,7 @@ def test_discrete_predict_action_chunk_uses_graph_backed_ar_decode_when_enabled(
             "input_ids": torch.ones(1, 3, dtype=torch.long),
             "attention_mask": torch.tensor([[0, 1, 1]], dtype=torch.long),
         }
-    )
+    )[ACTION]
 
     assert policy.model.used_static_cache
     assert policy.model.graph_steps == 4

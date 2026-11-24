@@ -22,10 +22,11 @@ import torch
 
 from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner
 from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.pretrained import rtc_inputs
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.processor import RelativeActionsProcessorStep
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, ACTION_ANCHOR, OBS_STATE
 from tests.inference.policy_helpers import ConformingPolicy, observation, processors, runner_for, tiny_config
 
 
@@ -37,7 +38,7 @@ def test_real_act_matches_canonical_processor_pipeline_and_execution_slice():
         prepared = runner.preprocessor(
             {key: torch.from_numpy(value.copy()).unsqueeze(0) for key, value in source.features.items()}
         )
-        expected = runner.postprocessor(policy.predict_action_chunk(prepared))[0, :3]
+        expected = runner.postprocessor({**prepared, **policy.predict_action_chunk(prepared)})[ACTION][0, :3]
     actual = runner.predict(source)
     torch.testing.assert_close(actual.canonical_actions, expected)
     assert actual.canonical_actions.shape == (3, 3)
@@ -59,7 +60,8 @@ class GuidedConformingPolicy(ConformingPolicy):
         self.rtc = RTCProcessor(config.rtc_config)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch, **kwargs):
+    def predict_action_chunk(self, batch):
+        kwargs = rtc_inputs(batch)
         prefix = kwargs.get("prev_chunk_left_over")
         result = self.rtc.denoise_step(
             x_t=torch.ones(1, 8, 3),
@@ -70,7 +72,7 @@ class GuidedConformingPolicy(ConformingPolicy):
         )
         if prefix is not None:
             self.guided_calls += 1
-        return result
+        return {ACTION: result}
 
 
 def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
@@ -101,16 +103,6 @@ def test_snapshot_owns_recycled_camera_and_state_buffers():
         snap.features[OBS_STATE][:] = 1
     with pytest.raises(TypeError):
         snap.features[OBS_STATE] = array
-
-
-@pytest.mark.parametrize(
-    "attribute,value", [("n_obs_steps", 2), ("temporal_ensemble_coeff", 0.01), ("use_visual_memory", True)]
-)
-def test_rejects_configuration_requiring_another_prediction_cadence(attribute, value):
-    policy = ConformingPolicy(tiny_config())
-    setattr(policy.config, attribute, value)
-    with pytest.raises(ValueError, match="history|ensembling|memory"):
-        runner_for(policy)
 
 
 def test_relative_rtc_reanchors_from_canonical_continuation_at_new_state():
@@ -148,18 +140,21 @@ def test_trained_rtc_rejects_prefix_beyond_checkpoint_or_available_actions():
 def test_language_processor_isolation_and_motion_invalidation_preserve_action_anchor():
     policy = ConformingPolicy(tiny_config())
     runner = runner_for(policy, relative=True)
-    runner.predict(observation(10))
-    state_before = runner._relative_step.get_cached_state().clone()
+    anchors = []
+    predict = policy.predict_action_chunk
+    policy.predict_action_chunk = lambda batch: anchors.append(batch[ACTION_ANCHOR].clone()) or predict(batch)
+    first = runner.predict(observation(10)).canonical_actions
+    # Each chunk is anchored on the state it was predicted from, carried in its own batch.
+    torch.testing.assert_close(anchors[-1], torch.full((1, 3), 10.0))
     assert runner.query(observation(20), kind="vqa", text="What is visible?") == "a cube"
-    torch.testing.assert_close(runner._relative_step.get_cached_state(), state_before)
-    policy._action_queue.append(torch.ones(3))
+    torch.testing.assert_close(runner.predict(observation(10)).canonical_actions, first)
+    torch.testing.assert_close(anchors[-1], torch.full((1, 3), 10.0))
     runner.reset(full=False)
     assert policy.resets == 1
-    assert not policy._action_queue
-    torch.testing.assert_close(runner._relative_step.get_cached_state(), state_before)
+    torch.testing.assert_close(runner.predict(observation(10)).canonical_actions, first)
     runner.reset()
     assert policy.resets == 2
-    assert runner._relative_step.get_cached_state() is None
+    torch.testing.assert_close(runner.predict(observation(10)).canonical_actions, first)
 
 
 def test_mapping_is_not_applied_twice():

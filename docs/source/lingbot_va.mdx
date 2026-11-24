@@ -28,7 +28,7 @@ fed back into the KV cache as the chunk is executed (closed-loop world modeling)
 
 - Standard `policy.type=lingbot_va` configuration through LeRobot.
 - Ready-to-use LeRobot-format checkpoints on the Hub (converted from the released upstream ones).
-- Autoregressive dual-stream inference behind the standard `select_action` interface
+- Autoregressive dual-stream inference behind the standard `predict_action_chunk` interface
   (single-environment eval, `--eval.batch_size=1`).
 - Opt-in saving of the policy's **predicted (imagined) videos** during eval / training.
 - Evaluation with `lerobot-eval` on LIBERO and RoboTwin.

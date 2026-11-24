@@ -27,11 +27,11 @@ import torch
 
 pytest.importorskip("transformers", reason="groot requires the `groot` extra (transformers)")
 
-from lerobot.lerobot_types import PolicyAction
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import make_groot_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import auto_select_torch_device
 from tests.utils import require_cuda
 
@@ -93,7 +93,7 @@ def instantiate_lerobot_groot(
 ) -> tuple[
     GrootPolicy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Instantiate LeRobot GR00T N1.7 policy with preprocessor and postprocessor."""
     if from_pretrained:
@@ -155,7 +155,7 @@ def create_dummy_data(device=DEVICE):
 
 @require_cuda
 def test_lerobot_groot_inference():
-    """Test the inference pass (select_action) of LeRobot's GR00T N1.7 policy."""
+    """Test the inference pass (predict_action_chunk) of LeRobot's GR00T N1.7 policy."""
     print("Test: LeRobot GR00T N1.7 Inference Pass")
 
     set_seed_all(42)
@@ -174,13 +174,13 @@ def test_lerobot_groot_inference():
     torch.manual_seed(42)
 
     with torch.no_grad():
-        lerobot_action = lerobot_policy.select_action(batch_lerobot_processed)
+        lerobot_action = lerobot_policy.predict_action_chunk(batch_lerobot_processed)[ACTION]
 
     print(f"\nInference successful. Output action shape: {lerobot_action.shape}")
     print("Output actions (first 5 dims):")
-    print(lerobot_action[:, :5])
+    print(lerobot_action[:, 0, :5])
 
-    lerobot_action = lerobot_postprocessor(lerobot_action)
+    lerobot_action = lerobot_postprocessor({ACTION: lerobot_action})[ACTION]
 
     del lerobot_policy, lerobot_preprocessor, lerobot_postprocessor, batch
     cleanup_memory()

@@ -129,11 +129,19 @@ class LingBotVAConfig(PreTrainedConfig):
             raise ValueError(
                 f"Unsupported dtype={self.dtype!r}. Expected torch.bfloat16, torch.float16 or torch.float32."
             )
+        if self.action_per_frame % self.frame_stride:
+            raise ValueError("action_per_frame must be a multiple of max(1, action_per_frame // 4)")
 
     @property
     def chunk_size(self) -> int:
         """Number of single-step actions produced per autoregressive chunk."""
         return self.frame_chunk_size * self.action_per_frame
+
+    @property
+    def frame_stride(self) -> int:
+        """Actions between two camera frames: the Wan2.2 VAE (temporal downsample 4) encodes
+        ``frame_chunk_size`` latent frames from the frames of a chunk."""
+        return max(1, self.action_per_frame // 4)
 
     @property
     def n_action_steps(self) -> int:
@@ -171,15 +179,14 @@ class LingBotVAConfig(PreTrainedConfig):
 
     @property
     def training_sampler(self) -> TrainingSampler:
-        # Future frames are video targets: one per ``action_per_frame / 4`` actions, so the
-        # Wan2.2 VAE (temporal downsample 4) encodes ``frame_chunk_size`` latent frames.
-        temporal_downsample = 4
-        stride = max(1, self.action_per_frame // temporal_downsample)
-        video = range(0, self.frame_chunk_size * temporal_downsample * stride, stride)
+        # Future frames are video targets (see ``frame_stride``).
+        video = range(0, self.frame_chunk_size * 4 * self.frame_stride, self.frame_stride)
         observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
         return FrameSampler(Deltas(observation=observation, action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:
-        # Past frames come back as chunk feedback (see ``LingBotVAPolicy.chunk_inference_spec``).
-        return Deltas()
+        # The frames observed while the previous chunk executed, the last one current
+        # (see ``LingBotVAPolicy.predict_action_chunk``).
+        window = range(self.frame_stride - self.chunk_size, 1, self.frame_stride)
+        return Deltas(observation=dict.fromkeys(self.obs_cam_keys, window))
