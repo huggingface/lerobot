@@ -10,6 +10,17 @@ A [dataset](./glossary#dataset) holds the [episodes](./glossary#episode) recorde
 - An **episode** is one attempt at the task, from start to end, with a task text such as "Pick up the cube and put it in the box". A dataset is a list of episodes.
 - A **frame** is one moment of an episode. Frames are recorded at a fixed rate, set by `fps`: 30 frames per second for most robots.
 
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-light.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-dark.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+
 ## What's in each frame
 
 Each frame holds the same **features**. Here are the features of [`lerobot/svla_so101_pickplace`](https://huggingface.co/datasets/lerobot/svla_so101_pickplace):

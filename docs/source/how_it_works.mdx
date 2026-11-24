@@ -4,15 +4,16 @@ LeRobot teaches a robot a new skill by example: you show it a task a few dozen t
 
 ## The loop
 
-```mermaid
-%%{init: {"theme": "neutral"}}%%
-flowchart TB
-  A["<b>Set up</b><br/>build, connect and calibrate your robot"] --> B["<b>Teleoperate</b><br/>control the robot yourself"]
-  B --> C["<b>Record</b><br/>save examples of the task"]
-  C --> D["<b>Train</b><br/>a policy learns from your examples"]
-  D --> E["<b>Run</b><br/>the policy controls the robot"]
-  E -->|not good enough yet| C
-```
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/how-it-works-loop-light.png"
+  alt="The LeRobot loop: set up, teleoperate, record, train and run, then record more and train again if the policy isn't good enough yet"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/how-it-works-loop-dark.png"
+  alt="The LeRobot loop: set up, teleoperate, record, train and run, then record more and train again if the policy isn't good enough yet"
+/>
 
 1. **Set up:** build or unbox your robot, connect it to your computer and calibrate it.
 2. **Teleoperate:** control the robot yourself, live, usually by moving a second arm with your hand.
@@ -54,6 +55,17 @@ While you teleoperate, LeRobot saves what happens 30 times per second. Each of t
 - the **observation**: what the robot senses. The camera images, plus its **state**: the position of every joint.
 - the **action**: the command sent to the motors at that moment, which is where you moved the leader arm.
 
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-light.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-dark.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+
 One recording of the task, from start to end, is an **episode**. Many episodes of the same task make a **dataset**. Datasets live on the [Hugging Face Hub](https://huggingface.co/datasets?other=LeRobot), where you can share yours and use thousands recorded by others.
 
 <div class="flex justify-center">
@@ -70,14 +82,16 @@ An episode in the [Dataset Visualizer](https://huggingface.co/spaces/lerobot/vis
 
 A **policy** is the AI model that controls your robot. Many times per second, it looks at the latest observation and decides the next actions:
 
-```mermaid
-%%{init: {"theme": "neutral"}}%%
-flowchart TB
-  O["<b>Observation</b><br/>camera images + joint positions"] --> P["<b>Policy</b><br/>a neural network"]
-  P --> A["<b>Actions</b><br/>where each joint should go next"]
-  A --> M["<b>Motors</b> move the robot"]
-  M -->|the world changes| O
-```
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/policy-loop-light.png"
+  alt="A policy running: it reads the camera images and joint positions, predicts a chunk of next actions, the motors move the robot, and the cameras see the result"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/policy-loop-dark.png"
+  alt="A policy running: it reads the camera images and joint positions, predicts a chunk of next actions, the motors move the robot, and the cameras see the result"
+/>
 
 Most policies predict a short sequence of future actions at once, an **action chunk** (for example the next 100 actions for ACT), which makes the movements smoother.
 

@@ -33,10 +33,22 @@ It works with low-cost arms like the SO-101 as well as mobile robots and humanoi
 
 ## How it works
 
-1. **Teleoperate:** control the robot yourself, usually by moving a second "leader" arm with your hand.
-2. **Record:** do the task a few dozen times. Each try is saved as an episode: the camera videos plus the robot's movements.
-3. **Train:** a policy learns to copy what you did.
-4. **Run:** the policy controls the robot and does the task on its own.
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/how-it-works-loop-light.png"
+  alt="The LeRobot loop: set up, teleoperate, record, train and run, then record more and train again if the policy isn't good enough yet"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/how-it-works-loop-dark.png"
+  alt="The LeRobot loop: set up, teleoperate, record, train and run, then record more and train again if the policy isn't good enough yet"
+/>
+
+1. **Set up:** build or unbox your robot, connect it to your computer and calibrate it.
+2. **Teleoperate:** control the robot yourself, usually by moving a second "leader" arm with your hand.
+3. **Record:** do the task a few dozen times. Each try is saved as an episode: the camera videos plus the robot's movements.
+4. **Train:** a policy learns to copy what you did.
+5. **Run:** the policy controls the robot and does the task on its own.
 
 New to robot learning? [How robot learning works](./how_it_works) explains this loop and the words you'll meet, in five minutes.
 

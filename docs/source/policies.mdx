@@ -16,6 +16,17 @@ Bigger isn't automatically better: large policies need more GPU memory, train mo
 
 ## The three kinds of policies
 
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/policy-kinds-light.png"
+  alt="The three kinds of policies: small imitation-learning models (about 50M to 300M parameters), vision-language-action models that also read a text instruction (about 0.5B to 6B), and world action models that also predict the next camera frames (about 3B to 27B)"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/policy-kinds-dark.png"
+  alt="The three kinds of policies: small imitation-learning models (about 50M to 300M parameters), vision-language-action models that also read a text instruction (about 0.5B to 6B), and world action models that also predict the next camera frames (about 3B to 27B)"
+/>
+
 - **Small imitation-learning models** learn from scratch on your episodes. They're small and fast, and usually learn one task at a time. [ACT](./act) and [Diffusion Policy](./diffusion) are the classic choices; [Multitask DiT](./multi_task_dit) also reads a text instruction, to learn several tasks.
 - **Vision-language-action models (VLAs)** start from a policy already trained on many robots and tasks, and read a text instruction as well as the cameras. You [fine-tune](./glossary#fine-tune) them on your episodes, which needs fewer episodes per task but a larger GPU.
 - **World action models (WAMs)** predict what the cameras will see next as well as the actions to take. They are large, mostly used in research, and most of their guides show results on simulation benchmarks.
