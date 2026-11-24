@@ -64,14 +64,12 @@ def _make_controller_mock(positions_deg=None):
 
 
 @contextmanager
-def _connected(*, positions_deg=None, use_can_fd=True, macos=False, **config_kwargs):
+def _connected(*, positions_deg=None, use_can_fd=True, **config_kwargs):
     controller = _make_controller_mock(positions_deg)
     config_kwargs.setdefault("joint_limits", _WIDE_LIMITS)
     with (
         patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None),
-        patch(f"{_FOLLOWER}.platform.system", return_value="Darwin"),
         patch(f"{_ADAPTER}.require_package", lambda *a, **kw: None),
-        patch(f"{_ADAPTER}._is_macos", return_value=macos),
         patch(f"{_ADAPTER}.MotorBridgeController") as controller_cls,
         patch(f"{_ADAPTER}.MotorBridgeMode", MagicMock()),
     ):
@@ -88,24 +86,11 @@ def _connected(*, positions_deg=None, use_can_fd=True, macos=False, **config_kwa
 
 
 def test_features_match_joints():
-    with (
-        patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None),
-        patch(f"{_FOLLOWER}.platform.system", return_value="Darwin"),
-    ):
+    with patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None):
         robot = OpenArmFollower(OpenArmFollowerConfig(port="can0"))
     expected = {f"{motor}.pos" for motor in _EXPECTED_MOTORS}
     assert set(robot.action_features) == expected
     assert set(robot.observation_features) == expected
-
-
-def test_linux_uses_python_can_backend():
-    with (
-        patch(f"{_FOLLOWER}.platform.system", return_value="Linux"),
-        patch(f"{_FOLLOWER}.DamiaoMotorsBus") as bus_class,
-    ):
-        OpenArmFollower(OpenArmFollowerConfig(port="can0"))
-
-    bus_class.assert_called_once()
 
 
 def test_connect_maps_models_and_ids():
@@ -126,22 +111,6 @@ def test_connect_selects_transport(use_can_fd, uses_fd):
             controller_cls.assert_not_called()
         else:
             controller_cls.assert_called_once_with(channel="can0")
-            controller_cls.from_socketcanfd.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    ("use_can_fd", "uses_fd"),
-    [(True, True), (False, False)],
-)
-def test_macos_transport(use_can_fd, uses_fd):
-    # On macOS, FD routes through from_socketcanfd (which reaches the libusb PCAN
-    # backend); classic CAN is prefixed with ``pcanfd:`` to hit that backend too.
-    with _connected(use_can_fd=use_can_fd, macos=True) as (_robot, _controller, controller_cls):
-        if uses_fd:
-            controller_cls.from_socketcanfd.assert_called_once_with("can0")
-            controller_cls.assert_not_called()
-        else:
-            controller_cls.assert_called_once_with(channel="pcanfd:can0")
             controller_cls.from_socketcanfd.assert_not_called()
 
 

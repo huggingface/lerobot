@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import platform
 import time
 from functools import cached_property
 from typing import Any
@@ -23,7 +22,7 @@ from typing import Any
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.damiao import DamiaoMotorsBus, MotorBridgeDamiaoBus
+from lerobot.motors.damiao import MotorBridgeDamiaoBus
 from lerobot.motors.motors_bus import NameOrID
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import require_package
@@ -49,8 +48,7 @@ class OpenArmFollower(Robot):
     name = "openarm_follower"
 
     def __init__(self, config: OpenArmFollowerConfig):
-        if platform.system() == "Darwin":
-            require_package("motorbridge", extra="openarms")
+        require_package("motorbridge", extra="openarms")
         super().__init__(config)
         self.config = config
         self.supports_position_hold = not config.use_velocity_and_torque
@@ -65,8 +63,7 @@ class OpenArmFollower(Robot):
             motor.motor_type_str = motor_type_str
             motors[motor_name] = motor
 
-        bus_class = MotorBridgeDamiaoBus if platform.system() == "Darwin" else DamiaoMotorsBus
-        self.bus = bus_class(
+        self.bus = MotorBridgeDamiaoBus(
             port=self.config.port,
             motors=motors,
             calibration=self.calibration,
