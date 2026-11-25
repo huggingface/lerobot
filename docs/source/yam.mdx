@@ -128,7 +128,7 @@ lerobot-rollout \
 
 For two arms, use `--robot.type=bi_yam_follower --robot.id=bimanual_yam --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1`. Add `--dataset.repo_id=<user>/rollout_<name>` to record the rollout; see [Run inference and evaluate your policy](./il_robots#run-inference-and-evaluate-your-policy). `lerobot-replay` replays a recorded episode with the same `--robot.*` options.
 
-Before the first action, and when no action arrives for `command_timeout_s` (1 s), the arm holds its position. With `idle_mode=float`, the joints are instead gravity-compensated and lightly damped so you can move the arm by hand, while the gripper keeps its opening; tracking resumes from wherever you moved it.
+Before the first action, and when no action arrives for `command_timeout_s` (1 s), the arm holds its position. With `idle_mode=float`, the joints are instead gravity-compensated and lightly damped so you can move the arm by hand, and the gripper goes limp so you can open or close it by hand too; tracking resumes from wherever you moved them.
 
 ## Safety
 

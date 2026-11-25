@@ -129,6 +129,8 @@ class MitGripperParams:
             Finger force once the gripper is blocked on an object, in newtons.
         finger_stroke_m (`float`):
             Finger stroke used to convert the force limit to motor torque, in metres.
+        float_kd (`float`):
+            Damping gain in float mode, where the gripper has no stiffness.
     """
 
     closed: float
@@ -138,6 +140,7 @@ class MitGripperParams:
     max_speed: float
     force_limit_n: float
     finger_stroke_m: float
+    float_kd: float
 
     @property
     def stroke(self) -> float:
@@ -158,6 +161,10 @@ class _GripperForceLimiter:
 
     def __init__(self, gripper_params: MitGripperParams) -> None:
         self.gripper_params = gripper_params
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget the blocked state and torque history, e.g. while the gripper is moved by hand."""
         self.blocked = False
         self._torques: list[tuple[float, float]] = []
         self._limited_goal: float | None = None
@@ -406,17 +413,18 @@ def _float_step(
     command: np.ndarray,
     gravity: np.ndarray,
 ) -> tuple[np.ndarray, tuple[MitCommand, ...]]:
-    """Let the arm be moved by hand, while the gripper keeps its commanded opening.
+    """Let the arm and the gripper be moved by hand.
 
-    The command follows the measured joints. The arm-joint commands have no stiffness, light damping, the
-    gravity torque of the measured position and, when configured, Coulomb friction compensation.
+    The command follows the measured joints and gripper opening. The commands have no stiffness and light
+    damping; the arm joints also get the gravity torque of the measured position and, when configured,
+    Coulomb friction compensation.
     """
     n = params.num_joints
-    command = np.r_[state.position[:n], command[n:]]
+    command = state.position.copy()
     goal = _joint_to_motor(state.position, gripper_params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n])
     torque = _gravity_feedforward(params, gravity) + friction
-    return command, tuple(
+    arm = tuple(
         MitCommand(
             position=float(goal[i]),
             velocity=0.0,
@@ -426,6 +434,10 @@ def _float_step(
         )
         for i in range(n)
     )
+    gripper = MitCommand(
+        position=float(goal[n]), velocity=0.0, kp=0.0, kd=gripper_params.float_kd, torque=0.0
+    )
+    return command, (*arm, gripper)
 
 
 def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
@@ -439,8 +451,8 @@ class MitController:
 
     Each cycle reads feedback, moves the command toward the latest target and sends it. Before the
     first target, and after `command_timeout_s` without one, the arm is idle: `idle_mode="hold"` holds
-    the measured position, and `idle_mode="float"` lets you move the arm by hand, with gravity
-    compensated.
+    the measured position, and `idle_mode="float"` lets you move the arm and the gripper by hand, with
+    gravity compensated.
 
     `start` enables torque and `stop` disables it. After a fault on this arm, or on the other arm of a
     bimanual robot, the loop stops sending commands, so the motors' CAN timeout disables them, and the
@@ -667,9 +679,11 @@ class MitController:
                     if self._bus.enabled:
                         n = params.num_joints
                         if self.idle and params.idle_mode == "float":
-                            self._command, joint_commands = _float_step(
+                            self._command, motor_commands = _float_step(
                                 params, gripper_params, state, self._command, gravity
                             )
+                            gripper.reset()
+                            packet = list(zip(self._bus.motor_names, motor_commands, strict=True))
                         else:
                             self._command, joint_commands = _track_step(
                                 params,
@@ -680,19 +694,19 @@ class MitController:
                                 gravity,
                                 min(started - previous, _MAX_CONTROL_DT_S),
                             )
-                        packet = list(zip(self._bus.motor_names[:n], joint_commands, strict=True))
-                        packet.append(
-                            (
-                                self._bus.motor_names[n],
-                                gripper.step(
-                                    float(position[n]),
-                                    float(state.velocity[n]),
-                                    float(state.torque[n]),
-                                    float(self._command[n]),
-                                    started,
-                                ),
+                            packet = list(zip(self._bus.motor_names[:n], joint_commands, strict=True))
+                            packet.append(
+                                (
+                                    self._bus.motor_names[n],
+                                    gripper.step(
+                                        float(position[n]),
+                                        float(state.velocity[n]),
+                                        float(state.torque[n]),
+                                        float(self._command[n]),
+                                        started,
+                                    ),
+                                )
                             )
-                        )
                 for name, command in packet:
                     if self._stop.is_set() or self.fault_event.is_set():
                         break
