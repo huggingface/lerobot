@@ -46,7 +46,8 @@ from lerobot.processor.converters import (
 from lerobot.processor.pipeline import DataProcessorPipeline, ProcessorStep
 from lerobot.utils.constants import OBS_STATE
 
-ArrayLike = Sequence[float] | np.ndarray
+ArrayLike = float | Sequence[float] | np.ndarray
+IndexOrder = Sequence[int] | np.ndarray
 
 
 def _affine_lists(scales: ArrayLike, offsets: ArrayLike) -> tuple[list[float], list[float]]:
@@ -78,8 +79,8 @@ def _observation_affine(key: str, scales: ArrayLike, offsets: ArrayLike) -> list
 def make_controller_processors(
     observation_affine: Mapping[str, tuple[ArrayLike, ArrayLike]],
     action_affine: tuple[ArrayLike, ArrayLike],
-    observation_order: Mapping[str, ArrayLike] | None = None,
-    action_order: ArrayLike | None = None,
+    observation_order: Mapping[str, IndexOrder] | None = None,
+    action_order: IndexOrder | None = None,
 ) -> tuple[
     DataProcessorPipeline[dict[str, Any], dict[str, Any]], DataProcessorPipeline[torch.Tensor, torch.Tensor]
 ]:
