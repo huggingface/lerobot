@@ -644,10 +644,14 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 repo_id = save_directory.name  # Defaults to `save_directory` name
             # `push_to_hub` stages the pipeline by calling `save_pretrained` again on a temporary
             # directory, so the filename is handed to that call too.
+            save_kwargs = {
+                **(push_to_hub_kwargs.pop("save_kwargs", None) or {}),
+                "config_filename": config_filename,
+            }
             return self.push_to_hub(
                 repo_id=repo_id,
                 card_kwargs=card_kwargs,
-                save_kwargs={"config_filename": config_filename},
+                save_kwargs=save_kwargs,
                 **push_to_hub_kwargs,
             )
 

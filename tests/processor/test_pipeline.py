@@ -1640,6 +1640,23 @@ def test_push_to_hub_without_config_filename_stages_default_name(monkeypatch):
     assert "policy_preprocessor.json" in staged["files"]
 
 
+def test_push_to_hub_merges_caller_save_kwargs_with_config_filename(monkeypatch):
+    """A caller's own `save_kwargs` does not collide with the one built from `config_filename`."""
+    staged = _stage_upload(monkeypatch)
+    pipeline = DataProcessorPipeline([MockStep("test")], name="Policy Preprocessor")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(
+            tmp_dir,
+            repo_id="user/repo",
+            config_filename="Inputs-v2.json",
+            push_to_hub=True,
+            save_kwargs={},
+        )
+
+    assert "Inputs-v2.json" in staged["files"]
+
+
 def test_custom_filename_upload_reloads_tensor_state(tmp_path, monkeypatch):
     """The staged directory and the local one both reload from the custom filename, with their tensor state."""
     step = MockStepWithTensorState(window_size=3)
