@@ -17,8 +17,10 @@
 
 import importlib
 import json
+import logging
 import multiprocessing
 import sys
+import textwrap
 import threading
 import time
 import types
@@ -420,7 +422,7 @@ def test_two_packages_naming_the_same_module_is_not_a_conflict(monkeypatch):
 @pytest.mark.parametrize("register_first", [True, False])
 def test_explicit_registration_settles_a_contested_format(monkeypatch, register_first):
     """The documented way out of a conflict works whichever side of discovery it lands on."""
-    _fake_entry_points(
+    scans = _fake_entry_points(
         monkeypatch,
         ("contestedfmt", "a_pkg.reader", "pkg-a"),
         ("contestedfmt", "b_pkg.reader", "pkg-b"),
@@ -429,32 +431,253 @@ def test_explicit_registration_settles_a_contested_format(monkeypatch, register_
         storage_module._discover_plugin_readers()  # conflict recorded first
 
     register_dataset_reader("contestedfmt", "a_pkg.reader")
+    storage_module._discover_plugin_readers()  # the scan itself, when registration came first
 
+    assert scans == [DATASET_READER_ENTRY_POINT_GROUP]
     assert storage_module._DATASET_READER_MODULES["contestedfmt"] == "a_pkg.reader"
     assert "contestedfmt" not in storage_module._AMBIGUOUS_READER_PROVIDERS
 
 
-def test_contested_format_is_reported_when_localizing_a_remote_root(monkeypatch):
+@pytest.mark.parametrize("competing", [False, True])
+def test_plugin_matching_an_explicit_registration_is_not_reported_ignored(monkeypatch, caplog, competing):
+    """Only plugins that lose to the registered module are reported as ignored."""
+    entries = [("selffmt", "self_reader", "pkg-self")]
+    if competing:
+        entries.append(("selffmt", "rival_reader", "pkg-rival"))
+    _fake_entry_points(monkeypatch, *entries)
+    register_dataset_reader("selffmt", "self_reader")
+
+    with caplog.at_level(logging.WARNING, logger=storage_module.__name__):
+        storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["selffmt"] == "self_reader"
+    warnings = [record.getMessage() for record in caplog.records if "selffmt" in record.getMessage()]
+    if competing:
+        assert len(warnings) == 1
+        assert "pkg-rival" in warnings[0]
+        assert "pkg-self" not in warnings[0]
+    else:
+        assert warnings == []
+
+
+# ── Reader registry: probing object-store roots ──────────────────────
+
+# Stands in for anything sensitive a caller or backend could put in an error: it
+# goes into the token, the storage options, the root and the backends' own errors.
+SECRET = "FAKE-SECRET-MARKER-91c2"
+SIGNED_ROOT = f"s3://bucket/ds?X-Amz-Signature={SECRET}-root"
+
+
+@pytest.fixture
+def plugin_dir(tmp_path, monkeypatch):
+    """Write real, importable plugin modules, forgotten again after the test."""
+    directory = tmp_path / "plugins"
+    directory.mkdir()
+    monkeypatch.syspath_prepend(str(directory))
+    written = []
+
+    def write(name, source):
+        (directory / f"{name}.py").write_text(textwrap.dedent(source))
+        importlib.invalidate_caches()
+        written.append(name)
+
+    yield write
+    for name in written:
+        sys.modules.pop(name, None)
+
+
+# kind -> (source of a backend that does not own the root, failing stage,
+# exception type, whether the failure is a failed probe rather than "not mine")
+_BROKEN_BACKENDS = {
+    "import OSError": (
+        """
+        lr_probe_log.attempts.append("broken")
+        raise OSError("cannot open shared object file " + SECRET)
+        """,
+        "import",
+        "OSError",
+        True,
+    ),
+    "import ImportError": (
+        """
+        lr_probe_log.attempts.append("broken")
+        raise ImportError("install some-extra " + SECRET)
+        """,
+        "import",
+        "ImportError",
+        False,
+    ),
+    "missing hook": (
+        """
+        lr_probe_log.attempts.append("broken")
+        """,
+        "localize_root lookup",
+        "AttributeError",
+        True,
+    ),
+    "hook ValueError": (
+        """
+        def localize_root(repo_id, root, revision, **kwargs):
+            lr_probe_log.attempts.append("broken")
+            raise ValueError(f"unsupported root {root} {kwargs}")
+        """,
+        "localize_root",
+        "ValueError",
+        True,
+    ),
+    "hook PermissionError": (
+        """
+        def localize_root(repo_id, root, revision, **kwargs):
+            lr_probe_log.attempts.append("broken")
+            raise PermissionError(f"access denied to {root} {kwargs}")
+        """,
+        "localize_root",
+        "PermissionError",
+        True,
+    ),
+    "hook FileNotFoundError": (
+        """
+        def localize_root(repo_id, root, revision, **kwargs):
+            lr_probe_log.attempts.append("broken")
+            raise FileNotFoundError(f"nothing at {root} {kwargs}")
+        """,
+        "localize_root",
+        "FileNotFoundError",
+        False,
+    ),
+}
+
+
+def _set_up_remote_probe(monkeypatch, plugin_dir, broken_source, owner_source):
+    """Discover a broken backend, then a second one, as two installed packages."""
+    plugin_dir("lr_probe_log", "attempts = []\ncalls = []\n")
+    prelude = f"import lr_probe_log\nSECRET = {SECRET!r}\n"
+    plugin_dir("lr_probe_broken", prelude + textwrap.dedent(broken_source))
+    plugin_dir("lr_probe_owner", prelude + textwrap.dedent(owner_source))
+    _fake_entry_points(
+        monkeypatch,
+        ("brokenfmt", "lr_probe_broken", "pkg-broken"),
+        ("ownerfmt", "lr_probe_owner", "pkg-owner"),
+    )
+    # Keep the built-in Lance backend out: it would really connect to the root.
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+    return importlib.import_module("lr_probe_log")
+
+
+def _secret_options():
+    return {"aws_secret_access_key": f"{SECRET}-options", "endpoint": "https://store.example"}
+
+
+@pytest.mark.parametrize("kind", list(_BROKEN_BACKENDS))
+def test_remote_probe_reaches_the_owner_past_a_broken_backend(tmp_path, monkeypatch, plugin_dir, kind):
+    """An unrelated backend failing in any ordinary way does not stop the owner being probed."""
+    local_root = tmp_path / "localized"
+    (local_root / "meta").mkdir(parents=True)
+    info_bytes = b'{"storage_format": "ownerfmt"}'
+    (local_root / "meta" / "info.json").write_bytes(info_bytes)
+    owner_source = f"""
+        from pathlib import Path
+
+        def localize_root(repo_id, root, revision, **kwargs):
+            lr_probe_log.attempts.append("owner")
+            lr_probe_log.calls.append((repo_id, root, revision, kwargs))
+            return Path({str(local_root)!r})
+        """
+    log = _set_up_remote_probe(monkeypatch, plugin_dir, _BROKEN_BACKENDS[kind][0], owner_source)
+
+    result = localize_remote_root(
+        DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=_secret_options()
+    )
+
+    assert (result / "meta" / "info.json").read_bytes() == info_bytes
+    assert log.attempts == ["broken", "owner"]
+    expected_kwargs = {
+        "token": f"{SECRET}-token",
+        "force_cache_sync": False,
+        "storage_options": _secret_options(),
+    }
+    assert log.calls == [(DUMMY_REPO_ID, SIGNED_ROOT, None, expected_kwargs)]
+
+
+@pytest.mark.parametrize("kind", list(_BROKEN_BACKENDS))
+def test_remote_probe_failure_is_not_reported_as_missing_data(monkeypatch, plugin_dir, caplog, kind):
+    """When no backend succeeds, a failed probe is told apart from "not found", without secrets."""
+    broken_source, stage, error_type, is_failure = _BROKEN_BACKENDS[kind]
+    nonowner_source = """
+        def localize_root(repo_id, root, revision, **kwargs):
+            lr_probe_log.attempts.append("owner")
+            raise FileNotFoundError(f"nothing at {root} {kwargs} " + SECRET)
+        """
+    log = _set_up_remote_probe(monkeypatch, plugin_dir, broken_source, nonowner_source)
+    expected = RuntimeError if is_failure else FileNotFoundError
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(expected) as caught:
+        localize_remote_root(
+            DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=_secret_options()
+        )
+
+    message = str(caught.value)
+    assert log.attempts == ["broken", "owner"]
+    assert ("Could not localize" in message) is is_failure
+    assert ("No dataset found" in message) is not is_failure
+    assert f"brokenfmt (lr_probe_broken): {stage} raised {error_type}" in message
+    assert "ownerfmt (lr_probe_owner): localize_root raised FileNotFoundError" in message
+    assert SECRET not in message
+    assert SECRET not in caplog.text
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("stage", ["import", "localize_root"])
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_remote_probe_does_not_swallow_interrupts(monkeypatch, plugin_dir, stage, interrupt):
+    """Ctrl-C or an exit request during a probe stops it; no later backend runs."""
+    raise_it = f'lr_probe_log.attempts.append("broken")\nraise {interrupt.__name__}()\n'
+    if stage == "localize_root":
+        raise_it = "def localize_root(*args, **kwargs):\n" + textwrap.indent(raise_it, "    ")
+    owner_source = """
+        def localize_root(*args, **kwargs):
+            lr_probe_log.attempts.append("owner")
+        """
+    log = _set_up_remote_probe(monkeypatch, plugin_dir, raise_it, owner_source)
+
+    with pytest.raises(interrupt):
+        localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds")
+
+    assert log.attempts == ["broken"]
+
+
+@pytest.mark.parametrize(
+    ("missing_source", "error_type", "expected"),
+    [
+        ("raise ImportError('install missing-extra ' + SECRET)", "ImportError", FileNotFoundError),
+        ("raise ValueError('bad configuration ' + SECRET)", "ValueError", RuntimeError),
+    ],
+)
+def test_contested_format_is_reported_when_localizing_a_remote_root(
+    monkeypatch, plugin_dir, missing_source, error_type, expected
+):
     """An unresolved conflict shows up in the probe error, not as 'no dataset found'."""
+    plugin_dir("lr_probe_missing", f"SECRET = {SECRET!r}\n{missing_source}\n")
     _fake_entry_points(
         monkeypatch,
         ("contestedfmt", "a_pkg.reader", "pkg-a"),
         ("contestedfmt", "b_pkg.reader", "pkg-b"),
+        ("missingfmt", "lr_probe_missing", "pkg-missing"),
     )
-    # A missing optional dependency must not hide the unresolved conflict.
-    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {"missingfmt": "missing_reader"})
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
 
-    def missing_reader(module_name):
-        raise ImportError("install missing-extra")
-
-    monkeypatch.setattr(storage_module.importlib, "import_module", missing_reader)
-
-    with pytest.raises(FileNotFoundError) as caught:
-        localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds")
+    with pytest.raises(expected) as caught:
+        storage_module.load_dataset_metadata(DUMMY_REPO_ID, root="s3://bucket/ds")
 
     message = str(caught.value)
-    assert "missingfmt: install missing-extra" in message
-    assert "not probed, claimed by more than one installed package: ['contestedfmt']" in message
+    # A failing backend must not hide the unresolved conflict, or its claimants.
+    assert f"missingfmt (lr_probe_missing): import raised {error_type}" in message
+    assert "contestedfmt: not probed" in message
+    for claimant in ("pkg-a 1.0 -> a_pkg.reader", "pkg-b 1.0 -> b_pkg.reader"):
+        assert claimant in message
+    assert 'register_dataset_reader("contestedfmt", "<module>")' in message
+    assert SECRET not in message
 
 
 @pytest.mark.parametrize("storage_options", [None, {}, {"endpoint": "https://store.example"}])

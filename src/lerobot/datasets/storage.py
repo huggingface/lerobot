@@ -56,9 +56,10 @@ DATASET_READER_ENTRY_POINT_GROUP = "lerobot.dataset_readers"
 # :class:`~lerobot.datasets.dataset_reader.BaseDatasetReader` (constructed with
 # the keyword arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
 # ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
-# ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
-# object-store roots. Non-empty ``storage_options`` are forwarded to both the
-# reader and the hook when supplied by the caller.
+# ``depth_output_unit`` and ``token``, plus ``video_decoder_cache_size`` when
+# the caller sets it) and a ``localize_root`` hook for object-store roots.
+# Non-empty ``storage_options`` are forwarded to both the reader and the hook
+# when supplied by the caller.
 _DATASET_READER_MODULES: dict[str, str] = {}
 
 # Formats two or more installed packages disagree over, mapped to a description
@@ -165,13 +166,17 @@ def _scan_plugin_readers() -> None:
         providers = sorted(provider for group in by_module.values() for provider in group)
         if storage_format == DEFAULT_STORAGE_FORMAT or storage_format in _DATASET_READER_MODULES:
             incumbent = _DATASET_READER_MODULES.get(storage_format, "lerobot.datasets.dataset_reader")
-            logger.warning(
-                "Ignoring dataset reader plugin(s) for storage_format %r [%s]: that format is "
-                "already served by %r.",
-                storage_format,
-                "; ".join(providers),
-                incumbent,
+            ignored = sorted(
+                provider for module, group in by_module.items() if module != incumbent for provider in group
             )
+            if ignored:
+                logger.warning(
+                    "Ignoring dataset reader plugin(s) for storage_format %r [%s]: that format is "
+                    "already served by %r.",
+                    storage_format,
+                    "; ".join(ignored),
+                    incumbent,
+                )
             continue
         if len(by_module) > 1:
             # Recorded, not raised: a conflict over one format must not stop
@@ -279,32 +284,53 @@ def localize_remote_root(
 
     The format cannot be read from ``meta/info.json`` before ``meta/`` exists
     locally, so each backend is asked in turn to recognize and localize the
-    root. Data files are never downloaded — backends read them in place.
-    ``storage_options`` configures the connection used to read remote metadata.
+    root, until one succeeds. Data files are never downloaded — backends read
+    them in place. ``storage_options`` configures the connection used to read
+    remote metadata.
+
+    A backend that raises ``FileNotFoundError`` does not own the root, and one
+    that raises ``ImportError`` lacks its optional dependencies; if every
+    backend says one of those, ``FileNotFoundError`` is raised. Any other error
+    is a failed probe: the next backend is still tried, but if none succeeds a
+    ``RuntimeError`` is raised, since a failed probe does not show the dataset
+    is absent.
     """
     _discover_plugin_readers()
-    errors = []
+    attempts: list[str] = []
+    failed = False
     options_kwargs = {"storage_options": storage_options} if storage_options else {}
-    for storage_format in list(_DATASET_READER_MODULES):
+    for storage_format, module_name in list(_DATASET_READER_MODULES.items()):
+        stage = "import"
         try:
-            return _reader_module(storage_format).localize_root(
+            module = _reader_module(storage_format)
+            stage = "localize_root lookup"
+            hook = module.localize_root
+            stage = "localize_root"
+            return hook(
                 repo_id, root, revision, token=token, force_cache_sync=force_cache_sync, **options_kwargs
             )
-        except (FileNotFoundError, ImportError) as error:
-            # ImportError: this format's optional dependencies are missing, which
-            # must not stop the probe from reaching other registered formats.
-            errors.append(f"{storage_format}: {error}")
-    if _AMBIGUOUS_READER_PROVIDERS:
+        except Exception as error:
+            # One backend failing must not stop the probe from reaching the others.
+            # Only the stage and exception type are reported: an error's own text
+            # may quote credentials or a signed root, and every backend tried
+            # before the owner receives them.
+            failed = failed or not isinstance(error, (FileNotFoundError, ImportError))
+            attempts.append(f"{storage_format} ({module_name}): {stage} raised {type(error).__name__}")
+    for storage_format in sorted(_AMBIGUOUS_READER_PROVIDERS):
         # A format no backend could be chosen for was never probed; say so here
         # rather than let it read as "that dataset does not exist".
-        errors.append(
-            f"not probed, claimed by more than one installed package: {sorted(_AMBIGUOUS_READER_PROVIDERS)}"
-        )
-    raise FileNotFoundError(
-        f"No dataset found at {str(root)!r}. Tried {errors}. "
+        attempts.append(f"{storage_format}: not probed. {_ambiguous_format_error(storage_format)}")
+    tried = "".join(f"\n- {attempt}" for attempt in attempts)
+    hint = (
         f"For {DEFAULT_STORAGE_FORMAT!r} datasets on an HF Storage Bucket, use "
         "repo_type='bucket' with dataset.streaming=true."
     )
+    if failed:
+        raise RuntimeError(
+            "Could not localize the dataset root: a storage backend failed while probing it, so this "
+            f"does not show that no dataset exists there. Tried:{tried}\n{hint}"
+        )
+    raise FileNotFoundError(f"No dataset found at the given root. Tried:{tried}\n{hint}")
 
 
 def load_dataset_metadata(

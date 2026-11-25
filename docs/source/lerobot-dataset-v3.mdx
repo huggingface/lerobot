@@ -408,14 +408,17 @@ A backend is a module exposing two names:
   [`BaseDatasetReader`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/datasets/dataset_reader.py),
   constructed with the keyword arguments `meta`, `root`, `episodes`, `delta_timestamps`,
   `image_transforms`, `tolerance_s`, `revision`, `return_uint8`, `depth_output_unit` and `token`.
-  It must also accept `storage_options` when the caller supplies a nonempty dictionary of
-  connection settings (such as credentials or an endpoint).
+  It must also accept `video_decoder_cache_size` when the caller sets it, and `storage_options`
+  when the caller supplies a nonempty dictionary of connection settings (such as credentials or
+  an endpoint).
   It must be picklable, so `DataLoader` workers can reopen their own connections.
 - `localize_root(repo_id, root, revision, token=..., force_cache_sync=..., storage_options=...)` — materializes
   `meta/` locally for an object-store root and returns the directory holding it. Raise
   `FileNotFoundError` if the root is not yours, so the other registered formats still get
-  their turn. Like the reader, this hook receives `storage_options` only when nonempty;
-  give it a default such as `None` so calls without connection settings also work.
+  their turn. Any other exception counts as a failed probe: the other formats are still tried,
+  but if none succeeds the error says localization failed, not that no dataset exists. Like the
+  reader, this hook receives `storage_options` only when nonempty; give it a default such as
+  `None` so calls without connection settings also work.
 
 Declare an entry point so your format is available as soon as your package is installed:
 
@@ -436,26 +439,36 @@ dataset = LeRobotDataset("me/my-dataset", root="s3://bucket/my-dataset")
 
 Notes on the mechanism:
 
-- Entry points are read for their names only. Your module is imported on first use, not at
-  discovery, so your backend's dependencies stay optional for everyone who doesn't use it.
+- Entry points are read for their names only; discovery imports nothing. A local dataset
+  imports only the reader its `storage_format` names, so your backend's dependencies stay
+  optional for everyone who doesn't use it.
+- An object-store root is different: its format is unknown until `meta/` is local, so each
+  registered backend's module is imported and its `localize_root` called in turn until one
+  succeeds. Every backend tried receives the caller's `token` and `storage_options`.
+- Installed plugins are trusted code. They run as ordinary Python in the same process, with no
+  sandbox or credential isolation, so install only packages you would trust with those
+  credentials.
 - Entry point names are the format's public identity — pick one specific to your project, the
-  way a package name is. Two installed packages claiming the same name is treated as an error,
-  below.
+  way a package name is. Two installed packages claiming the same name with different modules
+  is treated as an error, below. Claims that name the same module, such as a package and its
+  meta-package, are compatible.
 - Built-in formats win. An entry point cannot claim `lerobot` or `lance`, so installing a
   package can never silently change how existing datasets are read.
-- A plugin that fails to register is skipped with a warning; one broken package does not stop
-  the others, or stop datasets from loading at all.
+- A plugin that fails to register is skipped with a warning, and a backend that fails to import
+  or raises while probing an object-store root is reported by exception type and the next one
+  is tried; one broken package does not stop the others.
 
-If two installed packages claim the same `storage_format`, neither is used. Which one
-`entry_points()` lists first depends on `sys.path`, so picking it would mean the same set of
-installed packages reading a dataset differently on different machines. Opening a dataset in
-that format raises instead, naming every claimant:
+If two installed packages claim the same `storage_format` with different modules, neither is
+used. Which one `entry_points()` lists first depends on `sys.path`, so picking it would mean
+the same set of installed packages reading a dataset differently on different machines.
+Opening a dataset in that format raises instead, naming every claimant (for an object-store
+root, the probe error includes the same text):
 
 ```
 storage_format 'my_format' is claimed by more than one installed package, so which reader
 serves it is ambiguous:
-  robolake-reader 0.4.1 -> robolake.lerobot_reader
   acme-lerobot-store 1.2.0 -> acme.store.reader
+  robolake-reader 0.4.1 -> robolake.lerobot_reader
 Uninstall all but one, or choose explicitly before opening the dataset:
   from lerobot.datasets.storage import register_dataset_reader
   register_dataset_reader("my_format", "<module>")
