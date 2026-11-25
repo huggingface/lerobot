@@ -67,6 +67,11 @@ class ACTPolicy(PreTrainedPolicy):
 
         self.model = ACT(config)
 
+        if config.compile_model:
+            # In-place compile keeps state_dict keys free of the `_orig_mod.` prefix, so checkpoints
+            # stay interchangeable between compiled and non-compiled policies.
+            self.model.compile(mode=config.compile_mode)
+
         if config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler = ACTTemporalEnsembler(config.temporal_ensemble_coeff, config.chunk_size)
 
