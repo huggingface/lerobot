@@ -125,7 +125,7 @@ def _weighted_worker(rank: int, port: int, directory: str) -> None:
                 )
                 batch = {key: value[selection] for key, value in full_batch.items()}
                 if name == "mixed_index" and rank == 0:
-                    batch = {"target": batch["target"], "action": batch["target"]}
+                    batch = {"target": batch["target"], "observation.state": batch["target"]}
                 tracker = MetricsTracker(
                     len(batch["target"]),
                     4,

@@ -320,11 +320,15 @@ class RABCWeights(SampleWeighter):
 
     def _get_batch_size(self, batch: dict) -> int:
         """Determine batch size from batch."""
-        for key in ["action", "index"]:
-            if key in batch:
-                val = batch[key]
-                if isinstance(val, (torch.Tensor, np.ndarray)):
-                    return int(val.shape[0])
+        # Observation-only batches can still contribute multiple per-sample losses.
+        for value in (
+            batch.get("action"),
+            batch.get("index"),
+            batch.get("observation.state"),
+            *batch.values(),
+        ):
+            if isinstance(value, (torch.Tensor, np.ndarray)) and value.ndim:
+                return int(value.shape[0])
         return 1
 
     def get_stats(self) -> dict:
