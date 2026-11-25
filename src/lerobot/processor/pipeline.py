@@ -632,17 +632,24 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
             save_directory = HF_LEROBOT_HOME / "processors" / sanitized_name
 
-        # For direct saves (not through hub), handle config_filename
-        if not push_to_hub and config_filename is not None:
-            # Call _save_pretrained directly with config_filename
+        if config_filename is not None:
+            # `HubMixin.save_pretrained` calls `_save_pretrained` without arguments, so save with the
+            # requested filename here.
             save_directory = Path(save_directory)
             save_directory.mkdir(parents=True, exist_ok=True)
             self._save_pretrained(save_directory, config_filename=config_filename)
-            return None
-
-        # Pass config_filename through kwargs for _save_pretrained when using hub
-        if config_filename is not None:
-            push_to_hub_kwargs["config_filename"] = config_filename
+            if not push_to_hub:
+                return None
+            if repo_id is None:
+                repo_id = save_directory.name  # Defaults to `save_directory` name
+            # `push_to_hub` stages the pipeline by calling `save_pretrained` again on a temporary
+            # directory, so the filename is handed to that call too.
+            return self.push_to_hub(
+                repo_id=repo_id,
+                card_kwargs=card_kwargs,
+                save_kwargs={"config_filename": config_filename},
+                **push_to_hub_kwargs,
+            )
 
         # Call parent's save_pretrained which will call our _save_pretrained
         return super().save_pretrained(

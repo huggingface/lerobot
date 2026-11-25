@@ -1591,6 +1591,55 @@ def test_save_with_custom_config_filename():
         assert loaded.name == "TestProcessor"
 
 
+def _stage_upload(monkeypatch) -> dict[str, list[str]]:
+    """Replace the Hub client so a push records the files it would upload instead of uploading."""
+    staged: dict[str, list[str]] = {}
+
+    class FakeApi:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def create_repo(self, repo_id, **kwargs):
+            return type("RepoUrl", (), {"repo_id": repo_id})()
+
+        def upload_folder(self, *, folder_path, **kwargs):
+            staged["files"] = sorted(path.name for path in Path(folder_path).iterdir())
+
+    # HfApi is imported into lerobot.utils.hub at module load, so patch it there.
+    monkeypatch.setattr("lerobot.utils.hub.HfApi", FakeApi)
+    return staged
+
+
+def test_push_to_hub_with_custom_config_filename(monkeypatch):
+    """A custom config filename is saved locally and staged for the upload, not replaced by the default."""
+    staged = _stage_upload(monkeypatch)
+    pipeline = DataProcessorPipeline([MockStep("test")], name="Policy Preprocessor")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(
+            tmp_dir, repo_id="user/repo", config_filename="Inputs-v2.json", push_to_hub=True
+        )
+
+        assert (Path(tmp_dir) / "Inputs-v2.json").exists()
+        assert not (Path(tmp_dir) / "policy_preprocessor.json").exists()
+
+    assert "Inputs-v2.json" in staged["files"]
+    assert "policy_preprocessor.json" not in staged["files"]
+
+
+def test_push_to_hub_without_config_filename_stages_default_name(monkeypatch):
+    """Without a config filename the pipeline is staged under the name generated from its own."""
+    staged = _stage_upload(monkeypatch)
+    pipeline = DataProcessorPipeline([MockStep("test")], name="Policy Preprocessor")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pipeline.save_pretrained(tmp_dir, repo_id="user/repo", push_to_hub=True)
+
+        assert (Path(tmp_dir) / "policy_preprocessor.json").exists()
+
+    assert "policy_preprocessor.json" in staged["files"]
+
+
 def test_multiple_processors_same_directory():
     """Test saving multiple processors to the same directory with different config files."""
     # Create different processors

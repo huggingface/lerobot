@@ -214,6 +214,7 @@ class HubMixin:
         ignore_patterns: list[str] | str | None = None,
         delete_patterns: list[str] | str | None = None,
         card_kwargs: dict[str, Any] | None = None,
+        save_kwargs: dict[str, Any] | None = None,
     ) -> str | None:
         """
         Upload model checkpoint to the Hub.
@@ -249,6 +250,9 @@ class HubMixin:
                 If provided, remote files matching any of the patterns will be deleted from the repo.
             card_kwargs (`Dict[str, Any]`, *optional*):
                 Additional arguments passed to the card template to customize the card.
+            save_kwargs (`Dict[str, Any]`, *optional*):
+                Additional keyword arguments passed to `save_pretrained` when the object is staged for the
+                upload, for subclasses whose `save_pretrained` takes more than the base arguments.
 
         Returns:
             `str` or `None`: The url of the commit of your object in the given repository, or
@@ -272,7 +276,7 @@ class HubMixin:
 
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             saved_path = Path(tmp) / repo_id
-            self.save_pretrained(saved_path, card_kwargs=card_kwargs)
+            self.save_pretrained(saved_path, card_kwargs=card_kwargs, **(save_kwargs or {}))
             if not is_main_process():
                 return None
             api = HfApi(token=token)
