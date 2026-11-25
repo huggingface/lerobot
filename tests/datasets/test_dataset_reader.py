@@ -486,8 +486,13 @@ def plugin_dir(tmp_path, monkeypatch):
         sys.modules.pop(name, None)
 
 
+# Fixed, library-written notes lerobot reports for each backend tried.
+NOT_FOUND = "not found"
+MISSING_DEPENDENCIES = "optional dependencies missing"
+PROBE_FAILED = "probe failed; check the connection settings and access to the root"
+
 # kind -> (source of a backend that does not own the root, failing stage,
-# exception type, whether the failure is a failed probe rather than "not mine")
+# exception type, fixed note reported for it)
 _BROKEN_BACKENDS = {
     "import OSError": (
         """
@@ -496,7 +501,7 @@ _BROKEN_BACKENDS = {
         """,
         "import",
         "OSError",
-        True,
+        PROBE_FAILED,
     ),
     "import ImportError": (
         """
@@ -505,7 +510,7 @@ _BROKEN_BACKENDS = {
         """,
         "import",
         "ImportError",
-        False,
+        MISSING_DEPENDENCIES,
     ),
     "missing hook": (
         """
@@ -513,7 +518,7 @@ _BROKEN_BACKENDS = {
         """,
         "localize_root lookup",
         "AttributeError",
-        True,
+        PROBE_FAILED,
     ),
     "hook ValueError": (
         """
@@ -523,7 +528,7 @@ _BROKEN_BACKENDS = {
         """,
         "localize_root",
         "ValueError",
-        True,
+        PROBE_FAILED,
     ),
     "hook PermissionError": (
         """
@@ -533,7 +538,7 @@ _BROKEN_BACKENDS = {
         """,
         "localize_root",
         "PermissionError",
-        True,
+        PROBE_FAILED,
     ),
     "hook FileNotFoundError": (
         """
@@ -543,7 +548,7 @@ _BROKEN_BACKENDS = {
         """,
         "localize_root",
         "FileNotFoundError",
-        False,
+        NOT_FOUND,
     ),
 }
 
@@ -601,31 +606,67 @@ def test_remote_probe_reaches_the_owner_past_a_broken_backend(tmp_path, monkeypa
 
 @pytest.mark.parametrize("kind", list(_BROKEN_BACKENDS))
 def test_remote_probe_failure_is_not_reported_as_missing_data(monkeypatch, plugin_dir, caplog, kind):
-    """When no backend succeeds, a failed probe is told apart from "not found", without secrets."""
-    broken_source, stage, error_type, is_failure = _BROKEN_BACKENDS[kind]
+    """Only a root every backend disowned reads as "not found"; nothing secret is echoed."""
+    broken_source, stage, error_type, note = _BROKEN_BACKENDS[kind]
     nonowner_source = """
         def localize_root(repo_id, root, revision, **kwargs):
             lr_probe_log.attempts.append("owner")
             raise FileNotFoundError(f"nothing at {root} {kwargs} " + SECRET)
         """
     log = _set_up_remote_probe(monkeypatch, plugin_dir, broken_source, nonowner_source)
-    expected = RuntimeError if is_failure else FileNotFoundError
+    disowned = error_type == "FileNotFoundError"
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(expected) as caught:
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(FileNotFoundError if disowned else RuntimeError) as caught,
+    ):
         localize_remote_root(
             DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=_secret_options()
         )
 
     message = str(caught.value)
     assert log.attempts == ["broken", "owner"]
-    assert ("Could not localize" in message) is is_failure
-    assert ("No dataset found" in message) is not is_failure
-    assert f"brokenfmt (lr_probe_broken): {stage} raised {error_type}" in message
-    assert "ownerfmt (lr_probe_owner): localize_root raised FileNotFoundError" in message
+    assert ("No dataset found" in message) is disowned
+    assert ("Could not localize" in message) is not disowned
+    assert f"brokenfmt (lr_probe_broken): {stage} raised {error_type}; {note}" in message
+    assert f"ownerfmt (lr_probe_owner): localize_root raised FileNotFoundError; {NOT_FOUND}" in message
     assert SECRET not in message
     assert SECRET not in caplog.text
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("case", ["lancedb missing", "revision in storage_options"])
+def test_builtin_lance_failures_keep_a_fixed_hint(tmp_path, monkeypatch, caplog, case):
+    """The built-in Lance backend's known mistakes still say how to fix them, without secrets."""
+    from lerobot.datasets import lance_utils
+    from lerobot.utils import import_utils
+
+    _fake_entry_points(monkeypatch)
+    monkeypatch.setattr(
+        storage_module, "_DATASET_READER_MODULES", {"lance": "lerobot.datasets.lance_backend"}
+    )
+    monkeypatch.setattr(lance_utils, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setenv("LANCE_IO_THREADS", "256")
+    options = _secret_options()
+    if case == "lancedb missing":
+        monkeypatch.setitem(import_utils._require_package_cache, "lancedb", False)
+        expected = "optional dependencies missing; install them with: pip install 'lerobot[lancedb]'"
+    else:
+        # Rejected before any connection is opened, so lancedb itself is never called.
+        monkeypatch.setitem(import_utils._require_package_cache, "lancedb", True)
+        options["Revision"] = f"{SECRET}-revision"
+        expected = "storage_options must not contain 'revision'; use the revision argument instead"
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError) as caught:
+        localize_remote_root(DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=options)
+
+    message = str(caught.value)
+    assert "Could not localize" in message
+    assert "lance (lerobot.datasets.lance_backend): " in message
+    assert expected in message
+    assert SECRET not in message
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.parametrize("stage", ["import", "localize_root"])
@@ -647,37 +688,73 @@ def test_remote_probe_does_not_swallow_interrupts(monkeypatch, plugin_dir, stage
     assert log.attempts == ["broken"]
 
 
-@pytest.mark.parametrize(
-    ("missing_source", "error_type", "expected"),
-    [
-        ("raise ImportError('install missing-extra ' + SECRET)", "ImportError", FileNotFoundError),
-        ("raise ValueError('bad configuration ' + SECRET)", "ValueError", RuntimeError),
-    ],
-)
-def test_contested_format_is_reported_when_localizing_a_remote_root(
-    monkeypatch, plugin_dir, missing_source, error_type, expected
-):
-    """An unresolved conflict shows up in the probe error, not as 'no dataset found'."""
-    plugin_dir("lr_probe_missing", f"SECRET = {SECRET!r}\n{missing_source}\n")
-    _fake_entry_points(
-        monkeypatch,
-        ("contestedfmt", "a_pkg.reader", "pkg-a"),
-        ("contestedfmt", "b_pkg.reader", "pkg-b"),
-        ("missingfmt", "lr_probe_missing", "pkg-missing"),
-    )
-    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+_CONTESTED_CLAIMS = (("contestedfmt", "a_pkg.reader", "pkg-a"), ("contestedfmt", "b_pkg.reader", "pkg-b"))
 
-    with pytest.raises(expected) as caught:
-        storage_module.load_dataset_metadata(DUMMY_REPO_ID, root="s3://bucket/ds")
+
+@pytest.mark.parametrize(
+    ("other_source", "stage", "error_type"),
+    [
+        (
+            "def localize_root(*args, **kwargs):\n    raise FileNotFoundError('nothing here ' + SECRET)",
+            "localize_root",
+            "FileNotFoundError",
+        ),
+        ("raise ImportError('install missing-extra ' + SECRET)", "import", "ImportError"),
+        ("raise ValueError('bad configuration ' + SECRET)", "import", "ValueError"),
+    ],
+    ids=["others disown it", "others lack dependencies", "others fail"],
+)
+@pytest.mark.parametrize("entry", ["load_dataset_metadata", "LeRobotDataset"])
+def test_contested_format_makes_a_remote_probe_inconclusive(
+    monkeypatch, plugin_dir, other_source, stage, error_type, entry
+):
+    """An unprobed contested format could hold the dataset, so it never reads as 'no dataset found'."""
+    plugin_dir("lr_probe_other", f"SECRET = {SECRET!r}\n{other_source}\n")
+    _fake_entry_points(monkeypatch, *_CONTESTED_CLAIMS, ("otherfmt", "lr_probe_other", "pkg-other"))
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+    open_dataset = (
+        storage_module.load_dataset_metadata if entry == "load_dataset_metadata" else LeRobotDataset
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        open_dataset(DUMMY_REPO_ID, root=SIGNED_ROOT)
 
     message = str(caught.value)
-    # A failing backend must not hide the unresolved conflict, or its claimants.
-    assert f"missingfmt (lr_probe_missing): import raised {error_type}" in message
+    assert "Could not localize" in message
+    assert "No dataset found" not in message
+    # The backends that were probed are still reported next to the conflict and its claimants.
+    assert f"otherfmt (lr_probe_other): {stage} raised {error_type}" in message
     assert "contestedfmt: not probed" in message
     for claimant in ("pkg-a 1.0 -> a_pkg.reader", "pkg-b 1.0 -> b_pkg.reader"):
         assert claimant in message
     assert 'register_dataset_reader("contestedfmt", "<module>")' in message
     assert SECRET not in message
+
+
+def test_contested_format_does_not_block_another_owner(
+    tmp_path, lerobot_dataset_factory, monkeypatch, plugin_dir
+):
+    """A conflict over one format does not stop a dataset in another format from opening."""
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=1, total_frames=8, use_videos=False, camera_features={}
+    )
+    plugin_dir(
+        "lr_probe_owner",
+        f"""
+        from pathlib import Path
+
+        def localize_root(*args, **kwargs):
+            return Path({str(dataset.root)!r})
+        """,
+    )
+    _fake_entry_points(monkeypatch, *_CONTESTED_CLAIMS, ("ownerfmt", "lr_probe_owner", "pkg-owner"))
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+
+    meta = storage_module.load_dataset_metadata(DUMMY_REPO_ID, root="s3://bucket/ds")
+
+    assert meta.root == dataset.root
+    assert meta.total_frames == 8
+    assert "contestedfmt" in storage_module._AMBIGUOUS_READER_PROVIDERS
 
 
 @pytest.mark.parametrize("storage_options", [None, {}, {"endpoint": "https://store.example"}])

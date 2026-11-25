@@ -271,6 +271,27 @@ def make_dataset_reader(storage_format: str, **kwargs) -> BaseDatasetReader:
     return _reader_module(storage_format).DATASET_READER(**kwargs)
 
 
+def _probe_note(storage_format: str, error: Exception, storage_options: dict[str, str] | None) -> str:
+    """Say, in fixed library-written words, why probing ``storage_format`` did not succeed.
+
+    Never the error's own text: it may quote credentials or a signed root, and
+    every backend tried before the owner receives them.
+    """
+    if isinstance(error, FileNotFoundError):
+        return "not found"
+    if isinstance(error, ImportError):
+        if storage_format == "lance":
+            return "optional dependencies missing; install them with: pip install 'lerobot[lancedb]'"
+        return "optional dependencies missing"
+    if (
+        storage_format == "lance"
+        and isinstance(error, ValueError)
+        and any(key.lower() == "revision" for key in storage_options or {})
+    ):
+        return "storage_options must not contain 'revision'; use the revision argument instead"
+    return "probe failed; check the connection settings and access to the root"
+
+
 def localize_remote_root(
     repo_id: str | None,
     root: str | Path,
@@ -288,16 +309,17 @@ def localize_remote_root(
     them in place. ``storage_options`` configures the connection used to read
     remote metadata.
 
-    A backend that raises ``FileNotFoundError`` does not own the root, and one
-    that raises ``ImportError`` lacks its optional dependencies; if every
-    backend says one of those, ``FileNotFoundError`` is raised. Any other error
-    is a failed probe: the next backend is still tried, but if none succeeds a
-    ``RuntimeError`` is raised, since a failed probe does not show the dataset
-    is absent.
+    A backend that raises ``FileNotFoundError`` does not own the root. One that
+    raises ``ImportError`` lacks its optional dependencies, and any other error
+    is a failed probe; either way the next backend is still tried. If none
+    succeeds, ``FileNotFoundError`` is raised only when every backend disowned
+    the root and no contested format was left unprobed. Otherwise the result is
+    inconclusive and ``RuntimeError`` is raised: a format that could not be
+    checked does not show the dataset is absent.
     """
     _discover_plugin_readers()
     attempts: list[str] = []
-    failed = False
+    inconclusive = bool(_AMBIGUOUS_READER_PROVIDERS)
     options_kwargs = {"storage_options": storage_options} if storage_options else {}
     for storage_format, module_name in list(_DATASET_READER_MODULES.items()):
         stage = "import"
@@ -311,11 +333,11 @@ def localize_remote_root(
             )
         except Exception as error:
             # One backend failing must not stop the probe from reaching the others.
-            # Only the stage and exception type are reported: an error's own text
-            # may quote credentials or a signed root, and every backend tried
-            # before the owner receives them.
-            failed = failed or not isinstance(error, (FileNotFoundError, ImportError))
-            attempts.append(f"{storage_format} ({module_name}): {stage} raised {type(error).__name__}")
+            inconclusive = inconclusive or not isinstance(error, FileNotFoundError)
+            attempts.append(
+                f"{storage_format} ({module_name}): {stage} raised {type(error).__name__}; "
+                f"{_probe_note(storage_format, error, storage_options)}"
+            )
     for storage_format in sorted(_AMBIGUOUS_READER_PROVIDERS):
         # A format no backend could be chosen for was never probed; say so here
         # rather than let it read as "that dataset does not exist".
@@ -325,10 +347,11 @@ def localize_remote_root(
         f"For {DEFAULT_STORAGE_FORMAT!r} datasets on an HF Storage Bucket, use "
         "repo_type='bucket' with dataset.streaming=true."
     )
-    if failed:
+    if inconclusive:
         raise RuntimeError(
-            "Could not localize the dataset root: a storage backend failed while probing it, so this "
-            f"does not show that no dataset exists there. Tried:{tried}\n{hint}"
+            "Could not localize the dataset root: no storage backend recognized it, but some formats "
+            "could not be checked (missing dependencies, a failed probe or a contested format), so "
+            f"this does not show that no dataset exists there. Tried:{tried}\n{hint}"
         )
     raise FileNotFoundError(f"No dataset found at the given root. Tried:{tried}\n{hint}")
 
