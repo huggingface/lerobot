@@ -202,6 +202,21 @@ def test_init_terminal_key_routing(monkeypatch, key, flag):
     assert events[flag] is True
 
 
+@pytest.mark.parametrize(
+    ("key", "control", "flag"),
+    [("q", "esc", "stop_recording"), ("n", "right", "exit_early"), ("r", "left", "rerecord_episode")],
+)
+def test_recording_shortcuts_do_not_consume_teleop_keys(monkeypatch, key, control, flag):
+    monkeypatch.setattr(ki, "pynput_can_capture", lambda: False)
+    _set_tty(monkeypatch, is_tty=True)
+    monkeypatch.setattr(TerminalKeyListener, "start", lambda self: None)
+    listener, events = init_keyboard_listener(reserved_keys={key})
+    listener._on_key(key.upper())
+    assert not any(events.values())
+    listener._on_key(control)
+    assert events[flag]
+
+
 # --- Shared factory + pynput key resolver -----------------------------------
 def test_resolve_pynput_key_char_fallback():
     """Unmapped keys fall back to ``.char`` (and yield None when there is none)."""

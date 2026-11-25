@@ -116,6 +116,7 @@ from lerobot.processor import (
     make_default_processors,
     make_default_teleop_action_processor,
 )
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -465,7 +466,13 @@ def record(
             teleop.connect()
         robot.connect()
 
-        listener, events = init_keyboard_listener()
+        reserved_keys = {
+            key
+            for step in teleop_action_processor.steps
+            if isinstance(step, KeyboardToBaseActionProcessorStep)
+            for key in (step.key_bindings or {}).values()
+        }
+        listener, events = init_keyboard_listener(reserved_keys=reserved_keys)
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
