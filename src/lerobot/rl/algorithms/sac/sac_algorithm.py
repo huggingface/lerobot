@@ -218,7 +218,11 @@ class SACAlgorithm(RLAlgorithm):
             self._update_target_networks()
 
         batch = next(batch_iterator)
-        fb = self._prepare_forward_batch(batch, include_complementary_info=False)
+        # Every discrete-critic update must see complementary_info: its Bellman target includes
+        # the discrete_penalty the actor recorded at env time (see `_compute_loss_discrete_critic`).
+        # The UTD loop above already trains with it; dropping it here would silently disable the
+        # penalty shaping on the default utd_ratio=1 path.
+        fb = self._prepare_forward_batch(batch, include_complementary_info=True)
 
         loss_critic = self._compute_loss_critic(fb)
         self.optimizers["critic"].zero_grad()
@@ -544,6 +548,11 @@ class SACAlgorithm(RLAlgorithm):
         ``log_alpha`` is restored via ``Parameter.data.copy_`` so the
         ``temperature`` optimizer's reference to the parameter object stays
         valid after resume.
+
+        Encoders are not part of the bundle (``_strip_encoder_keys``), so after restoring
+        the critic tensors the target encoders are re-synced from the online encoders —
+        whose weights the checkpoint restores through the policy — while the restored,
+        deliberately lagged target heads are kept as-is.
         """
         critic_ensemble_state = _split_prefix(state_dict, "critic_ensemble.")
         critic_target_state = _split_prefix(state_dict, "critic_target.")
