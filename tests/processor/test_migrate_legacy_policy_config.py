@@ -3,8 +3,7 @@
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# you may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -25,7 +24,7 @@ from huggingface_hub.errors import EntryNotFoundError
 from safetensors.torch import load_file, save_file
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies import get_policy_class, make_policy_config
+from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.processor import migrate_policy_normalization as migration
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 
@@ -50,8 +49,8 @@ def test_migrate_legacy_shape_config(tmp_path: Path, monkeypatch: pytest.MonkeyP
     legacy_weights = {name: weight.clone() for name, weight in original_weights.items()}
     legacy_weights["normalize_inputs.buffer_observation_environment_state.min"] = torch.ones(4)
     legacy_weights["normalize_inputs.buffer_observation_environment_state.max"] = torch.full((4,), 3.0)
-    legacy_weights["unnormalize_outputs.buffer_action.min"] = -torch.ones(2)
-    legacy_weights["unnormalize_outputs.buffer_action.max"] = torch.ones(2)
+    legacy_weights["unnormalize_outputs.buffer_action.min"] = torch.tensor([10.0, 20.0])
+    legacy_weights["unnormalize_outputs.buffer_action.max"] = torch.tensor([14.0, 28.0])
     save_file(legacy_weights, checkpoint / "model.safetensors")
     raw_config = json.dumps(
         {
@@ -115,3 +114,12 @@ def test_migrate_legacy_shape_config(tmp_path: Path, monkeypatch: pytest.MonkeyP
         processor_stats.update(load_file(path))
     torch.testing.assert_close(processor_stats[f"{OBS_ENV_STATE}.min"], torch.ones(4))
     torch.testing.assert_close(processor_stats[f"{OBS_ENV_STATE}.max"], torch.full((4,), 3.0))
+
+    preprocessor, postprocessor = make_pre_post_processors(migrated_config, pretrained_path=output_dir)
+    observation = preprocessor(
+        {OBS_ENV_STATE: torch.tensor([1.0, 2.0, 3.0, 1.5]), OBS_STATE: torch.tensor([0.25, -0.75])}
+    )
+    torch.testing.assert_close(observation[OBS_ENV_STATE], torch.tensor([[-1.0, 0.0, 1.0, -0.5]]))
+    torch.testing.assert_close(observation[OBS_STATE], torch.tensor([[0.25, -0.75]]))
+    action = postprocessor(torch.tensor([[-0.5, 0.5]]))
+    torch.testing.assert_close(action, torch.tensor([[11.0, 26.0]]))
