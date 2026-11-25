@@ -151,9 +151,23 @@ the policy one episode per sample:
 
 The dataset holds `observation.state` and `action` as the slots of SANA-Robot's robot row that
 `policy.state_slots` and `policy.action_slots` name, in order: the actions are absolute targets, a gripper is its
-closedness in [0, 1] and a rotation is 6D. They are normalized by the 1% and 99% quantiles of the dataset's
-state, which map to -1 and 1; rotations and grippers keep their values. `--policy.keep_checkpoint_statistics=true`
-keeps the normalization of the checkpoint the fine-tune starts from instead.
+closedness in [0, 1] and a rotation is 6D.
+
+A fine-tune computes its normalization from the dataset: the 1% and 99% quantiles of the state map to -1 and 1,
+and rotations and grippers keep their values. To reproduce a released checkpoint, train with the normalization
+it was released with instead, which its processors hold. The LIBERO checkpoint was trained with the Franka
+statistics of the pretraining data, not with LIBERO's own quantiles:
+
+```bash
+hf download Efficient-Large-Model/SANA-Robot-AR-Pretrain-LeRobot --local-dir sana_robot_start
+hf download Efficient-Large-Model/SANA-Robot-AR-LIBERO-LeRobot --include "policy_*processor*" \
+  --local-dir sana_robot_start
+lerobot-train --policy.path=sana_robot_start --policy.keep_checkpoint_statistics=true ...
+```
+
+`--policy.keep_checkpoint_statistics=true` keeps the normalization of the checkpoint the fine-tune starts from.
+The released LIBERO recipe also sets `--policy.timestep_weighting=false` and augments the camera frames; the
+augmentation is not part of this integration.
 
 The 4.5B weights with their gradients and the AdamW state do not fit one 80 GB GPU in FP32, so a full fine-tune
 shards them over the GPUs of a node (see [Multi-GPU training](./multi_gpu_training)):
