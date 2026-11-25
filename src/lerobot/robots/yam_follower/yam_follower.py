@@ -86,8 +86,6 @@ def _yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
         kd=np.asarray(config.kd, dtype=float),
         max_joint_speed=math.radians(config.max_joint_speed_deg_s),
         max_tracking_error=math.radians(config.max_tracking_error_deg),
-        gravity_factors=np.asarray(config.gravity_factors, dtype=float),
-        max_gravity_torque=_MAX_GRAVITY_TORQUE_NM,
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
         if config.friction_compensation
@@ -504,7 +502,13 @@ class YamFollower(Robot):
         if not self.config.gravity_compensation or self.gravity_model is not None:
             return
         model_path = hf_hub_download(ROBOT_URDFS_REPO_ID, _GRAVITY_MODEL_REMOTE_PATH, repo_type="dataset")
-        self.gravity_model = GravityCompensation(model_path, _MODEL_ARM_JOINTS, base_frame="base")
+        self.gravity_model = GravityCompensation(
+            model_path,
+            _MODEL_ARM_JOINTS,
+            base_frame="base",
+            scale=self.config.gravity_factors,
+            max_torque=_MAX_GRAVITY_TORQUE_NM,
+        )
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
         if self.gravity_model is None:

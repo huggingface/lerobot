@@ -152,7 +152,7 @@ def make_robot():
                 lambda cfgs: {name: MagicMock(is_connected=True) for name in cfgs},
             )
         )
-        stack.enter_context(patch(f"{module}.G1_29_ArmIK", MagicMock()))
+        stack.enter_context(patch(f"{module}.make_g1_gravity_compensation", MagicMock()))
         stack.enter_context(patch(f"{module}._SDKChannelFactoryInitialize", MagicMock()))
         stack.enter_context(
             patch(f"{module}._SDKChannelPublisher", MagicMock(return_value=mocks["publisher_mock"]))
@@ -950,21 +950,37 @@ class TestEmbodimentDriver:
         mocks["crc_mock"].Crc.assert_called_once_with(robot.msg)
 
     @pytest.mark.parametrize("embodiment", ["g1_29", "g1_23"])
-    def test_gravity_scatter_uses_arm_order_not_contiguous_offsets(self, make_robot, embodiment):
+    def test_gravity_uses_the_measured_pose_and_scatters_in_arm_order(self, make_robot, embodiment):
         factory, mocks = make_robot
         robot = arm_for_publish(factory(embodiment=embodiment), mocks)
-        # Inject a solver contract only. G1-23 solver construction stays unsupported.
-        robot.config.gravity_compensation = True
-        robot.arm_ik = MagicMock()
+        # Inject a model contract only. G1-23 model construction stays unsupported.
         torques = np.arange(len(robot.arm_index), dtype=float) + 0.5
-        robot.arm_ik.solve_tau.return_value = torques
-        action = {f"{joint.name}.q": i / 10 for i, joint in enumerate(robot.arm_index)}
+        robot.gravity_model = MagicMock()
+        robot.gravity_model.torques.return_value = torques
+        robot._lowstate = SimpleNamespace(motor_state=[SimpleNamespace(q=i / 100) for i in range(NUM_MOTORS)])
+        action = {f"{joint.name}.q": 1.0 for joint in robot.arm_index}
         robot.send_action(action)
-        np.testing.assert_array_equal(
-            robot.arm_ik.solve_tau.call_args.args[0], np.array(list(action.values()), dtype=np.float32)
-        )
+        arm_q, waist = robot.gravity_model.torques.call_args.args
+        # The measured positions, not the commanded ones.
+        np.testing.assert_allclose(arm_q, [joint.value / 100 for joint in robot.arm_index])
+        assert waist == {"waist_yaw_joint": 0.12, "waist_roll_joint": 0.13, "waist_pitch_joint": 0.14}
         for i, joint in enumerate(robot.arm_index):
             assert robot.msg.motor_cmd[joint.value].tau == torques[i]
+
+    def test_gravity_applies_to_controller_commands_unless_torques_are_given(self, make_robot):
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(), mocks)
+        robot.gravity_model = MagicMock()
+        robot.gravity_model.torques.return_value = np.full(len(robot.arm_index), 2.0)
+        shoulder = G1_29_JointArmIndex.kLeftShoulderPitch
+        # Before the first lowstate there is nothing to compensate.
+        robot.publish_lowcmd({f"{shoulder.name}.q": 0.1})
+        assert robot.msg.motor_cmd[shoulder.value].tau == 0.0
+        robot._lowstate = SimpleNamespace(motor_state=[SimpleNamespace(q=0.0) for _ in range(NUM_MOTORS)])
+        robot.publish_lowcmd({f"{shoulder.name}.q": 0.1})  # what the controller thread publishes
+        assert robot.msg.motor_cmd[shoulder.value].tau == 2.0
+        robot.publish_lowcmd({f"{shoulder.name}.q": 0.1}, tau=np.zeros(NUM_MOTORS))
+        assert robot.msg.motor_cmd[shoulder.value].tau == 0.0
 
     def test_reset_selects_only_active_joints(self, make_robot):
         factory, mocks = make_robot

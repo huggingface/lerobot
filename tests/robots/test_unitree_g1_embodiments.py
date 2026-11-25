@@ -123,6 +123,8 @@ def test_unknown_and_unsupported_configuration():
         UnitreeG1Config(embodiment="g1_23", controller="SonicWholeBodyController")
     with pytest.raises(ValueError, match="Gravity compensation"):
         UnitreeG1Config(embodiment="g1_23", gravity_compensation=True)
+    with pytest.raises(ValueError, match="use dex1 or dex3"):
+        UnitreeG1Config(end_effector="dummy", gravity_compensation=True)
 
 
 @pytest.mark.parametrize("controller", ["GrootLocomotionController", "HolosomaLocomotionController"])

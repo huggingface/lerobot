@@ -43,8 +43,6 @@ def params(**overrides):
         "kd": np.array([2.0, 1.0]),
         "max_joint_speed": 0.5,
         "max_tracking_error": 0.1,
-        "gravity_factors": np.array([1.0, 2.0]),
-        "max_gravity_torque": 5.0,
         "float_kd": np.array([0.2, 0.1]),
         "coulomb_friction": np.array([0.5, 0.2]),
         "control_frequency": 100.0,
@@ -142,8 +140,8 @@ def test_track_step_slews_tracks_clips_and_adds_gravity():
     # shoulder: tracking band; elbow: slew then lower limit; gripper: slew (0.1 stroke per 0.1 s).
     np.testing.assert_allclose(command, [0.3, 0.0, 0.6])
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
-    assert_mit_command(packet[0], position=0.3, velocity=0, kp=50, kd=2, torque=5.0)
-    assert_mit_command(packet[1], position=0.0, velocity=0, kp=20, kd=1, torque=3.0)
+    assert_mit_command(packet[0], position=0.3, velocity=0, kp=50, kd=2, torque=8.0)
+    assert_mit_command(packet[1], position=0.0, velocity=0, kp=20, kd=1, torque=1.5)
     assert len(packet) == 2  # the gripper has its own force limiter
 
 
@@ -258,10 +256,9 @@ def test_float_step_compensates_gravity_and_friction_without_stiffness():
         params(), gripper(), state, np.array([0.0, 0.0, 0.8]), np.array([8.0, 1.5])
     )
     np.testing.assert_allclose(command, [0.2, 0.5, 0.5])  # the command follows the arm and the gripper
-    # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
-    assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
-    # Gravity 1.5 Nm doubled by its factor, plus friction 0.2.
-    assert_mit_command(commands[1], position=0.5, velocity=0, kp=0, kd=0.1, torque=3.2)
+    # Gravity plus friction in the direction of motion.
+    assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=8.5)
+    assert_mit_command(commands[1], position=0.5, velocity=0, kp=0, kd=0.1, torque=1.7)
     # The gripper is limp at its measured raw position (mid-stroke of 1 to 3 rad).
     assert_mit_command(commands[2], position=2.0, velocity=0, kp=0, kd=0.02, torque=0)
 
