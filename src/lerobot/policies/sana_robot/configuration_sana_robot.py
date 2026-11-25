@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
-from lerobot.optim import AdamWConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .sana_robot_core.multiview import SPATIAL_LAYOUT_2X2, SPATIAL_LAYOUT_T_SHAPE
@@ -18,7 +18,7 @@ from .sana_robot_core.video import RESIZE_CROP, RESIZE_STRETCH, VAE_SPATIAL_STRI
 @PreTrainedConfig.register_subclass("sana_robot")
 @dataclass
 class SanaRobotConfig(PreTrainedConfig):
-    """Configuration of SANA-Robot-AR, for inference and evaluation.
+    """Configuration of SANA-Robot-AR.
 
     The defaults are those of the LIBERO checkpoint. A checkpoint's config stores what its training dataset
     fixed: the cameras, the robot slots, the prompt fields and the control frequency.
@@ -98,7 +98,41 @@ class SanaRobotConfig(PreTrainedConfig):
             The Hub commit the text encoder is downloaded from; change it together with `text_encoder_path`. A
             folder ignores it.
         dtype (`torch.dtype`, *optional*, defaults to `torch.bfloat16`):
-            The precision of the policy's weights, of the video VAE and of the text encoder.
+            The precision of the policy's weights. Train with `torch.float32` weights and
+            `--accelerator.mixed_precision=bf16`. The video VAE and the text encoder run in BF16.
+        max_episode_steps (`int`, *optional*, defaults to `512`):
+            Training reads this many control steps before and after the sampled frame, a multiple of `chunk_size`.
+            An episode of at most this length is trained as a whole; a longer one is trained on the part inside
+            this reach, which then starts after the first frame of the episode.
+        keep_checkpoint_statistics (`bool`, *optional*, defaults to `False`):
+            Fine-tune a checkpoint with the normalization it holds instead of the one computed from the new
+            dataset, e.g. to train on more data of the robot the checkpoint was trained on.
+        action_loss_weight (`float`, *optional*, defaults to `1.0`):
+            The weight of the action flow loss next to the video flow loss.
+        timestep_weighting (`bool`, *optional*, defaults to `True`):
+            Weigh the loss of a chunk by its noise level, more in the middle of the range.
+        instruction_dropout (`float`, *optional*, defaults to `0.1`):
+            The probability that a training window is given the prompt without its instruction.
+        gradient_checkpointing (`bool`, *optional*, defaults to `True`):
+            Recompute every layer in the backward pass instead of keeping its activations.
+        optimizer_lr (`float`, *optional*, defaults to `5e-5`):
+            Peak learning rate of AdamW.
+        optimizer_betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.95)`):
+            AdamW moment decays.
+        optimizer_eps (`float`, *optional*, defaults to `1e-10`):
+            AdamW denominator term.
+        optimizer_weight_decay (`float`, *optional*, defaults to `0.01`):
+            AdamW weight decay.
+        optimizer_decay_biases_and_norms (`bool`, *optional*, defaults to `True`):
+            Decay the biases and the LayerNorm weights too. The RMSNorm gains are always decayed.
+        optimizer_grad_clip_norm (`float`, *optional*, defaults to `1.0`):
+            Maximum norm of the gradient.
+        scheduler_warmup_steps (`int`, *optional*, defaults to `1000`):
+            Steps of the linear warmup.
+        scheduler_decay_steps (`int`, *optional*, defaults to `20000`):
+            The step at which the cosine reaches `scheduler_decay_lr`; scaled down for a shorter run.
+        scheduler_decay_lr (`float`, *optional*, defaults to `5e-7`):
+            The learning rate at the end of the cosine.
         normalization_mapping (`dict[str, NormalizationMode]`, *optional*):
             The state and the actions use `MEAN_STD` with the checkpoint's center and scale of every slot.
     """
@@ -147,6 +181,23 @@ class SanaRobotConfig(PreTrainedConfig):
     text_encoder_revision: str | None = "299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8"
 
     dtype: torch.dtype | None = torch.bfloat16
+
+    max_episode_steps: int = 512
+    keep_checkpoint_statistics: bool = False
+    action_loss_weight: float = 1.0
+    timestep_weighting: bool = True
+    instruction_dropout: float = 0.1
+    gradient_checkpointing: bool = True
+
+    optimizer_lr: float = 5e-5
+    optimizer_betas: tuple[float, float] = (0.9, 0.95)
+    optimizer_eps: float = 1e-10
+    optimizer_weight_decay: float = 0.01
+    optimizer_decay_biases_and_norms: bool = True
+    optimizer_grad_clip_norm: float = 1.0
+    scheduler_warmup_steps: int = 1000
+    scheduler_decay_steps: int = 20000
+    scheduler_decay_lr: float = 5e-7
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -185,6 +236,12 @@ class SanaRobotConfig(PreTrainedConfig):
             raise ValueError("n_action_steps must be a multiple of video_frame_stride, at most chunk_size")
         if self.num_inference_steps <= 0 or min(self.video_flow_shift, self.action_flow_shift) <= 0:
             raise ValueError("num_inference_steps and the flow shifts must be positive")
+        if self.max_episode_steps <= 0 or self.max_episode_steps % self.chunk_size:
+            raise ValueError(
+                f"max_episode_steps must be a positive multiple of chunk_size ({self.chunk_size})"
+            )
+        if not 0.0 <= self.instruction_dropout <= 1.0:
+            raise ValueError("instruction_dropout must be in [0, 1]")
         if not self.input_features:
             self.input_features = {
                 **{
@@ -198,12 +255,24 @@ class SanaRobotConfig(PreTrainedConfig):
         self.validate_features()
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def image_observation_delta_indices(self) -> list[int]:
+        """The frames of a training sample: every `video_frame_stride`-th control step within
+        `max_episode_steps` of the sampled frame. `SanaRobotPolicy.forward` keeps those of the episode's window."""
+        return list(range(-self.max_episode_steps, self.max_episode_steps + 1, self.video_frame_stride))
 
     @property
-    def action_delta_indices(self) -> None:
-        return None
+    def state_observation_delta_indices(self) -> list[int]:
+        """The states of a training sample: the control steps that can start a chunk, one every `chunk_size`."""
+        return list(range(-self.max_episode_steps, self.max_episode_steps, self.chunk_size))
+
+    @property
+    def observation_delta_indices(self) -> list[int]:
+        return self.state_observation_delta_indices
+
+    @property
+    def action_delta_indices(self) -> list[int]:
+        """The actions of a training sample: every control step within `max_episode_steps` of the sampled frame."""
+        return list(range(-self.max_episode_steps, self.max_episode_steps))
 
     @property
     def reward_delta_indices(self) -> None:
@@ -220,7 +289,18 @@ class SanaRobotConfig(PreTrainedConfig):
             raise ValueError("action does not match action_slots")
 
     def get_optimizer_preset(self) -> AdamWConfig:
-        raise NotImplementedError("SANA-Robot supports inference and evaluation in LeRobot, not training")
+        return AdamWConfig(
+            lr=self.optimizer_lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+            grad_clip_norm=self.optimizer_grad_clip_norm,
+        )
 
-    def get_scheduler_preset(self) -> None:
-        return None
+    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+        )

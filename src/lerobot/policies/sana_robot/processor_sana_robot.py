@@ -5,6 +5,7 @@
 import math
 import re
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -19,15 +20,24 @@ from lerobot.processor import (
     PolicyActionProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStepRegistry,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_STATE,
+    OBS_STR,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
 from lerobot.utils.rotation import Rotation
 
 from .configuration_sana_robot import SanaRobotConfig
 from .sana_robot_core.robot80 import (
+    GRIPPER_FIELDS,
     ROBOT_FIELDS,
+    ROTATION_FIELDS,
     field_slots,
     gripper_closedness,
     rot6d_to_rotation,
@@ -58,7 +68,8 @@ LIBERO_PLUS_TAG = re.compile(r" (?:(?:view|initstate|table|tb|light|noise|add) [
 @ProcessorStepRegistry.register(name="sana_robot_observations")
 @dataclass
 class SanaRobotObservations(ObservationProcessorStep):
-    """Bring every camera frame to its view size as the training frames were resized, in [-1, 1]."""
+    """Bring every camera frame to its view size as the training frames were resized, in [-1, 1]. A camera holds
+    one frame per sample, [B, 3, H, W], or the frames of a training window, [B, T, 3, H, W]."""
 
     camera_keys: list[str]
     view_sizes: list[list[int]]
@@ -67,13 +78,14 @@ class SanaRobotObservations(ObservationProcessorStep):
     def observation(self, observation: RobotObservation) -> RobotObservation:
         for key, size in zip(self.camera_keys, self.view_sizes, strict=True):
             image = observation[key]
-            if image.ndim != 4 or image.shape[1] != 3:
-                raise ValueError(f"{key} must be [B, 3, H, W]")
+            if image.ndim not in (4, 5) or image.shape[-3] != 3:
+                raise ValueError(f"{key} must be [B, 3, H, W] or [B, T, 3, H, W]")
             if not image.is_floating_point():
                 raise ValueError("Camera images must be floating point in [0, 1]")
             # The training frames were resized as float values and rounded back to 8 bits.
-            frames = byte_frames(resize_frames(image.to(torch.float32, copy=True), size, self.resize))
-            observation[key] = frames_to_model_range(frames)
+            frames = image.reshape(-1, *image.shape[-3:]).to(torch.float32, copy=True)
+            frames = frames_to_model_range(byte_frames(resize_frames(frames, size, self.resize)))
+            observation[key] = frames.reshape(*image.shape[:-2], *frames.shape[-2:])
         return observation
 
     def get_config(self) -> dict[str, Any]:
@@ -89,12 +101,47 @@ class SanaRobotObservations(ObservationProcessorStep):
         return features
 
 
+def robot_statistics(
+    config: SanaRobotConfig, dataset_stats: dict[str, dict[str, Any]] | None
+) -> dict[str, dict[str, Any]] | None:
+    """Return the statistics SANA-Robot normalizes `observation.state` and `action` with, from a dataset's.
+
+    A value is mapped to (value - center) / scale, with the center and the scale that send the 1% and 99%
+    quantiles of the state to -1 and 1. Rotations and gripper closedness keep their value. An action slot the
+    state also fills takes the state's center and scale, since an action is a target of the same quantity.
+    Statistics without quantiles are returned as they are: those of a checkpoint, which hold the center and the
+    scale under ``mean`` and ``std`` already.
+    """
+    if not dataset_stats or "q01" not in dataset_stats.get(OBS_STATE, {}):
+        return dataset_stats
+    kept = {slot for name in (*ROTATION_FIELDS, *GRIPPER_FIELDS) for slot in field_slots(name)}
+
+    def center_and_scale(key: str) -> tuple[torch.Tensor, torch.Tensor]:
+        low = torch.as_tensor(dataset_stats[key]["q01"], dtype=torch.float64)
+        high = torch.as_tensor(dataset_stats[key]["q99"], dtype=torch.float64)
+        return ((low + high) / 2, ((high - low) / 2).clamp_min(1e-6))
+
+    by_slot = dict(zip(config.state_slots, zip(*center_and_scale(OBS_STATE), strict=True), strict=True))
+    statistics = dict(dataset_stats)
+    for key, slots in ((OBS_STATE, config.state_slots), (ACTION, config.action_slots)):
+        if key not in dataset_stats or "q01" not in dataset_stats[key]:
+            continue
+        own = dict(zip(slots, zip(*center_and_scale(key), strict=True), strict=True))
+        pairs = [(0.0, 1.0) if slot in kept else by_slot.get(slot, own[slot]) for slot in slots]
+        statistics[key] = {
+            "mean": torch.tensor([float(center) for (center, _scale) in pairs], dtype=torch.float32),
+            "std": torch.tensor([float(scale) for (_center, scale) in pairs], dtype=torch.float32),
+        }
+    return statistics
+
+
 def make_sana_robot_pre_post_processors(
     config: SanaRobotConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Build the processors of SANA-Robot. ``dataset_stats`` holds, under ``mean`` and ``std``, the center and
-    scale of the robot slots of `observation.state` and of `action`."""
-    steps = make_default_policy_processor_steps(config, dataset_stats)
+    """Build the processors of SANA-Robot. ``dataset_stats`` are the statistics of a dataset, from which
+    `robot_statistics` computes the normalization, or hold the center and scale of the robot slots of
+    `observation.state` and of `action` under ``mean`` and ``std``."""
+    steps = make_default_policy_processor_steps(config, robot_statistics(config, dataset_stats))
     pre = [
         steps.rename_observations,
         steps.add_batch_dim,
@@ -103,6 +150,45 @@ def make_sana_robot_pre_post_processors(
         steps.to_device,
     ]
     return make_policy_processor_pipelines(input_steps=pre, output_steps=[steps.unnormalize, steps.to_cpu])
+
+
+def make_sana_robot_pre_post_processors_from_pretrained(
+    config: SanaRobotConfig,
+    pretrained_path: str | Path,
+    *,
+    revision: str | None = None,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    dataset_meta: Any | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Load the processors of a checkpoint. The statistics of the dataset a fine-tune starts on arrive as
+    normalizer overrides: `robot_statistics` turns them into the normalization of SANA-Robot, or the checkpoint's
+    own normalization stays with ``config.keep_checkpoint_statistics``."""
+    del dataset_stats, dataset_meta
+    overrides = []
+    for given, step in (
+        (preprocessor_overrides, "normalizer_processor"),
+        (postprocessor_overrides, "unnormalizer_processor"),
+    ):
+        steps = {name: dict(values) for name, values in (given or {}).items()}
+        if steps.get(step, {}).get("stats") is not None:
+            if config.keep_checkpoint_statistics:
+                del steps[step]["stats"]
+            else:
+                steps[step]["stats"] = robot_statistics(config, steps[step]["stats"])
+        overrides.append(steps)
+    return load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=overrides[0],
+        postprocessor_overrides=overrides[1],
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
+    )
 
 
 def robot_slots(fields: tuple[str, ...]) -> list[int]:

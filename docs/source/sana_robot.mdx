@@ -9,7 +9,7 @@
 
 SANA-Robot is a 4.5B world action model: one diffusion transformer denoises the future video latents of every
 camera and the robot's action chunk together, each at its own noise level. `sana_robot` is the LeRobot adapter of
-SANA-Robot-AR, the policy with memory, for inference and evaluation of its released checkpoints.
+SANA-Robot-AR, the policy with memory: inference and evaluation of its released checkpoints, and fine-tuning.
 
 ## Model overview
 
@@ -23,9 +23,8 @@ SANA-Robot-AR, the policy with memory, for inference and evaluation of its relea
 
 The model code is vendored in `lerobot/policies/sana_robot/sana_robot_core` from the
 [SANA-Robot code release](https://github.com/NVlabs/Sana/tree/robot); the file headers name the upstream commit
-and paths. LeRobot runs the plain PyTorch path: the inference kernels, CUDA graphs and asynchronous execution of
-the original deployment are not part of this integration, and neither is training. Both are in the SANA-Robot
-repository.
+and paths. LeRobot runs the plain PyTorch path: the kernels of the original training and deployment, its CUDA
+graphs and its asynchronous execution are not part of this integration. They are in the SANA-Robot repository.
 
 ## Install
 
@@ -131,6 +130,73 @@ Use `libero_object`, `libero_goal` or `libero_10` for the other suites, and `--e
 
 LIBERO-plus appends the perturbation tags of a task variant to its instruction (`... on the plate view 0 0 100 0 0
 initstate 1`). The processors remove them, as the checkpoint's own evaluation does.
+
+## Fine-tuning
+
+SANA-Robot-AR is trained on whole episodes with teacher forcing: an episode is cut into chunks of `chunk_size`
+control steps, and every chunk denoises its video latents and its actions at its own noise level, from its
+observation, the first frame of the episode and the clean latents of the chunks before it. `lerobot-train` gives
+the policy one episode per sample:
+
+- A sample is the episode of its sampled frame. The dataset returns `max_episode_steps` control steps before and
+  after that frame, padded at the episode's ends, and the policy keeps the episode: from the last chunk boundary
+  at or before its first frame, placed so that the sampled frame starts a chunk, to its end.
+- Set `policy.max_episode_steps` (a multiple of `chunk_size`, 512 by default) to at least the longest episode
+  of the dataset. A longer episode is trained on the part within this reach of the sampled frame, which then
+  starts after the first frame of the episode, so the memory is trained on a shorter past than it has at
+  inference.
+- `--batch_size` is the number of episodes per GPU. The loss is the mean over the episodes of each episode's
+  mean over its chunks.
+- The frozen video VAE and text encoder run online, in BF16.
+
+The dataset holds `observation.state` and `action` as the slots of SANA-Robot's robot row that
+`policy.state_slots` and `policy.action_slots` name, in order: the actions are absolute targets, a gripper is its
+closedness in [0, 1] and a rotation is 6D. They are normalized by the 1% and 99% quantiles of the dataset's
+state, which map to -1 and 1; rotations and grippers keep their values. `--policy.keep_checkpoint_statistics=true`
+keeps the normalization of the checkpoint the fine-tune starts from instead.
+
+The 4.5B weights with their gradients and the AdamW state do not fit one 80 GB GPU in FP32, so a full fine-tune
+shards them over the GPUs of a node (see [Multi-GPU training](./multi_gpu_training)):
+
+```bash
+torchrun --nproc-per-node=8 $(which lerobot-train) \
+  --policy.path=Efficient-Large-Model/SANA-Robot-AR-Pretrain-LeRobot \
+  --policy.dtype=float32 --accelerator.mixed_precision=bf16 \
+  --parallelism.dp_shard=8 \
+  --dataset.repo_id=${HF_USER}/my_dataset \
+  --batch_size=2 --steps=20000 --ema.type=constant \
+  --output_dir=outputs/train/sana_robot
+```
+
+Add `--parallelism.dp_replicate=<nodes>` and the `torchrun` multi-node flags for several nodes. The checkpoints
+hold the averaged weights in `pretrained_model_ema`; evaluate them with `lerobot-eval` after training.
+
+| Parameter                                         | Meaning                                                          | Default     |
+| ------------------------------------------------- | ---------------------------------------------------------------- | ----------- |
+| `max_episode_steps`                               | Control steps read before and after the sampled frame            | 512         |
+| `instruction_dropout`                             | Probability that an episode is trained without its instruction   | 0.1         |
+| `timestep_weighting`                              | Weigh a chunk's loss by its noise level                          | true        |
+| `action_loss_weight`                              | Weight of the action loss next to the video loss                 | 1.0         |
+| `gradient_checkpointing`                          | Recompute the layers in the backward pass                        | true        |
+| `optimizer_lr`, `scheduler_decay_lr`              | Peak and final learning rate of the cosine schedule              | 5e-5, 5e-7  |
+| `scheduler_warmup_steps`, `scheduler_decay_steps` | Warmup and length of the schedule, scaled down for a shorter run | 1000, 20000 |
+
+On 8 H100 with two episodes per GPU (about 7 chunks each on LIBERO), a step takes 5.5 s and 28 GB per GPU, or
+4.9 s with `--accelerator.fsdp.reshard_after_forward=false`. Training in LeRobot differs from the SANA-Robot
+repository in three ways:
+
+- It runs in plain PyTorch, one episode at a time through the model. The original trainer packs the episodes of
+  a GPU into one sequence up to a budget of chunks and runs fused kernels, and is about three times faster per
+  chunk.
+- Episodes are drawn in proportion to their length, a fixed number per GPU, instead of in a task-balanced order
+  packed to the budget.
+- The video latents come from the block-wise encoder that inference uses. In BF16 they differ from the original
+  trainer's single-pass encoding by rounding (5% in relative L2 norm; each is 3 to 4% from the FP32 latents).
+
+With the same latents, text embeddings and noise, the loss of an episode is the same as in the SANA-Robot
+repository within 2e-3 and its gradients agree as closely as BF16 and FP32 gradients do. Over the first 300
+steps of a LIBERO fine-tune from the pretrained weights, on the same data, normalization and schedule, the two
+trainers give the same loss curve within 4% from step 100 on (0.218 against 0.211 over the last 50 steps).
 
 ## Results
 

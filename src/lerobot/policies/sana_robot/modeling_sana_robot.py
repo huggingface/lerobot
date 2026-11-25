@@ -1,7 +1,7 @@
 # Copyright 2026 NVIDIA CORPORATION & AFFILIATES
 #
 # SPDX-License-Identifier: Apache-2.0
-"""SANA-Robot-AR in LeRobot: inference and evaluation of the released checkpoints.
+"""SANA-Robot-AR in LeRobot: inference, evaluation and fine-tuning.
 
 The model code is vendored in ``sana_robot_core``. This module drives it from LeRobot's policy interface.
 """
@@ -15,7 +15,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from .configuration_sana_robot import SanaRobotConfig
@@ -24,12 +24,60 @@ from .sana_robot_core.memory_rtc import MemoryRTCController
 from .sana_robot_core.prompt import build_prompts
 from .sana_robot_core.robot80 import ROBOT_DIM
 from .sana_robot_core.sana_robot_ar import SanaRobotAR
+from .sana_robot_core.teacher_forcing_sequence import (
+    encode_teacher_forcing_latents,
+    strip_view_latents,
+    with_state_rows,
+)
 from .sana_robot_core.text_encoder import load_text_encoder
+from .sana_robot_core.training_step import draw_window_noise, window_flow_inputs, window_losses
 from .sana_robot_core.vae import load_video_encoder
 from .sana_robot_core.video import VAE_SPATIAL_STRIDE
 from .sana_robot_core.view_stream import ViewStream
+from .sana_robot_core.windows import window_chunk_count
 
 TEXT_CACHE_SIZE = 64
+NORMALIZATION_LAYERS = (
+    torch.nn.LayerNorm,
+    torch.nn.GroupNorm,
+    torch.nn.modules.batchnorm._BatchNorm,
+    torch.nn.modules.instancenorm._InstanceNorm,
+)
+
+
+def episode_window(real: Tensor, chunk_size: int, video_frame_stride: int) -> tuple[int, int, int]:
+    """Return the training window of one sample as (first row, chunks, head rows).
+
+    A sample holds the control steps within a reach of the sampled frame, clamped to its episode. The window is
+    the episode from the last chunk boundary at or before its first frame, chosen so that the sampled frame
+    starts a chunk, to its end. When the episode starts or ends beyond the reach, the window is the whole chunks
+    inside the reach instead, and then starts after the first frame of the episode.
+
+    Args:
+        real (`torch.Tensor`):
+            Which control steps of the sample are inside the episode, `[2 * reach]`; the sampled frame is at
+            index `reach`.
+        chunk_size (`int`):
+            Control steps per chunk.
+        video_frame_stride (`int`):
+            Control steps between two video frames.
+
+    Returns:
+        `tuple[int, int, int]`: The index of the window's first row in `real`, its number of chunks (0 when it
+        has no chunk to train) and the rows it starts before the episode. With rows before the episode, the
+        first chunk only fills the memory.
+    """
+    reach = real.numel() // 2
+    (before, after) = (int(real[:reach].sum()), int(real[reach:].sum()))
+    head_rows = 0 if before == reach else -before % chunk_size
+    first_row = reach - before - head_rows
+    if after == reach:
+        return (first_row, (2 * reach - first_row) // chunk_size, head_rows)
+    return (
+        first_row,
+        window_chunk_count(before + after, head_rows, chunk_size, video_frame_stride),
+        head_rows,
+    )
 
 
 def local_folder(path: str, revision: str | None, patterns: list[str] | None = None) -> str:
@@ -49,11 +97,15 @@ class SanaRobotPolicy(PreTrainedPolicy):
     Call `select_action` on every control step: the memory reads a camera frame every
     ``config.video_frame_stride`` steps and a chunk is generated every ``config.n_action_steps`` steps. The policy
     runs one episode at a time (batch size 1).
+
+    `forward` trains on whole episodes with teacher forcing: every sample of a batch is the episode of its
+    sampled frame, one window at a time.
     """
 
     config_class = SanaRobotConfig
     name = "sana_robot"
     config: SanaRobotConfig
+    _fsdp_wrap_modules = ["PolicyBlock"]
 
     def __init__(self, config: SanaRobotConfig, **kwargs: Any) -> None:
         require_package("diffusers", extra="sana_robot")
@@ -76,15 +128,31 @@ class SanaRobotPolicy(PreTrainedPolicy):
             vae_temporal_stride=config.vae_temporal_stride,
             spatial_layout=config.spatial_layout,
         )
-        self.model.requires_grad_(False)
+        self.model.grad_checkpointing = config.gradient_checkpointing
         if config.dtype is not None:
             self.to(dtype=config.dtype)
         self._encoders: dict[str, Any] = {}
         self._text_cache: dict[str, tuple[Tensor, Tensor]] = {}
         self.reset()
 
-    def get_optim_params(self) -> list[torch.nn.Parameter]:
-        return list(self.parameters())
+    def get_optim_params(self) -> list[dict[str, Any]]:
+        """The trainable parameters in two groups: with the optimizer's weight decay, and without it the biases
+        and the weights of the normalization layers, unless ``config.optimizer_decay_biases_and_norms``. The
+        RMSNorm gains are decayed."""
+        exempt_ids: set[int] = set()
+        if not self.config.optimizer_decay_biases_and_norms:
+            for module in self.modules():
+                if isinstance(module, NORMALIZATION_LAYERS):
+                    exempt_ids.update(id(parameter) for parameter in module.parameters(recurse=False))
+        decayed: list[torch.nn.Parameter] = []
+        exempt: list[torch.nn.Parameter] = []
+        for name, parameter in self.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            is_bias = name.rsplit(".", 1)[-1] == "bias" and not self.config.optimizer_decay_biases_and_norms
+            (exempt if is_bias or id(parameter) in exempt_ids else decayed).append(parameter)
+        groups: list[dict[str, Any]] = [{"params": decayed}, {"params": exempt, "weight_decay": 0.0}]
+        return [group for group in groups if group["params"]]
 
     def reset(self) -> None:
         """Start a new episode: drop the memory, the frames and the queued actions."""
@@ -101,8 +169,125 @@ class SanaRobotPolicy(PreTrainedPolicy):
         """Queued actions belong to the memory's clock, so a new instruction takes over at the next chunk instead."""
         return None
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
-        raise NotImplementedError("SANA-Robot supports inference and evaluation in LeRobot, not training")
+    def forward(self, batch: dict[str, Any], reduction: str = "mean") -> tuple[Tensor, dict | None]:
+        """Return the flow-matching loss of a batch of whole-episode windows.
+
+        Every sample is trained on the window of its episode (`episode_window`), on the teacher-forcing sequence:
+        each chunk denoises its video latents and its actions at its own noise level, from its observation, the
+        first frame of the window and the clean latents of the chunks before it.
+
+        Args:
+            batch (`dict[str, Any]`):
+                A batch of the dataset after the policy's preprocessor, with the windows of
+                `config.image_observation_delta_indices`, `config.state_observation_delta_indices` and
+                `config.action_delta_indices`: every camera of `config.camera_keys` as `[B, T, 3, h, w]` in
+                [-1, 1] at its view size, `observation.state` `[B, T_state, state dimensions]` and `action`
+                `[B, T_action, action dimensions]` normalized, `action_is_pad` `[B, T_action]`, and the
+                instructions under `task`.
+            reduction (`str`, *optional*, defaults to `"mean"`):
+                `"mean"` for the mean over the samples, `"none"` for the loss of every sample `[B]`.
+
+        Returns:
+            `tuple[Tensor, dict]`: The loss, the mean over the trained chunks of a window averaged over the
+            windows, and its parts: `video_loss`, `action_loss` and `chunks`, the mean number of chunks of a
+            window.
+        """
+        config = self.config
+        actions = batch[ACTION]
+        if actions.ndim != 3 or actions.shape[1] != 2 * config.max_episode_steps:
+            raise ValueError(
+                f"Training reads {2 * config.max_episode_steps} actions per sample (config.action_delta_indices), "
+                f"got {tuple(actions.shape)}"
+            )
+        device = actions.device
+        # The frozen encoders run in BF16 on a GPU, whatever the precision of the trained weights.
+        self._load_encoders(torch.bfloat16 if device.type == "cuda" else None)
+        real = ~batch[f"{ACTION}_is_pad"]
+        tasks = [batch["task"]] * actions.shape[0] if isinstance(batch["task"], str) else batch["task"]
+        zero = actions.new_zeros((), dtype=torch.float32)
+        (losses, video_losses, action_losses, chunk_counts) = ([], [], [], [])
+        for index in range(actions.shape[0]):
+            (first_row, chunks, head_rows) = episode_window(
+                real[index], config.chunk_size, config.video_frame_stride
+            )
+            chunk_counts.append(chunks)
+            if chunks == 0:
+                # An episode too short for one trained chunk.
+                losses.append(zero)
+                continue
+            window = self._window_loss(batch, index, first_row, chunks, head_rows, tasks[index])
+            losses.append(window["loss"])
+            video_losses.append(window["video_loss"].detach())
+            action_losses.append(window["action_loss"].detach())
+        sample_losses = torch.stack(losses)
+        trained = max(1, len(video_losses))
+        info = {
+            "video_loss": float(torch.stack(video_losses).mean()) if video_losses else 0.0,
+            "action_loss": float(torch.stack(action_losses).mean()) if action_losses else 0.0,
+            "chunks": sum(chunk_counts) / len(chunk_counts),
+        }
+        if reduction == "none":
+            return (sample_losses, info)
+        loss = sample_losses.sum() / trained
+        if not video_losses:
+            loss = loss + 0.0 * next(self.model.parameters()).sum()
+        return (loss, info)
+
+    def _window_loss(
+        self, batch: dict[str, Any], index: int, first_row: int, chunks: int, head_rows: int, instruction: str
+    ) -> dict[str, Tensor]:
+        """Return the losses of the window of one sample: ``chunks`` chunks from ``first_row`` of its actions."""
+        config = self.config
+        (size, stride) = (config.chunk_size, config.video_frame_stride)
+        device = batch[ACTION].device
+        rows = slice(first_row, first_row + chunks * size)
+
+        action = torch.zeros(chunks * size, ROBOT_DIM, device=device)
+        action[:, config.action_slots] = batch[ACTION][index, rows].float()
+        action_mask = torch.zeros(chunks * size, ROBOT_DIM, dtype=torch.bool, device=device)
+        action_mask[:, config.action_slots] = True
+        supervised = torch.ones(chunks, dtype=torch.bool, device=device)
+        supervised[0] = head_rows == 0
+        inside_episode = ~batch[f"{ACTION}_is_pad"][index, rows]
+        loss_mask = action_mask & inside_episode[:, None] & supervised.repeat_interleave(size)[:, None]
+
+        first_state = first_row // size
+        state = torch.zeros(chunks, ROBOT_DIM, device=device)
+        state[:, config.state_slots] = batch[OBS_STATE][index, first_state : first_state + chunks].float()
+        state_mask = torch.zeros(chunks, ROBOT_DIM, dtype=torch.bool, device=device)
+        state_mask[:, config.state_slots] = True
+        window = {
+            **self._data_info(device),
+            "teacher_forcing_num_chunks": chunks,
+            "initial_state": state[:1],
+            "initial_state_condition_mask": state_mask[:1],
+            "chunk_states": state[None, 1:],
+            "chunk_states_mask": state_mask[None, 1:],
+            "action": with_state_rows(action, chunks, size)[None],
+            "action_mask": with_state_rows(action_mask, chunks, size)[None],
+            "action_loss_mask": with_state_rows(loss_mask, chunks, size)[None],
+            "chunk_supervised": supervised[None],
+        }
+
+        (first_frame, frames) = (first_row // stride, chunks * size // stride + 1)
+        views = [
+            encode_teacher_forcing_latents(
+                self._encoders["video"],
+                batch[key][index : index + 1, first_frame : first_frame + frames],
+                chunks,
+            )
+            for key in config.camera_keys
+        ]
+        window_latents = strip_view_latents([view[0] for view in views])
+        observation_latents = strip_view_latents([view[1] for view in views])
+        without_instruction = self.training and float(torch.rand(())) < config.instruction_dropout
+        (text_embeddings, text_mask) = self._text(None if without_instruction else instruction)
+        noise = draw_window_noise(window_latents, chunks, size, ROBOT_DIM)
+        (inputs, targets) = window_flow_inputs(
+            window, window_latents, observation_latents, noise, config.timestep_weighting
+        )
+        output = self.model(text_embeddings=text_embeddings, text_mask=text_mask, **inputs)
+        return window_losses(output, targets, window, config.action_loss_weight)
 
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
         raise NotImplementedError(
@@ -151,11 +336,13 @@ class SanaRobotPolicy(PreTrainedPolicy):
             raise ValueError("SANA-Robot runs one episode at a time: use a batch size of 1")
         return task[0]
 
-    def _load_encoders(self) -> None:
-        """Load the text encoder and the video VAE on the policy's device, once."""
+    def _load_encoders(self, dtype: torch.dtype | None = None) -> None:
+        """Load the text encoder and the video VAE on the policy's device, once: in ``dtype``, or in the precision
+        of the policy's weights."""
         parameter = next(self.model.parameters())
         if self._encoders.get("device") == parameter.device:
             return
+        dtype = dtype or parameter.dtype
         config = self.config
         if config.vae_path is None:
             raise ValueError("Set policy.vae_path to the LTX-2 video VAE in the diffusers layout")
@@ -165,16 +352,19 @@ class SanaRobotPolicy(PreTrainedPolicy):
         random_state = torch.get_rng_state()
         self._encoders = {
             "device": parameter.device,
-            "text": load_text_encoder(text_folder, parameter.device, parameter.dtype),
-            "stream": ViewStream(load_video_encoder(vae_folder, parameter.device, parameter.dtype)),
+            "text": load_text_encoder(text_folder, parameter.device, dtype),
+            "video": load_video_encoder(vae_folder, parameter.device, dtype),
         }
+        self._encoders["stream"] = ViewStream(self._encoders["video"])
         torch.set_rng_state(random_state)
         self._text_cache = {}
 
     def _text(self, instruction: str | None) -> tuple[Tensor, Tensor]:
         """Return the text embeddings and the token mask of the prompts of an instruction, encoded once."""
         key = "" if instruction is None else instruction
-        if key not in self._text_cache:
+        cached = self._text_cache.get(key)
+        # Embeddings cached while evaluating in inference mode cannot enter a training graph.
+        if cached is None or (cached[0].is_inference() and not torch.is_inference_mode_enabled()):
             if len(self._text_cache) >= TEXT_CACHE_SIZE:
                 self._text_cache.clear()
             config = self.config

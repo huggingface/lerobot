@@ -4,7 +4,7 @@
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/utils/vae.py. Import paths are rewritten to the LeRobot package;
-# the block-wise encoder of a stream; the compiled single-pass encoder of training is not vendored.
+# the block-wise encoder, for a stream and for a whole video; the compiled single-pass encoder is not vendored.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
@@ -31,10 +31,17 @@ def grouping_slots(encoder: LTX2VideoEncoder3d) -> list[int]:
     return slots
 
 
+def encode_in_batches(encode, clips: torch.Tensor, batch_size: int) -> torch.Tensor:
+    """Return the latents of clips [N, 3, T, H, W] encoded ``batch_size`` at a time."""
+    return torch.cat(
+        [encode(clips[start : start + batch_size]) for start in range(0, clips.shape[0], batch_size)]
+    )
+
+
 def load_video_encoder(model_path, device, dtype=torch.bfloat16):
     """Load the encoder of the LTX-2 causal video VAE.
 
-    A stream is encoded block by block on the cache of the encoder's layers: the first frame alone, then 8 frames
+    A video is encoded block by block on the cache of the encoder's layers: the first frame alone, then 8 frames
     at a time, every block after the cache the one before left. The encoder is causal in time, so the blocks give
     the latents of the whole video up to the rounding of the precision.
 
@@ -44,10 +51,11 @@ def load_video_encoder(model_path, device, dtype=torch.bfloat16):
         dtype: The precision of the weights and of the latent normalization.
 
     Returns:
-        ``encode(frames, stream)``: frames [B, 3, T, H, W] in [-1, 1] to normalized float32 latents
-        [B, 128, T', H / 32, W / 32]. ``stream`` is the state of one video, the frames the encoder's layers cache,
-        as a list of tensors that starts empty and is updated in place: its first call takes the first frame and
-        each later call the next 8 * n frames.
+        ``encode(frames, stream=None)``: frames [B, 3, T, H, W] in [-1, 1] to normalized float32 latents
+        [B, 128, T', H / 32, W / 32]. Without ``stream`` the frames are a whole video, T = 1 + 8 * n and
+        T' = 1 + n. ``stream`` is the state of one video, the frames the encoder's layers cache, as a list of
+        tensors that starts empty and is updated in place: its first call takes the first frame and each later
+        call the next 8 * n frames.
     """
     folder = Path(model_path, "vae")
     config = json.loads((folder / "config.json").read_text())
@@ -78,9 +86,9 @@ def load_video_encoder(model_path, device, dtype=torch.bfloat16):
     slots = grouping_slots(encoder)
 
     @torch.no_grad()
-    def encode(frames: torch.Tensor, stream: list) -> torch.Tensor:
+    def encode(frames: torch.Tensor, stream: list | None = None) -> torch.Tensor:
         frames = frames.to(device=device, dtype=dtype)
-        cache = list(stream)
+        cache = list(stream or ())
         if cache:
             for slot in slots:
                 cache.insert(slot, {"prefixed": True, "pending": None})
@@ -92,7 +100,8 @@ def load_video_encoder(model_path, device, dtype=torch.bfloat16):
             (start, step) = (start + step, block)
         hidden = hidden[0] if len(hidden) == 1 else torch.cat(hidden, dim=2)
         latents = torch.chunk(hidden, 2, dim=1)[0]
-        stream[:] = [entry for entry in cache if torch.is_tensor(entry)]
+        if stream is not None:
+            stream[:] = [entry for entry in cache if torch.is_tensor(entry)]
         return ((latents - mean) * scaling_factor / std).float()
 
     return encode
