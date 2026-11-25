@@ -61,12 +61,13 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     }
 
 
-def test_sts_and_scs_share_a_bus():
+@pytest.mark.parametrize("model, model_number", [("sts3215", 777), ("sts3235", 2057)])
+def test_sts_and_scs_share_a_bus(model, model_number):
     """Each motor is mapped to the definition of its model, STS and SCS on one bus."""
     bus = SerialMotorsBus(
         "",
         {
-            "sts": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
+            "sts": Motor(1, model, MotorNormMode.RANGE_M100_100),
             "scs": Motor(2, "scs0009", MotorNormMode.RANGE_M100_100),
         },
     )
@@ -75,6 +76,7 @@ def test_sts_and_scs_share_a_bus():
         1: rustypot.Sts3215PyController.definition(),
         2: rustypot.Scs0009PyController.definition(),
     }
+    assert bus._model_number(model) == model_number
 
 
 def test_feetech_motors_bus_is_a_deprecated_alias(dummy_motors):

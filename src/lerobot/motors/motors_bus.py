@@ -242,6 +242,8 @@ class SerialMotorsBus(MotorsBusBase):
         """The model number of `model` and the rustypot definition that covers it."""
         require_package("rustypot", extra="serial-motors")
         if (found := rustypot.find_model(model)) is None:
+            if model.lower() == "sts3235":
+                return 2057, rustypot.Sts3215PyController.definition()
             raise ValueError(f"Unknown motor model '{model}': rustypot has no servo of that name.")
         return found
 
