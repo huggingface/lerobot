@@ -17,7 +17,7 @@
 import re
 import subprocess
 import sys
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 import draccus
 import pytest
@@ -39,7 +39,7 @@ from lerobot.teleoperators.so_leader import SO100Leader
 from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 pytestmark = [pytest.mark.dataset, pytest.mark.hardware]
 
@@ -399,3 +399,67 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command, base_input):
     mapping_option = "layout" if base_input == "keyboard" else "linear_speed"
     assert f"--teleop.mapping.{mapping_option}" in result.stdout
     assert "--teleop.base.calibration_dir" in result.stdout
+
+
+@pytest.mark.parametrize("record_sent_action", [False, True])
+def test_record_loop_can_record_clamped_robot_actions(tmp_path, record_sent_action):
+    robot = make_robot_from_config(MockRobotConfig(calibration_dir=tmp_path))
+    robot.record_sent_action = record_sent_action
+    teleop = MockTeleop(MockTeleopConfig(random_values=False, static_values=[1.0, 2.0, 3.0]))
+    events = {"exit_early": False}
+    names = list(robot.action_features)
+    dataset = Mock(
+        fps=30,
+        features={
+            "action": {"dtype": "float32", "shape": (3,), "names": names},
+            "observation.state": {"dtype": "float32", "shape": (3,), "names": names},
+        },
+    )
+
+    def send_clamped(action):
+        events["exit_early"] = True  # End after this frame.
+        return dict.fromkeys(action, 0.25)
+
+    robot.send_action = send_clamped
+    teleop_processor, action_processor, observation_processor = make_default_processors()
+    robot.connect()
+    teleop.connect()
+    try:
+        record_loop(
+            robot=robot,
+            events=events,
+            fps=30,
+            teleop=teleop,
+            dataset=dataset,
+            teleop_action_processor=teleop_processor,
+            robot_action_processor=action_processor,
+            robot_observation_processor=observation_processor,
+            single_task="Test clamped actions",
+            control_time_s=1.0,
+        )
+    finally:
+        teleop.disconnect()
+        robot.disconnect()
+    dataset.add_frame.assert_called_once()
+    recorded_action = dataset.add_frame.call_args.args[0]["action"].tolist()
+    assert recorded_action == ([0.25] * 3 if record_sent_action else [1.0, 2.0, 3.0])
+
+
+def test_record_sent_actions_rejects_another_dataset_action_space(tmp_path):
+    robot = make_robot_from_config(MockRobotConfig(calibration_dir=tmp_path))
+    robot.record_sent_action = True
+    robot.send_action = Mock()
+    dataset = Mock(fps=30, features={"action": {"names": ["end_effector.x"]}})
+    teleop_processor, action_processor, observation_processor = make_default_processors()
+    with pytest.raises(ValueError, match="dataset action names"):
+        record_loop(
+            robot=robot,
+            events={},
+            fps=30,
+            dataset=dataset,
+            control_time_s=0.1,
+            teleop_action_processor=teleop_processor,
+            robot_action_processor=action_processor,
+            robot_observation_processor=observation_processor,
+        )
+    robot.send_action.assert_not_called()
