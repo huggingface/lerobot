@@ -40,13 +40,12 @@ The server can as well run on another machine, such as a GPU workstation or a cl
 ```bash
 lerobot-eval \
   --policy.path=<your SO-101 checkpoint> \
-  --env.type=envhub --env.hub_path=my-org/my-env@<commit> \
-  --env.server.endpoint=tcp/127.0.0.1:7448 \
+  --env.type=envhub --env.server.endpoint=tcp/127.0.0.1:7448 \
   --rename_map='{"observation.images.front": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
   --eval.n_episodes=10 --eval.batch_size=1
 ```
 
-Observations reach the policy as `observation.images.<camera>` and `observation.state`; `--rename_map` maps them to the names the checkpoint was trained with.
+The server already loaded the repository, so a served client needs no `--env.hub_path`. Observations reach the policy as `observation.images.<camera>` and `observation.state`; `--rename_map` maps them to the names the checkpoint was trained with.
 
 ### Drive it as a robot
 
@@ -54,8 +53,7 @@ The same environment is a robot: `--robot.type=sim`, with the environment option
 
 ```bash
 lerobot-teleoperate \
-  --robot.type=sim --robot.env.type=envhub --robot.env.hub_path=my-org/my-env@<commit> \
-  --robot.env.server.endpoint=tcp/127.0.0.1:7448 \
+  --robot.type=sim --robot.env.type=envhub --robot.env.server.endpoint=tcp/127.0.0.1:7448 \
   --teleop.type=so101_leader --teleop.port=/dev/ttyACM0 --teleop.id=my_leader \
   --fps=30 --display_data=true
 ```
@@ -343,7 +341,7 @@ Serve the environment:
 lerobot-env-server --envhub=my-org/my-env@<commit> --trust_remote_code=true --docker=true
 ```
 
-Use the same `my-org/my-env@<commit>` for `--env.hub_path` or `--robot.env.hub_path`; see [Hub paths](#hub-paths). After publishing:
+To run it in-process instead, use the same `my-org/my-env@<commit>` for `--env.hub_path` or `--robot.env.hub_path`; see [Hub paths](#hub-paths). After publishing:
 
 - Note the commit, and use it in your README's commands: users run exactly what you tested.
 - State in the README the licenses of everything the repository includes (robot models, scenes, textures), and a reference result if you have one: a checkpoint, its revision, the `lerobot-eval` command and the success rate it gets.
@@ -379,7 +377,7 @@ An environment's versions are its Hub commits. A revision after `@` (a commit, a
 | Option                                        | Meaning                                                                                             |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `--env.type=envhub`                           | An EnvHub environment (`--robot.env.type=envhub` for a sim robot)                                   |
-| `--env.hub_path`                              | The repository, see [Hub paths](#hub-paths)                                                         |
+| `--env.hub_path`                              | The repository, see [Hub paths](#hub-paths); not needed when served                                 |
 | `--env.trust_remote_code`                     | Consent to run the repository's code in your process; not needed when served                        |
 | `lerobot-env-server --trust_remote_code=true` | Consent to run the repository's code on the server, required to serve it, from `--envhub` or a YAML |
 | `--env.make_env_kwargs`                       | Keyword arguments for `make_env`; when served, set them on the server instead                       |

@@ -379,6 +379,14 @@ def test_envhub_builds_only_the_requested_suite(hub_repo, monkeypatch):
         make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="other"), 2)
 
 
+def test_a_served_envhub_client_needs_no_hub_path():
+    # The server loads the repository from its own copy; only an env run in this process needs its path.
+    served = HubEnvConfig(server=EnvClientConfig(endpoint="tcp/127.0.0.1:7448"))
+    assert served.sim_settings()["kwargs"]["hub_path"] is None
+    with pytest.raises(ValueError, match="hub_path is required for an EnvHub environment that is not served"):
+        HubEnvConfig().sim_settings()
+
+
 def test_envhub_batched_repository_must_not_autoreset(hub_repo, monkeypatch):
     hub_repo(_BATCHED_ENV.replace("AutoresetMode.DISABLED", "AutoresetMode.NEXT_STEP"))
     monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
