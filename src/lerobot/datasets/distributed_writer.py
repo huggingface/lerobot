@@ -14,29 +14,111 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-file task packing with soft size targets and durable continuation tasks."""
+"""Direct-write shard writer with worker-local scratch, O(N) deferred video concat, and optional rollover."""
 
-import os
 import shutil
+import tempfile
 from collections.abc import Iterable
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import replace
-
-import pandas as pd
-
-from lerobot.utils.utils import unflatten_dict
+from pathlib import Path
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_writer import DatasetWriter
 from .distributed import (
     DistributedEpisodeResult,
+    DistributedEpisodeSpec,
     DistributedShardSpec,
     DistributedWriteSession,
     artifact_digest,
-    commit_receipt,
 )
 from .io_utils import get_file_size_in_mb
 from .video_utils import get_video_info
+
+
+def _open_group_writer(
+    source_writer: DatasetWriter,
+    dataset_root: Path,
+    group_scratch: Path,
+    first_spec: DistributedEpisodeSpec,
+) -> tuple[LeRobotDatasetMetadata, DatasetWriter]:
+    """Create an in-memory metadata view and direct-write DatasetWriter backed by local scratch."""
+    group_scratch.mkdir(parents=True, exist_ok=True)
+    meta = copy(source_writer._meta)
+    meta.root = dataset_root
+    meta.info = deepcopy(source_writer._meta.info)
+    # Clear declared depth_unit on the worker's in-memory view so add_frame() infers
+    # the actual input unit from frames and commit can reject unit mismatches on append.
+    for depth_key in meta.depth_keys:
+        feature_info = meta.features[depth_key].get("info")
+        if isinstance(feature_info, dict):
+            feature_info.pop("depth_unit", None)
+    meta.info.total_episodes = first_spec.episode_index
+    meta.info.total_frames = first_spec.dataset_from_index
+    meta.episodes = None
+    meta.latest_episode = None
+    meta._pq_writer = None
+
+    writer = DatasetWriter(
+        meta=meta,
+        root=dataset_root,
+        scratch_root=group_scratch,
+        rgb_encoder=source_writer._rgb_encoder,
+        depth_encoder=source_writer._depth_encoder,
+        encoder_threads=source_writer._encoder_threads,
+        batch_encoding_size=1,
+        initial_frames=first_spec.dataset_from_index,
+        initial_file_indices=(first_spec.data_chunk_index, first_spec.data_file_index),
+        single_file=True,
+        defer_video_concat=True,
+    )
+    return meta, writer
+
+
+def _finalize_group(
+    writer: DatasetWriter,
+    meta: LeRobotDatasetMetadata,
+    session: DistributedWriteSession,
+    group_records: list[tuple[DistributedEpisodeSpec, int, int, dict, dict, dict[str, str]]],
+    written_files: dict[str, Path],
+) -> list[DistributedEpisodeResult]:
+    """Close Parquet writer, flush deferred videos directly to root/videos/, and collect video_info."""
+    writer.finalize()
+    if not group_records:
+        return []
+    _, chunk, file, first_video_meta, _, _ = group_records[0]
+    data_rel = meta.data_path.format(chunk_index=chunk, file_index=file)
+    written_files[data_rel] = session.root / data_rel
+    video_info: dict[str, dict] = {}
+    for key in meta.video_keys:
+        video_rel = meta.video_path.format(
+            video_key=key,
+            chunk_index=first_video_meta[f"videos/{key}/chunk_index"],
+            file_index=first_video_meta[f"videos/{key}/file_index"],
+        )
+        video_path = session.root / video_rel
+        written_files[video_rel] = video_path
+        video_info[key] = get_video_info(
+            video_path,
+            video_encoder=writer._depth_encoder if key in meta.depth_keys else writer._rgb_encoder,
+        )
+    return [
+        DistributedEpisodeResult(
+            episode_index=spec.episode_index,
+            dataset_from_index=spec.dataset_from_index,
+            dataset_to_index=spec.dataset_to_index,
+            tasks=spec.tasks,
+            task_indices=spec.task_indices,
+            data_chunk_index=ep_chunk,
+            data_file_index=ep_file,
+            data_path=session.root / meta.data_path.format(chunk_index=ep_chunk, file_index=ep_file),
+            video_metadata=video_metadata,
+            video_info=video_info,
+            stats=stats,
+            depth_units=depth_units,
+        )
+        for spec, ep_chunk, ep_file, video_metadata, stats, depth_units in group_records
+    ]
 
 
 def write_distributed_shard(
@@ -44,155 +126,169 @@ def write_distributed_shard(
     session: DistributedWriteSession,
     shard: DistributedShardSpec,
     episodes: Iterable[Iterable[dict]],
+    *,
+    local_staging_dir: Path | None = None,
+    parallel_encoding: bool = True,
 ) -> list[DistributedEpisodeResult]:
-    """Write complete episodes until a soft size target or the task budget is reached.
+    """Write complete episodes directly to final Parquet/MP4 slots using worker-local scratch.
 
-    One task produces one Parquet and one MP4 per video feature. Only episodes
-    actually consumed belong to its sealed boundary; pending_shards() exposes
-    the untouched suffix for dispatch to any idle worker. No input is prefetched.
+    Because unreferenced data and video files remain invisible until global metadata
+    commit, Parquet and final MP4 outputs are written directly to ``session.root/data``
+    and ``session.root/videos`` without shared-filesystem staging, file locks, or
+    file renames. All transient frame images and intermediate per-episode video
+    segments live strictly in worker-local scratch and are always cleaned up.
     """
-    with session.shard_lock(shard):
-        shard = session.resolve_shard(shard)
-        fixed_boundary = session.shard_boundary_path(shard).is_file()
-        try:
-            reused = session.reusable_shard_results(shard)
-        except (OSError, KeyError, TypeError, ValueError):
-            # Never repair or overwrite already committed dataset files.
-            if commit_receipt(session.root, session.plan).is_file():
-                raise
-            reused = None
-        if reused is not None:
-            shutil.rmtree(session.shard_staging_root(shard), ignore_errors=True)
-            return reused
-        session.cleanup_shard(shard)
-        staging = session.shard_staging_root(shard)
-        source_meta = source_writer._meta
-        meta = LeRobotDatasetMetadata.create(
-            source_meta.repo_id,
-            fps=source_meta.fps,
-            features=deepcopy(source_meta.features),
-            root=staging,
-            chunks_size=session.plan.chunks_size,
-            data_files_size_in_mb=source_meta.data_files_size_in_mb,
-            video_files_size_in_mb=source_meta.video_files_size_in_mb,
-        )
-        first = shard.episodes[0]
-        meta.info.total_episodes = first.episode_index
-        meta.info.total_frames = first.dataset_from_index
-        meta.tasks = pd.DataFrame(
-            {"task_index": session.plan.task_to_index.values()},
-            index=pd.Index(session.plan.task_to_index, name="task"),
-        ).sort_values("task_index")
-        writer = DatasetWriter(
-            meta=meta,
-            root=staging,
-            rgb_encoder=source_writer._rgb_encoder,
-            depth_encoder=source_writer._depth_encoder,
-            encoder_threads=source_writer._encoder_threads,
-            batch_encoding_size=1,
-            initial_frames=first.dataset_from_index,
-            initial_file_indices=(first.data_chunk_index, first.data_file_index),
-            single_file=True,
-        )
-        results = []
-        episode_inputs = iter(episodes)
-        try:
-            for spec in shard.episodes:
-                try:
-                    frames = next(episode_inputs)
-                except StopIteration as error:
-                    raise ValueError(f"Missing input for planned episode {spec.episode_index}.") from error
-                for frame in frames:
-                    if writer.episode_buffer["size"] >= spec.length:
-                        raise ValueError(f"Too many frames for planned episode {spec.episode_index}.")
-                    writer.add_frame(dict(frame))
-                if writer.episode_buffer["size"] != spec.length:
-                    raise ValueError(f"Frame count does not match planned episode {spec.episode_index}.")
-                if tuple(writer.episode_buffer["task"]) != spec.tasks:
-                    raise ValueError(f"Task sequence does not match planned episode {spec.episode_index}.")
-                writer.save_episode(parallel_encoding=False)
-                latest = meta.latest_episode
-                if latest is None:
-                    raise RuntimeError("The shard writer did not produce episode metadata.")
-                chunk, file = latest["data/chunk_index"][0], latest["data/file_index"][0]
-                video_metadata = {k: v[0] for k, v in latest.items() if k.startswith("videos/")}
-                stats = unflatten_dict({k: v[0] for k, v in latest.items() if k.startswith("stats/")})[
-                    "stats"
-                ]
-                video_info = {}
-                for key in meta.video_keys:
-                    video_path = staging / meta.video_path.format(
-                        video_key=key,
-                        chunk_index=video_metadata[f"videos/{key}/chunk_index"],
-                        file_index=video_metadata[f"videos/{key}/file_index"],
-                    )
-                    video_info[key] = get_video_info(
-                        video_path,
-                        video_encoder=writer._depth_encoder
-                        if key in meta.depth_keys
-                        else writer._rgb_encoder,
-                    )
-                results.append(
-                    DistributedEpisodeResult(
-                        episode_index=spec.episode_index,
-                        dataset_from_index=spec.dataset_from_index,
-                        dataset_to_index=spec.dataset_to_index,
-                        tasks=spec.tasks,
-                        task_indices=spec.task_indices,
-                        data_chunk_index=chunk,
-                        data_file_index=file,
-                        data_path=session.root / meta.data_path.format(chunk_index=chunk, file_index=file),
-                        video_metadata=video_metadata,
-                        video_info=video_info,
-                        stats=stats,
-                        depth_units={
-                            key: meta.features[key]["info"]["depth_unit"] for key in meta.depth_keys
-                        },
-                    )
-                )
-                # Preserve a sealed boundary on retry, even if regenerated file
-                # sizes differ. Later tasks may already own the remaining slots.
-                if not fixed_boundary:
-                    data_path = staging / meta.data_path.format(chunk_index=chunk, file_index=file)
-                    reached_target = get_file_size_in_mb(data_path) >= meta.data_files_size_in_mb
-                    for key in meta.video_keys:
-                        path = staging / meta.video_path.format(
-                            video_key=key, chunk_index=chunk, file_index=file
-                        )
-                        reached_target |= get_file_size_in_mb(path) >= meta.video_files_size_in_mb
-                    if reached_target:
-                        break
-        finally:
-            writer.finalize()
+    shard = session.resolve_shard(shard)
+    fixed_boundary = session.shard_boundary_path(shard).is_file()
+    try:
+        reused = session.reusable_shard_results(shard)
+    except (OSError, KeyError, TypeError, ValueError):
+        reused = None
+    if reused is not None:
+        return reused
+    session.cleanup_shard(shard)
 
-        # Publishing this immutable boundary releases only unstarted episodes.
-        # It precedes all final file moves and survives a later failed attempt.
-        shard = session.record_shard_boundary(shard, len(results))
-        # Files stop changing only at this point. Hash each shared artifact once.
-        digests: dict[str, str] = {}
+    scratch_parent = Path(local_staging_dir) if local_staging_dir is not None else None
+    if scratch_parent is not None:
+        scratch_parent.mkdir(parents=True, exist_ok=True)
+    scratch_dir = Path(tempfile.mkdtemp(prefix=f"lerobot-shard-{shard.shard_index:06d}-", dir=scratch_parent))
+
+    rollover_in_shard = session.plan.rollover_in_shard
+    results: list[DistributedEpisodeResult] = []
+    written_files: dict[str, Path] = {}
+    episode_inputs = iter(episodes)
+
+    active_meta: LeRobotDatasetMetadata | None = None
+    active_writer: DatasetWriter | None = None
+    active_records: list[tuple[DistributedEpisodeSpec, int, int, dict, dict, dict[str, str]]] = []
+    group_index = 0
+    result_recorded = False
+
+    try:
+        for idx, spec in enumerate(shard.episodes):
+            if active_writer is None:
+                group_scratch = scratch_dir / f"group-{group_index:04d}" if rollover_in_shard else scratch_dir
+                group_index += 1
+                active_meta, active_writer = _open_group_writer(
+                    source_writer, session.root, group_scratch, spec
+                )
+                active_records = []
+                data_rel = active_meta.data_path.format(
+                    chunk_index=spec.data_chunk_index, file_index=spec.data_file_index
+                )
+                data_dst = session.root / data_rel
+                if data_dst.exists():
+                    raise FileExistsError(f"Distributed shard output already exists: {data_dst}")
+                for key in active_meta.video_keys:
+                    video_dst = session.root / active_meta.video_path.format(
+                        video_key=key,
+                        chunk_index=spec.data_chunk_index,
+                        file_index=spec.data_file_index,
+                    )
+                    if video_dst.exists():
+                        raise FileExistsError(f"Distributed shard output already exists: {video_dst}")
+
+            try:
+                frames = next(episode_inputs)
+            except StopIteration as error:
+                raise ValueError(f"Missing input for planned episode {spec.episode_index}.") from error
+            active_writer.episode_buffer = active_writer._create_episode_buffer(spec.episode_index)
+            for frame in frames:
+                if active_writer.episode_buffer["size"] >= spec.length:
+                    raise ValueError(f"Too many frames for planned episode {spec.episode_index}.")
+                active_writer.add_frame(dict(frame))
+
+            ep_metadata, ep_stats = active_writer.save_episode_for_shard(
+                spec, parallel_encoding=parallel_encoding
+            )
+            chunk = ep_metadata["data/chunk_index"]
+            file = ep_metadata["data/file_index"]
+            data_rel = active_meta.data_path.format(chunk_index=chunk, file_index=file)
+            data_path = session.root / data_rel
+            written_files[data_rel] = data_path
+            video_metadata = {k: v for k, v in ep_metadata.items() if k.startswith("videos/")}
+            depth_units = {
+                key: active_meta.features[key]["info"]["depth_unit"]
+                for key in active_meta.depth_keys
+                if (active_meta.features[key].get("info") or {}).get("depth_unit") is not None
+            }
+            active_records.append((spec, chunk, file, video_metadata, ep_stats, depth_units))
+
+            reached_target = get_file_size_in_mb(data_path) >= active_meta.data_files_size_in_mb
+            for key in active_meta.video_keys:
+                reached_target |= (
+                    active_writer.get_current_video_size_in_mb(key, chunk, file)
+                    >= active_meta.video_files_size_in_mb
+                )
+
+            if reached_target:
+                if rollover_in_shard:
+                    if idx + 1 < len(shard.episodes):
+                        results.extend(
+                            _finalize_group(
+                                active_writer,
+                                active_meta,
+                                session,
+                                active_records,
+                                written_files,
+                            )
+                        )
+                        active_writer = None
+                        active_meta = None
+                        active_records = []
+                elif not fixed_boundary:
+                    # Preserve a sealed boundary on retry, even if regenerated file
+                    # sizes differ. Later tasks may already own the remaining slots.
+                    break
+
+        # Close the last Parquet writer before sealing the immutable task boundary.
+        if active_writer is not None:
+            active_writer.close_writer()
+
+        # Seal the exact completed episode prefix (no-op for rollover/single-episode shards).
+        completed_count = len(results) + len(active_records)
+        shard = session.record_shard_boundary(shard, completed_count)
+
+        if active_writer is not None and active_meta is not None:
+            results.extend(
+                _finalize_group(
+                    active_writer,
+                    active_meta,
+                    session,
+                    active_records,
+                    written_files,
+                )
+            )
+            active_writer = None
+
+        # Files stop changing at this point. Hash each final artifact once.
+        digests: dict[str, str] = {
+            relative_path: artifact_digest(file_path) for relative_path, file_path in written_files.items()
+        }
+        source_meta = source_writer._meta
         finalized_results = []
         for result in results:
             paths = [str(result.data_path.relative_to(session.root))]
             paths.extend(
-                meta.video_path.format(
+                source_meta.video_path.format(
                     video_key=key,
                     chunk_index=result.video_metadata[f"videos/{key}/chunk_index"],
                     file_index=result.video_metadata[f"videos/{key}/file_index"],
                 )
-                for key in meta.video_keys
+                for key in source_meta.video_keys
             )
-            for path in paths:
-                if path not in digests:
-                    digests[path] = artifact_digest(staging / path)
             finalized_results.append(replace(result, artifact_digests={p: digests[p] for p in paths}))
 
         session.require_active()
-        for relative_path in digests:
-            destination = session.root / relative_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if destination.exists():
-                raise FileExistsError(f"Distributed shard output already exists: {destination}")
-            os.replace(staging / relative_path, destination)
         session.record_shard_results(shard, finalized_results)
-        shutil.rmtree(staging)
+        result_recorded = True
         return finalized_results
+    except BaseException:
+        if active_writer is not None:
+            active_writer.close_writer()
+        if not result_recorded:
+            for path in written_files.values():
+                path.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)

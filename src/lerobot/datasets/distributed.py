@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 The HuggingFace Inc. team.
-# All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Planning primitives for distributed LeRobot dataset writes."""
+"""Unified shard-based planning, session, validation, and atomic commit for distributed LeRobot writes."""
 
 from __future__ import annotations
 
@@ -34,7 +33,6 @@ import numpy as np
 import pandas as pd
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from filelock import FileLock
 
 from lerobot.configs import DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT, is_depth_map
 from lerobot.utils.utils import flatten_dict
@@ -52,44 +50,79 @@ from .utils import (
 )
 from .video_utils import get_video_duration_in_s, get_video_info
 
-_SESSION_DIRECTORY = ".distributed-write-session"
+_SESSION_DIRECTORY = ".session"
 _PLAN_FILENAME = "plan.json"
-_RESULTS_DIRECTORY = "results"
+_PLAN_DIGEST_FILENAME = "plan_digest"
+_SHARDS_SUBDIR = "shards"
+_META_SUBDIR = "meta"
+_PUBLISH_JOURNAL_FILENAME = "journal.json"
+
+
+def _session_dir(root: Path) -> Path:
+    return root / _SESSION_DIRECTORY
+
+
+def _shards_dir(root: Path) -> Path:
+    return _session_dir(root) / _SHARDS_SUBDIR
+
+
+def _meta_publish_dir(root: Path) -> Path:
+    return _session_dir(root) / _META_SUBDIR
+
+
+def _publish_journal_path(root: Path) -> Path:
+    return _meta_publish_dir(root) / _PUBLISH_JOURNAL_FILENAME
+
+
+def _group_requires_boundary(plan: DistributedWritePlan, group: DistributedShardSpec) -> bool:
+    """Only multi-episode continuation groups can split and therefore need boundary files."""
+    return not plan.rollover_in_shard and len(group.episodes) > 1
 
 
 def artifact_digest(path: Path) -> str:
     with path.open("rb") as file:
-        return hashlib.file_digest(file, "sha256").hexdigest()
+        if hasattr(hashlib, "file_digest"):
+            return hashlib.file_digest(file, "sha256").hexdigest()
+        hasher = hashlib.sha256()
+        for chunk in iter(lambda: file.read(65536), b""):
+            hasher.update(chunk)
+        return hasher.hexdigest()
+
+
+def _rle_encode(values: tuple[Any, ...]) -> list[list[Any]]:
+    if not values:
+        return []
+    runs: list[list[Any]] = []
+    current = values[0]
+    count = 1
+    for value in values[1:]:
+        if value == current:
+            count += 1
+        else:
+            runs.append([current, count])
+            current = value
+            count = 1
+    runs.append([current, count])
+    return runs
+
+
+def _rle_decode(runs: list[list[Any]]) -> tuple[Any, ...]:
+    decoded: list[Any] = []
+    for value, count in runs:
+        decoded.extend([value] * count)
+    return tuple(decoded)
+
+
+def _stat_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
 
 
 def plan_digest(plan: DistributedWritePlan) -> str:
     return hashlib.sha256(json.dumps(_serialize_plan(plan), sort_keys=True).encode()).hexdigest()
-
-
-def commit_receipt(root: Path, plan: DistributedWritePlan) -> Path:
-    return root / "meta" / "distributed-commits" / f"{plan_digest(plan)}.json"
-
-
-def result_digest(results: list[DistributedEpisodeResult]) -> str:
-    payload = [
-        _serialize_result(result) for result in sorted(results, key=lambda result: result.episode_index)
-    ]
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-
-
-def write_commit_receipt(
-    root: Path, plan: DistributedWritePlan, results: list[DistributedEpisodeResult]
-) -> None:
-    path = commit_receipt(root, plan)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    DistributedWriteSession._write_json_atomically(
-        path,
-        {
-            "plan": _serialize_plan(plan),
-            "digest": result_digest(results),
-            "results": [_serialize_result(result) for result in results],
-        },
-    )
 
 
 @dataclass(frozen=True)
@@ -131,11 +164,13 @@ class DistributedEpisodeResult:
 
 @dataclass(frozen=True)
 class DistributedShardSpec:
-    """Contiguous whole episodes offered to one task.
+    """Contiguous whole episodes assigned to one distributed write task.
 
-    A task writes only the first episode's reserved file slot. On reaching a
-    soft size target it seals a completed prefix and releases the untouched
-    suffix as a new task, using that suffix's first reserved slot.
+    When ``rollover_in_shard`` is False, a task writes only its first episode's
+    reserved file slot; reaching a soft size target seals the completed prefix
+    and releases the untouched suffix as a continuation task. When
+    ``rollover_in_shard`` is True, the task rolls over internally across its
+    episodes' reserved slots and finishes the entire shard in one invocation.
     """
 
     episodes: tuple[DistributedEpisodeSpec, ...]
@@ -151,7 +186,7 @@ class DistributedShardSpec:
 
 @dataclass(frozen=True)
 class DistributedWritePlan:
-    """A deterministic, driver-created allocation for distributed episode writes."""
+    """A deterministic, driver-created allocation for distributed shard writes."""
 
     episodes: tuple[DistributedEpisodeSpec, ...]
     task_to_index: dict[str, int]
@@ -160,6 +195,7 @@ class DistributedWritePlan:
     shards: tuple[DistributedShardSpec, ...] = ()
     data_files_size_in_mb: float | None = None
     video_files_size_in_mb: float | None = None
+    rollover_in_shard: bool = False
 
     @classmethod
     def from_episode_lengths(
@@ -178,8 +214,9 @@ class DistributedWritePlan:
         max_frames_per_worker: int = 100_000,
         data_files_size_in_mb: float | None = None,
         video_files_size_in_mb: float | None = None,
+        rollover_in_shard: bool = False,
     ) -> DistributedWritePlan:
-        """Allocate contiguous global ranges and unique files for new or appended episodes."""
+        """Allocate contiguous global ranges, unique file slots, and shard tasks."""
         if not episode_lengths:
             raise ValueError("A distributed write plan requires at least one episode.")
         if len(episode_lengths) != len(episode_tasks):
@@ -188,6 +225,8 @@ class DistributedWritePlan:
             raise ValueError("chunks_size must be positive.")
         if max_frames_per_worker <= 0:
             raise ValueError("max_frames_per_worker must be positive.")
+        if rollover_in_shard and not pack_episodes:
+            raise ValueError("rollover_in_shard=True requires pack_episodes=True.")
         if start_episode_index < 0:
             raise ValueError("start_episode_index must be non-negative.")
         if start_dataset_index < 0:
@@ -254,6 +293,10 @@ class DistributedWritePlan:
                 frames += episode.length
             if group:
                 shards.append(DistributedShardSpec(tuple(group)))
+        else:
+            # One-file-per-episode mode is unified as 1-episode shards.
+            shards = [DistributedShardSpec((episode,)) for episode in episodes]
+
         return cls(
             episodes=tuple(episodes),
             task_to_index=task_mapping,
@@ -262,11 +305,67 @@ class DistributedWritePlan:
             shards=tuple(shards),
             data_files_size_in_mb=data_files_size_in_mb,
             video_files_size_in_mb=video_files_size_in_mb,
+            rollover_in_shard=rollover_in_shard,
         )
 
 
+def _resolve_plan_shards(
+    root: Path,
+    plan: DistributedWritePlan,
+    *,
+    committed_by_episode: dict[int, DistributedEpisodeResult] | None = None,
+) -> list[DistributedShardSpec]:
+    """Return durable task partitions plus the unstarted suffix of each plan group."""
+    shards_root = _shards_dir(root)
+    tasks = []
+    for group in plan.shards:
+        if not _group_requires_boundary(plan, group):
+            tasks.append(group)
+            continue
+        offset = 0
+        while offset < len(group.episodes):
+            remaining = group.episodes[offset:]
+            shard_idx = remaining[0].episode_index
+            count = len(remaining)
+            if committed_by_episode is not None:
+                if not plan.rollover_in_shard:
+                    first = committed_by_episode[shard_idx]
+                    count = 1
+                    while count < len(remaining):
+                        following = committed_by_episode[remaining[count].episode_index]
+                        if following.data_path != first.data_path:
+                            break
+                        count += 1
+            else:
+                boundary = shards_root / f"shard-{shard_idx:06d}.boundary.json"
+                if not boundary.is_file():
+                    dependent_state = (shards_root / f"shard-{shard_idx:06d}.result.json").is_file() or any(
+                        (shards_root / f"shard-{spec.episode_index:06d}.boundary.json").is_file()
+                        for spec in remaining[1:]
+                    )
+                    # Recheck: a live worker may have sealed this boundary
+                    # while discovery was scanning its continuation records.
+                    if dependent_state and not boundary.is_file():
+                        raise ValueError(f"Missing persisted task boundary: {boundary}")
+                if boundary.is_file():
+                    with boundary.open(encoding="utf-8") as file:
+                        indices = json.load(file)["episode_indices"]
+                    count = len(indices)
+                    if not count or indices != [s.episode_index for s in remaining[:count]]:
+                        raise ValueError(f"Invalid persisted task boundary: {boundary}")
+                    if any(
+                        (shards_root / f"shard-{spec.episode_index:06d}.boundary.json").is_file()
+                        or (shards_root / f"shard-{spec.episode_index:06d}.result.json").is_file()
+                        for spec in remaining[1:count]
+                    ):
+                        raise ValueError(f"Overlapping persisted task boundary: {boundary}")
+            tasks.append(DistributedShardSpec(remaining[:count]))
+            offset += count
+    return tasks
+
+
 class DistributedWriteSession:
-    """Persistent progress ledger for an explicitly resumable distributed write."""
+    """Persistent progress ledger under ``<root>/.session/`` for resumable distributed writes."""
 
     def __init__(
         self,
@@ -284,9 +383,13 @@ class DistributedWriteSession:
         self.video_path_template = video_path_template
         self.camera_keys = camera_keys
         self.depth_keys = depth_keys
-        self.session_root = self.root / _SESSION_DIRECTORY
-        self.results_root = self.session_root / _RESULTS_DIRECTORY
-        self.tasks_root = self.session_root / "tasks"
+        self.session_root = _session_dir(self.root)
+        self.shards_root = _shards_dir(self.root)
+        self._plan_digest = plan_digest(plan)
+        self._verified_shard_cache: dict[
+            int,
+            tuple[tuple[int, int], tuple[tuple[Path, tuple[int, int]], ...], list[DistributedEpisodeResult]],
+        ] = {}
 
     @classmethod
     def create(
@@ -313,13 +416,15 @@ class DistributedWriteSession:
                 "Use DistributedWriteSession.resume() to continue it."
             )
         temporary_session_root = session.session_root.with_name(
-            f".{session.session_root.name}.{uuid4().hex}.tmp"
+            f"{session.session_root.name}.{uuid4().hex}.tmp"
         )
         try:
             temporary_session_root.mkdir(parents=True)
-            (temporary_session_root / _RESULTS_DIRECTORY).mkdir()
-            (temporary_session_root / "tasks").mkdir()
+            (temporary_session_root / _SHARDS_SUBDIR).mkdir()
             session._write_json_atomically(temporary_session_root / _PLAN_FILENAME, session._serialize())
+            (temporary_session_root / _PLAN_DIGEST_FILENAME).write_text(
+                session._plan_digest, encoding="utf-8"
+            )
             os.replace(temporary_session_root, session.session_root)
         finally:
             shutil.rmtree(temporary_session_root, ignore_errors=True)
@@ -329,7 +434,7 @@ class DistributedWriteSession:
     def resume(cls, root: str | Path) -> DistributedWriteSession:
         root = Path(root)
         recover_distributed_metadata(root)
-        plan_path = root / _SESSION_DIRECTORY / _PLAN_FILENAME
+        plan_path = _session_dir(root) / _PLAN_FILENAME
         if not plan_path.is_file():
             raise FileNotFoundError(f"Distributed write session plan is missing: {plan_path}")
         with plan_path.open(encoding="utf-8") as file:
@@ -343,77 +448,20 @@ class DistributedWriteSession:
             depth_keys=tuple(payload["depth_keys"]),
         )
 
-    def result_path(self, episode_index: int) -> Path:
-        return self.results_root / f"episode-{episode_index:06d}.json"
-
-    def episode_lock(self, spec: DistributedEpisodeSpec) -> FileLock:
-        if self.plan.shards:
-            raise ValueError("Packed plans must use write_distributed_shard(), not episode-level writes.")
-        # Keep lock inodes outside the disposable session directory. The filesystem
-        # must implement cross-node advisory locks; process death releases ownership.
-        lock_root = self.root / ".distributed-write-locks"
-        lock_root.mkdir(exist_ok=True)
-        return FileLock(lock_root / f"episode-{spec.episode_index:06d}.lock", timeout=0)
-
-    def shard_lock(self, shard: DistributedShardSpec) -> FileLock:
-        self.resolve_shard(shard)
-        lock_root = self.root / ".distributed-write-locks"
-        lock_root.mkdir(exist_ok=True)
-        return FileLock(lock_root / f"shard-{shard.shard_index:06d}.lock", timeout=0)
-
     def shard_boundary_path(self, shard: DistributedShardSpec) -> Path:
-        return self.tasks_root / f"shard-{shard.shard_index:06d}.json"
+        return self.shards_root / f"shard-{shard.shard_index:06d}.boundary.json"
+
+    def shard_result_path(self, shard: DistributedShardSpec) -> Path:
+        return self.shards_root / f"shard-{shard.shard_index:06d}.result.json"
+
+    def _shard_requires_boundary(self, shard: DistributedShardSpec) -> bool:
+        group = next(g for g in self.plan.shards if shard.episodes[0] in g.episodes)
+        return _group_requires_boundary(self.plan, group)
 
     def task_specs(self) -> list[DistributedShardSpec]:
         """Return durable task partitions plus the unstarted suffix of each plan group."""
-        receipt = commit_receipt(self.root, self.plan)
-        committed = None
-        if receipt.is_file():
-            with receipt.open(encoding="utf-8") as file:
-                committed = {r["episode_index"]: r for r in json.load(file)["results"]}
-        else:
-            self.require_active()
-        tasks = []
-        for group in self.plan.shards:
-            offset = 0
-            while offset < len(group.episodes):
-                remaining = group.episodes[offset:]
-                candidate = DistributedShardSpec(remaining)
-                count = len(remaining)
-                if committed is not None:
-                    first = committed[remaining[0].episode_index]
-                    count = 1
-                    while count < len(remaining):
-                        following = committed[remaining[count].episode_index]
-                        if following["data_path"] != first["data_path"]:
-                            break
-                        count += 1
-                else:
-                    boundary = self.shard_boundary_path(candidate)
-                    if not boundary.is_file():
-                        dependent_state = self.shard_result_path(candidate).is_file() or any(
-                            self.shard_boundary_path(DistributedShardSpec((spec,))).is_file()
-                            for spec in remaining[1:]
-                        )
-                        # Recheck: a live worker may have sealed this boundary
-                        # while discovery was scanning its continuation records.
-                        if dependent_state and not boundary.is_file():
-                            raise ValueError(f"Missing persisted task boundary: {boundary}")
-                    if boundary.is_file():
-                        with boundary.open(encoding="utf-8") as file:
-                            indices = json.load(file)["episode_indices"]
-                        count = len(indices)
-                        if not count or indices != [s.episode_index for s in remaining[:count]]:
-                            raise ValueError(f"Invalid persisted task boundary: {boundary}")
-                        if any(
-                            self.shard_boundary_path(DistributedShardSpec((spec,))).is_file()
-                            or self.shard_result_path(DistributedShardSpec((spec,))).is_file()
-                            for spec in remaining[1:count]
-                        ):
-                            raise ValueError(f"Overlapping persisted task boundary: {boundary}")
-                tasks.append(DistributedShardSpec(remaining[:count]))
-                offset += count
-        return tasks
+        self.require_active()
+        return _resolve_plan_shards(self.root, self.plan)
 
     def resolve_shard(self, shard: DistributedShardSpec) -> DistributedShardSpec:
         """Resolve a queued spec against boundaries sealed since it was queued."""
@@ -428,48 +476,64 @@ class DistributedWriteSession:
         raise ValueError("Task specification is not a currently allocated task in this session.")
 
     def record_shard_boundary(self, shard: DistributedShardSpec, episode_count: int) -> DistributedShardSpec:
-        """Seal a task's exact episode prefix before publishing any of its files.
+        """Seal a continuation task's exact episode prefix before flushing final videos.
 
-        The caller holds the task lock. This decision survives failed writes and
-        corrupt results, so retry cleanup cannot touch a subsequent task's files.
+        For non-splitting shards (``rollover_in_shard=True`` or single-episode shards),
+        no boundary file is written because the shard always completes as a whole.
         """
         self.require_active()
         resolved = self.resolve_shard(shard)
         if not 0 < episode_count <= len(resolved.episodes):
             raise ValueError("A task boundary must contain a nonempty prefix of its assigned episodes.")
+        if not self._shard_requires_boundary(resolved):
+            if episode_count != len(resolved.episodes):
+                raise ValueError("Non-splitting shards must complete all assigned episodes.")
+            return resolved
         path = self.shard_boundary_path(resolved)
         if path.is_file():
             if episode_count != len(resolved.episodes):
                 raise ValueError("Cannot change a previously sealed task boundary.")
             return resolved
         completed = DistributedShardSpec(resolved.episodes[:episode_count])
-        self.tasks_root.mkdir(exist_ok=True)
+        self.shards_root.mkdir(parents=True, exist_ok=True)
         self._write_json_atomically(path, {"episode_indices": [s.episode_index for s in completed.episodes]})
         return completed
 
-    def shard_result_path(self, shard: DistributedShardSpec) -> Path:
-        return self.results_root / f"shard-{shard.shard_index:06d}.json"
-
-    def shard_staging_root(self, shard: DistributedShardSpec) -> Path:
-        return self.root / ".distributed-shards" / f"shard-{shard.shard_index:06d}"
-
-    def reusable_shard_results(self, shard: DistributedShardSpec) -> list[DistributedEpisodeResult] | None:
+    def reusable_shard_results(
+        self, shard: DistributedShardSpec, *, verify: bool = True
+    ) -> list[DistributedEpisodeResult] | None:
         """Read a complete, verified shard result; caller must hold the shard lock."""
         shard = self.resolve_shard(shard)
-        receipt = commit_receipt(self.root, self.plan)
-        if receipt.is_file():
-            with receipt.open(encoding="utf-8") as file:
-                payload = json.load(file)
-            indices = {spec.episode_index for spec in shard.episodes}
-            results = [_deserialize_result(r) for r in payload["results"] if r["episode_index"] in indices]
-        else:
-            self.require_active()
-            path = self.shard_result_path(shard)
-            if not path.is_file():
-                return None
-            with path.open(encoding="utf-8") as file:
-                results = [_deserialize_result(r) for r in json.load(file)["results"]]
+        self.require_active()
+        source_path = self.shard_result_path(shard)
+        if not source_path.is_file():
+            self._verified_shard_cache.pop(shard.shard_index, None)
+            return None
+        if verify:
+            cached = self._verified_shard_cache.get(shard.shard_index)
+            source_sig = _stat_signature(source_path)
+            if (
+                cached is not None
+                and source_sig is not None
+                and cached[0] == source_sig
+                and all(_stat_signature(p) == sig for p, sig in cached[1])
+            ):
+                return cached[2]
+        with source_path.open(encoding="utf-8") as file:
+            results = [_deserialize_result(r) for r in json.load(file)["results"]]
+        if not verify:
+            return results
         self._validate_shard_results(shard, results)
+        source_sig = _stat_signature(source_path)
+        if source_sig is not None:
+            artifact_paths = sorted(
+                {self.root / rel for result in results for rel in result.artifact_digests}
+            )
+            artifact_sigs = tuple(
+                (path, sig) for path in artifact_paths if (sig := _stat_signature(path)) is not None
+            )
+            if len(artifact_sigs) == len(artifact_paths):
+                self._verified_shard_cache[shard.shard_index] = (source_sig, artifact_sigs, results)
         return results
 
     def _validate_shard_results(
@@ -479,7 +543,12 @@ class DistributedWriteSession:
         if [r.episode_index for r in results] != [s.episode_index for s in shard.episodes]:
             raise ValueError("A shard result must contain every assigned episode exactly once, in order.")
         cache: dict = {}
-        _validate_task_file_slots(shard, self.plan.video_keys, results)
+        _validate_task_file_slots(
+            shard,
+            self.plan.video_keys,
+            results,
+            rollover_in_shard=self.plan.rollover_in_shard,
+        )
         for spec, result in zip(shard.episodes, results, strict=True):
             _validate_persisted_result(
                 self.root, self.data_path_template, self.video_path_template, self.plan, spec, result, cache
@@ -491,165 +560,67 @@ class DistributedWriteSession:
     ) -> None:
         """Publish one success record only after every shared file has been closed."""
         self.require_active()
-        if not self.shard_boundary_path(shard).is_file():
+        if self._shard_requires_boundary(shard) and not self.shard_boundary_path(shard).is_file():
             raise ValueError("Seal the task boundary before recording its result.")
         self._validate_shard_results(shard, results)
+        self._verified_shard_cache.pop(shard.shard_index, None)
         self._write_json_atomically(
             self.shard_result_path(shard), {"results": [_serialize_result(r) for r in results]}
         )
 
     def cleanup_shard(self, shard: DistributedShardSpec) -> None:
-        """Clean only this task's single file slot; retain durable task boundaries."""
+        """Clean only this task's file slots; retain durable task boundaries and locks."""
         shard = self.resolve_shard(shard)
-        if commit_receipt(self.root, self.plan).is_file():
-            shutil.rmtree(self.shard_staging_root(shard), ignore_errors=True)
-            return
+        self._verified_shard_cache.pop(shard.shard_index, None)
         self.require_active()
         try:
             complete = self.reusable_shard_results(shard) is not None
         except (OSError, KeyError, TypeError, ValueError):
             complete = False
         path = self.shard_result_path(shard)
-        for temporary in self.results_root.glob(f".{path.name}.*.tmp"):
+        for temporary in self.shards_root.glob(f".{path.name}.*.tmp"):
             temporary.unlink(missing_ok=True)
         boundary = self.shard_boundary_path(shard)
-        for temporary in self.tasks_root.glob(f".{boundary.name}.*.tmp"):
+        for temporary in self.shards_root.glob(f".{boundary.name}.*.tmp"):
             temporary.unlink(missing_ok=True)
-        shutil.rmtree(self.shard_staging_root(shard), ignore_errors=True)
         if not complete:
             path.unlink(missing_ok=True)
-            self._cleanup_spec_artifacts(shard.episodes[0])
+            if self.plan.rollover_in_shard:
+                for spec in shard.episodes:
+                    self._cleanup_spec_artifacts(spec)
+            else:
+                self._cleanup_spec_artifacts(shard.episodes[0])
 
-    def pending_shards(self) -> list[DistributedShardSpec]:
-        completed = {result.episode_index for result in self.load_results()}
+    def pending_shards(self, *, verify: bool = True) -> list[DistributedShardSpec]:
+        completed = {result.episode_index for result in self.load_results(verify=verify)}
         return [s for s in self.task_specs() if s.shard_index not in completed]
 
     def require_active(self) -> None:
+        digest_path = self.session_root / _PLAN_DIGEST_FILENAME
+        if digest_path.is_file():
+            if digest_path.read_text(encoding="utf-8").strip() != self._plan_digest:
+                raise ValueError("Distributed session no longer owns the active write plan.")
+            return
         with (self.session_root / _PLAN_FILENAME).open(encoding="utf-8") as file:
             current = _deserialize_plan(json.load(file)["plan"])
         if current != self.plan:
             raise ValueError("Distributed session no longer owns the active write plan.")
 
-    def reusable_result(self, spec: DistributedEpisodeSpec) -> DistributedEpisodeResult | None:
-        if _get_plan_spec(self.plan, spec.episode_index) != spec:
-            raise ValueError("Worker specification does not match its session plan.")
-        receipt = commit_receipt(self.root, self.plan)
-        if receipt.is_file():
-            with receipt.open(encoding="utf-8") as file:
-                payload = json.load(file)
-            result = next(
-                _deserialize_result(r) for r in payload["results"] if r["episode_index"] == spec.episode_index
-            )
-        else:
-            self.require_active()
-            path = self.result_path(spec.episode_index)
-            if not self._has_valid_result_record(spec, path):
-                return None
-            with path.open(encoding="utf-8") as file:
-                result = _deserialize_result(json.load(file))
-        _validate_persisted_result(
-            self.root, self.data_path_template, self.video_path_template, self.plan, spec, result
-        )
-        return result
-
-    def pending_specs(self) -> list[DistributedEpisodeSpec]:
-        if self.plan.shards:
-            raise ValueError("Packed plans must be scheduled with pending_shards().")
-        completed = {result.episode_index for result in self.load_results()}
-        return [spec for spec in self.plan.episodes if spec.episode_index not in completed]
-
-    def record_result(self, result: DistributedEpisodeResult) -> None:
-        if self.plan.shards:
-            raise ValueError("Packed plans require an atomic record_shard_results() for the whole shard.")
-        self.require_active()
-        spec = _get_plan_spec(self.plan, result.episode_index)
-        _validate_persisted_result(
-            self.root,
-            self.data_path_template,
-            self.video_path_template,
-            self.plan,
-            spec,
-            result,
-        )
-        self._write_json_atomically(self.result_path(result.episode_index), _serialize_result(result))
-
-    def load_results(self) -> list[DistributedEpisodeResult]:
-        results = []
-        if self.plan.shards:
-            for shard in self.task_specs():
-                completed = self.reusable_shard_results(shard)
-                if completed is not None:
-                    results.extend(completed)
-            return results
-        if commit_receipt(self.root, self.plan).is_file():
-            for spec in self.plan.episodes:
-                reused = self.reusable_result(spec)
-                if reused is None:
-                    raise ValueError(
-                        f"Committed distributed result is missing for episode {spec.episode_index}."
-                    )
-                results.append(reused)
-            return results
-        for spec in self.plan.episodes:
-            result_path = self.result_path(spec.episode_index)
-            if not result_path.is_file():
-                continue
-            with result_path.open(encoding="utf-8") as file:
-                result = _deserialize_result(json.load(file))
-            _validate_persisted_result(
-                self.root,
-                self.data_path_template,
-                self.video_path_template,
-                self.plan,
-                spec,
-                result,
-            )
-            results.append(result)
+    def load_results(self, *, verify: bool = True) -> list[DistributedEpisodeResult]:
+        results: list[DistributedEpisodeResult] = []
+        for shard in self.task_specs():
+            completed = self.reusable_shard_results(shard, verify=verify)
+            if completed is not None:
+                results.extend(completed)
         return results
 
     def cleanup_orphaned_artifacts(self) -> None:
-        """Remove planned output paths for specs without a durable success record."""
-        if self.plan.shards:
-            for shard in self.task_specs():
-                with self.shard_lock(shard):
-                    self.cleanup_shard(shard)
-            return
-        for spec in self.plan.episodes:
-            with self.episode_lock(spec):
-                self.cleanup_episode(spec)
+        """Remove planned output paths for shards without a durable success record.
 
-    def cleanup_episode(self, spec: DistributedEpisodeSpec) -> None:
-        """Clean one episode while its exclusive lock is held."""
-        if commit_receipt(self.root, self.plan).is_file():
-            return
-        self.require_active()
-        result_path = self.result_path(spec.episode_index)
-        for path in self.results_root.glob(f".{result_path.name}.*.tmp"):
-            path.unlink(missing_ok=True)
-        shutil.rmtree(
-            self.root / ".distributed-video-tmp" / f"episode-{spec.episode_index:06d}", ignore_errors=True
-        )
-        if not self._has_valid_result_record(spec, result_path):
-            result_path.unlink(missing_ok=True)
-            self._cleanup_spec_artifacts(spec)
-
-    def _has_valid_result_record(self, spec: DistributedEpisodeSpec, result_path: Path) -> bool:
-        if not result_path.is_file():
-            return False
-        try:
-            with result_path.open(encoding="utf-8") as file:
-                result = _deserialize_result(json.load(file))
-            _validate_persisted_result(
-                self.root,
-                self.data_path_template,
-                self.video_path_template,
-                self.plan,
-                spec,
-                result,
-            )
-        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-            return False
-        return result.data_path.is_file()
+        Call only when no active workers are writing to this session.
+        """
+        for shard in self.task_specs():
+            self.cleanup_shard(shard)
 
     def _cleanup_spec_artifacts(self, spec: DistributedEpisodeSpec) -> None:
         data_path = self.root / self.data_path_template.format(
@@ -696,29 +667,14 @@ class DistributedWriteSession:
             temporary_path.unlink(missing_ok=True)
 
 
-def _get_plan_spec(plan: DistributedWritePlan, episode_index: int) -> DistributedEpisodeSpec:
-    for spec in plan.episodes:
-        if spec.episode_index == episode_index:
-            return spec
-    raise ValueError(f"Distributed result references unknown episode {episode_index}.")
-
-
-def _validate_result_matches_spec(
-    spec: DistributedEpisodeSpec, result: DistributedEpisodeResult, *, packed: bool = False
-) -> None:
-    expected_fields: tuple[tuple[str, Any], ...] = (
+def _validate_result_matches_spec(spec: DistributedEpisodeSpec, result: DistributedEpisodeResult) -> None:
+    for field, expected in (
         ("episode_index", spec.episode_index),
         ("dataset_from_index", spec.dataset_from_index),
         ("dataset_to_index", spec.dataset_to_index),
         ("tasks", spec.tasks),
         ("task_indices", spec.task_indices),
-    )
-    if not packed:
-        expected_fields += (
-            ("data_chunk_index", spec.data_chunk_index),
-            ("data_file_index", spec.data_file_index),
-        )
-    for field, expected in expected_fields:
+    ):
         if getattr(result, field) != expected:
             raise ValueError(
                 f"Distributed result for episode {spec.episode_index} has unexpected {field}: "
@@ -727,62 +683,100 @@ def _validate_result_matches_spec(
 
 
 def _serialize_plan(plan: DistributedWritePlan) -> dict[str, Any]:
-    payload = {
-        "episodes": [asdict(spec) for spec in plan.episodes],
+    payload: dict[str, Any] = {
+        "episodes": [
+            {
+                "episode_index": spec.episode_index,
+                "dataset_from_index": spec.dataset_from_index,
+                "dataset_to_index": spec.dataset_to_index,
+                "tasks_rle": _rle_encode(spec.tasks),
+                "data_chunk_index": spec.data_chunk_index,
+                "data_file_index": spec.data_file_index,
+            }
+            for spec in plan.episodes
+        ],
         "task_to_index": plan.task_to_index,
         "chunks_size": plan.chunks_size,
         "video_keys": list(plan.video_keys),
+        "shards": [[spec.episode_index for spec in shard.episodes] for shard in plan.shards],
+        "data_files_size_in_mb": plan.data_files_size_in_mb,
+        "video_files_size_in_mb": plan.video_files_size_in_mb,
     }
-    if plan.shards:
-        payload.update(
-            shards=[[spec.episode_index for spec in shard.episodes] for shard in plan.shards],
-            data_files_size_in_mb=plan.data_files_size_in_mb,
-            video_files_size_in_mb=plan.video_files_size_in_mb,
-        )
+    if plan.rollover_in_shard:
+        payload["rollover_in_shard"] = True
     return payload
 
 
 def _deserialize_plan(payload: dict[str, Any]) -> DistributedWritePlan:
-    episodes = tuple(
-        DistributedEpisodeSpec(
-            **{
-                **episode,
-                "tasks": tuple(episode["tasks"]),
-                "task_indices": tuple(episode["task_indices"]),
-            }
+    task_to_index = payload["task_to_index"]
+    episodes_list = []
+    for episode in payload["episodes"]:
+        if "tasks_rle" in episode:
+            tasks = _rle_decode(episode["tasks_rle"])
+            task_indices = tuple(task_to_index[task] for task in tasks)
+        else:
+            tasks = tuple(episode["tasks"])
+            task_indices = tuple(episode["task_indices"])
+        episodes_list.append(
+            DistributedEpisodeSpec(
+                episode_index=episode["episode_index"],
+                dataset_from_index=episode["dataset_from_index"],
+                dataset_to_index=episode["dataset_to_index"],
+                tasks=tasks,
+                task_indices=task_indices,
+                data_chunk_index=episode["data_chunk_index"],
+                data_file_index=episode["data_file_index"],
+            )
         )
-        for episode in payload["episodes"]
-    )
+    episodes = tuple(episodes_list)
     by_index = {spec.episode_index: spec for spec in episodes}
+    raw_shards = payload.get("shards")
+    if raw_shards:
+        shards = tuple(
+            DistributedShardSpec(tuple(by_index[index] for index in group)) for group in raw_shards
+        )
+    else:
+        shards = tuple(DistributedShardSpec((spec,)) for spec in episodes)
     return DistributedWritePlan(
         episodes=episodes,
-        task_to_index=payload["task_to_index"],
+        task_to_index=task_to_index,
         chunks_size=payload["chunks_size"],
         video_keys=tuple(payload["video_keys"]),
-        shards=tuple(
-            DistributedShardSpec(tuple(by_index[index] for index in group))
-            for group in payload.get("shards", [])
-        ),
+        shards=shards,
         data_files_size_in_mb=payload.get("data_files_size_in_mb"),
         video_files_size_in_mb=payload.get("video_files_size_in_mb"),
+        rollover_in_shard=bool(payload.get("rollover_in_shard", False)),
     )
 
 
 def _serialize_result(result: DistributedEpisodeResult) -> dict[str, Any]:
     payload = asdict(result)
-    payload["tasks"] = list(result.tasks)
-    payload["task_indices"] = list(result.task_indices)
+    payload.pop("tasks", None)
+    payload.pop("task_indices", None)
+    payload["tasks_rle"] = _rle_encode(result.tasks)
+    payload["task_indices_rle"] = _rle_encode(result.task_indices)
     payload["data_path"] = str(result.data_path)
     payload["stats"] = serialize_dict(result.stats)
     return payload
 
 
 def _deserialize_result(payload: dict[str, Any]) -> DistributedEpisodeResult:
+    if "tasks_rle" in payload:
+        tasks = _rle_decode(payload["tasks_rle"])
+        task_indices = _rle_decode(payload["task_indices_rle"])
+    else:
+        tasks = tuple(payload["tasks"])
+        task_indices = tuple(payload["task_indices"])
+    cleaned = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"tasks", "task_indices", "tasks_rle", "task_indices_rle"}
+    }
     return DistributedEpisodeResult(
         **{
-            **payload,
-            "tasks": tuple(payload["tasks"]),
-            "task_indices": tuple(payload["task_indices"]),
+            **cleaned,
+            "tasks": tasks,
+            "task_indices": task_indices,
             "data_path": Path(payload["data_path"]),
             "depth_units": payload.get("depth_units", {}),
             "stats": cast_stats_to_numpy(payload["stats"]),
@@ -796,6 +790,8 @@ def validate_distributed_results(
     video_path_template: str | None,
     plan: DistributedWritePlan,
     results: list[DistributedEpisodeResult],
+    *,
+    already_committed: bool = False,
 ) -> list[DistributedEpisodeResult]:
     """Validate every worker result before any global metadata is written."""
     if len(results) != len(plan.episodes):
@@ -829,41 +825,78 @@ def validate_distributed_results(
     if result_by_episode:
         unknown = sorted(result_by_episode)
         raise ValueError(f"Results contain unknown distributed episode indexes: {unknown}.")
-    if plan.shards:
-        session = DistributedWriteSession(
-            root,
-            plan,
-            data_path_template=data_path_template,
-            video_path_template=video_path_template,
-            camera_keys=(),
-            depth_keys=(),
+
+    by_index = {result.episode_index: result for result in ordered_results}
+    shards_root = _shards_dir(root)
+    resolved_shards = _resolve_plan_shards(
+        root, plan, committed_by_episode=by_index if already_committed else None
+    )
+    for shard in resolved_shards:
+        group = next(g for g in plan.shards if shard.episodes[0] in g.episodes)
+        if (
+            not already_committed
+            and _group_requires_boundary(plan, group)
+            and not (shards_root / f"shard-{shard.shard_index:06d}.boundary.json").is_file()
+        ):
+            raise ValueError("Every task must have a durable boundary before metadata commit.")
+        _validate_task_file_slots(
+            shard,
+            plan.video_keys,
+            [by_index[s.episode_index] for s in shard.episodes],
+            rollover_in_shard=plan.rollover_in_shard,
         )
-        by_index = {result.episode_index: result for result in ordered_results}
-        committed = commit_receipt(root, plan).is_file()
-        for shard in session.task_specs():
-            if not committed and not session.shard_boundary_path(shard).is_file():
-                raise ValueError("Every task must have a durable boundary before metadata commit.")
-            _validate_task_file_slots(
-                shard, plan.video_keys, [by_index[s.episode_index] for s in shard.episodes]
-            )
-        _validate_packed_file_coverage(root, video_path_template, ordered_results, cache)
+    _validate_packed_file_coverage(root, video_path_template, ordered_results, cache)
     return ordered_results
 
 
 def _validate_task_file_slots(
-    shard: DistributedShardSpec, video_keys: tuple[str, ...], results: list[DistributedEpisodeResult]
+    shard: DistributedShardSpec,
+    video_keys: tuple[str, ...],
+    results: list[DistributedEpisodeResult],
+    *,
+    rollover_in_shard: bool = False,
 ) -> None:
-    first = shard.episodes[0]
-    slot = (first.data_chunk_index, first.data_file_index)
-    for result in results:
-        if (result.data_chunk_index, result.data_file_index) != slot:
-            raise ValueError("Each task must write exactly one Parquet in its first reserved slot.")
+    if not rollover_in_shard:
+        first = shard.episodes[0]
+        slot = (first.data_chunk_index, first.data_file_index)
+        for result in results:
+            if (result.data_chunk_index, result.data_file_index) != slot:
+                raise ValueError("Each task must write exactly one Parquet in its first reserved slot.")
+            for key in video_keys:
+                if (
+                    result.video_metadata.get(f"videos/{key}/chunk_index"),
+                    result.video_metadata.get(f"videos/{key}/file_index"),
+                ) != slot:
+                    raise ValueError(
+                        "Each task must write exactly one MP4 per video feature in its own slot."
+                    )
+        return
+
+    active_slot: tuple[int, int] | None = None
+    seen_slots: set[tuple[int, int]] = set()
+    for spec, result in zip(shard.episodes, results, strict=True):
+        own_slot = (spec.data_chunk_index, spec.data_file_index)
+        result_slot = (result.data_chunk_index, result.data_file_index)
+        if active_slot is None:
+            if result_slot != own_slot:
+                raise ValueError("The first episode of a shard must use its own reserved slot.")
+            active_slot = result_slot
+            seen_slots.add(active_slot)
+        elif result_slot != active_slot:
+            if result_slot != own_slot or result_slot in seen_slots:
+                raise ValueError(
+                    "Rollover inside a shard must advance to the starting episode's reserved slot."
+                )
+            active_slot = result_slot
+            seen_slots.add(active_slot)
         for key in video_keys:
             if (
                 result.video_metadata.get(f"videos/{key}/chunk_index"),
                 result.video_metadata.get(f"videos/{key}/file_index"),
-            ) != slot:
-                raise ValueError("Each task must write exactly one MP4 per video feature in its own slot.")
+            ) != active_slot:
+                raise ValueError(
+                    "Each rollover group must write its MP4 files in the same slot as its Parquet."
+                )
 
 
 def _validate_persisted_result(
@@ -876,15 +909,13 @@ def _validate_persisted_result(
     cache: dict | None = None,
 ) -> None:
     cache = {} if cache is None else cache
-    _validate_result_matches_spec(spec, result, packed=bool(plan.shards))
-    slots = {(spec.data_chunk_index, spec.data_file_index)}
-    if plan.shards:
-        shard = next((shard for shard in plan.shards if spec in shard.episodes), None)
-        if shard is None:
-            raise ValueError(f"Episode {spec.episode_index} has no shard owner.")
-        slots = {(s.data_chunk_index, s.data_file_index) for s in shard.episodes}
-        if (result.data_chunk_index, result.data_file_index) not in slots:
-            raise ValueError("Distributed result uses a data file outside its shard reservation.")
+    _validate_result_matches_spec(spec, result)
+    shard = next((shard for shard in plan.shards if spec in shard.episodes), None)
+    if shard is None:
+        raise ValueError(f"Episode {spec.episode_index} has no shard owner.")
+    slots = {(s.data_chunk_index, s.data_file_index) for s in shard.episodes}
+    if (result.data_chunk_index, result.data_file_index) not in slots:
+        raise ValueError("Distributed result uses a data file outside its shard reservation.")
     if not result.stats:
         raise ValueError(f"Distributed result for episode {spec.episode_index} has no statistics.")
 
@@ -903,9 +934,7 @@ def _validate_persisted_result(
     table_key = ("table", result.data_path)
     if table_key not in cache:
         cache[table_key] = pq.read_table(result.data_path, columns=["index", "episode_index"])
-    table = cache[table_key]
-    if plan.shards:
-        table = table.filter(pc.equal(table.column("episode_index"), spec.episode_index))
+    table = cache[table_key].filter(pc.equal(cache[table_key].column("episode_index"), spec.episode_index))
     expected_indices = list(range(spec.dataset_from_index, spec.dataset_to_index))
     if table.num_rows != spec.length:
         raise ValueError(
@@ -916,7 +945,7 @@ def _validate_persisted_result(
     if set(table.column("episode_index").to_pylist()) != {spec.episode_index}:
         raise ValueError(f"Distributed artifact {result.data_path} has an unexpected episode index.")
     expected_artifacts = {str(result.data_path.relative_to(root))}
-    if plan.shards and set(result.video_info) != set(plan.video_keys):
+    if set(result.video_info) != set(plan.video_keys):
         raise ValueError("Packed result video info must cover every planned video feature.")
     for video_key in plan.video_keys:
         if video_path_template is None:
@@ -952,11 +981,7 @@ def _validate_persisted_result(
             raise ValueError(f"Invalid distributed video interval: {expected_video_path}")
         if abs((end - start) - expected_duration) > 1 / video_info["video.fps"]:
             raise ValueError(f"Unexpected distributed video duration: {expected_video_path}")
-        if not plan.shards and not np.isclose(start, 0):
-            raise ValueError(f"Invalid video start timestamp: {expected_video_path}")
-        if not plan.shards and not np.isclose(end, duration):
-            raise ValueError(f"Invalid video end timestamp: {expected_video_path}")
-    if plan.shards and set(result.artifact_digests) != expected_artifacts:
+    if set(result.artifact_digests) != expected_artifacts:
         raise ValueError("Packed result checksums must cover exactly its referenced artifacts.")
     for relative_path, expected_digest in result.artifact_digests.items():
         path = root / relative_path
@@ -1005,6 +1030,92 @@ def _validate_packed_file_coverage(
             raise ValueError(f"Packed video has unexpected duration: {path}")
 
 
+def matches_published_metadata(
+    root: Path,
+    meta: Any,
+    plan: DistributedWritePlan,
+    results: list[DistributedEpisodeResult],
+) -> bool | None:
+    """Check whether ``plan`` was already published in ``meta/episodes``.
+
+    Returns:
+        ``None`` if the plan's episode range is not yet present in ``meta``.
+        ``True`` if every episode row in ``meta/episodes`` matches ``results``.
+        ``False`` if the episode range is already published with conflicting values.
+    """
+    if not plan.episodes or meta.episodes is None or len(meta.episodes) == 0:
+        return None
+    first_ep = plan.episodes[0].episode_index
+    last_ep = plan.episodes[-1].episode_index
+    if meta.total_episodes <= first_ep:
+        return None
+    if meta.total_episodes <= last_ep or len(results) != len(plan.episodes):
+        return False
+
+    by_episode = {r.episode_index: r for r in results}
+    if len(by_episode) != len(plan.episodes):
+        return False
+
+    ep_rows_cache: dict[tuple[int, int], dict[int, dict[str, Any]]] = {}
+    for spec in plan.episodes:
+        result = by_episode.get(spec.episode_index)
+        if result is None:
+            return False
+        published = meta.episodes[spec.episode_index]
+        if (
+            int(published["episode_index"]) != spec.episode_index
+            or int(published["dataset_from_index"]) != spec.dataset_from_index
+            or int(published["dataset_to_index"]) != spec.dataset_to_index
+            or int(published["length"]) != spec.length
+            or int(published["data/chunk_index"]) != result.data_chunk_index
+            or int(published["data/file_index"]) != result.data_file_index
+            or list(published["tasks"]) != list(dict.fromkeys(result.tasks))
+        ):
+            return False
+        for key in plan.video_keys:
+            if (
+                int(published[f"videos/{key}/chunk_index"])
+                != result.video_metadata[f"videos/{key}/chunk_index"]
+                or int(published[f"videos/{key}/file_index"])
+                != result.video_metadata[f"videos/{key}/file_index"]
+                or not np.isclose(
+                    float(published[f"videos/{key}/from_timestamp"]),
+                    float(result.video_metadata[f"videos/{key}/from_timestamp"]),
+                )
+                or not np.isclose(
+                    float(published[f"videos/{key}/to_timestamp"]),
+                    float(result.video_metadata[f"videos/{key}/to_timestamp"]),
+                )
+            ):
+                return False
+
+        # Load full episode metadata row (including stats/* columns) from meta/episodes parquet.
+        ep_slot = (int(published["meta/episodes/chunk_index"]), int(published["meta/episodes/file_index"]))
+        if ep_slot not in ep_rows_cache:
+            ep_path = root / DEFAULT_EPISODES_PATH.format(chunk_index=ep_slot[0], file_index=ep_slot[1])
+            if not ep_path.is_file():
+                return False
+            rows = pq.read_table(ep_path).to_pylist()
+            ep_rows_cache[ep_slot] = {int(row["episode_index"]): row for row in rows}
+        full_row = ep_rows_cache[ep_slot].get(spec.episode_index)
+        if full_row is None:
+            return False
+        flattened_stats = flatten_dict({"stats": result.stats})
+        for stat_key, stat_val in flattened_stats.items():
+            if stat_key not in full_row:
+                return False
+            expected_arr = np.asarray(_normalize_metadata_stat_value(stat_val))
+            published_arr = np.asarray(full_row[stat_key])
+            if expected_arr.shape != published_arr.shape:
+                return False
+            if np.issubdtype(expected_arr.dtype, np.number):
+                if not np.allclose(published_arr, expected_arr, equal_nan=True):
+                    return False
+            elif published_arr.tolist() != expected_arr.tolist():
+                return False
+    return True
+
+
 def write_distributed_metadata(
     staging_root: Path,
     info: Any,
@@ -1034,7 +1145,7 @@ def write_distributed_metadata(
         }
         row = {
             "episode_index": result.episode_index,
-            "tasks": list(result.tasks),
+            "tasks": list(dict.fromkeys(result.tasks)),
             "length": result.dataset_to_index - result.dataset_from_index,
             "data/chunk_index": result.data_chunk_index,
             "data/file_index": result.data_file_index,
@@ -1064,8 +1175,32 @@ def write_distributed_metadata(
                     f"Distributed result for episode {first_result.episode_index} has no video info "
                     f"for {video_key!r}."
                 )
+            expected_video_info = first_result.video_info[video_key]
+            for result in results[1:]:
+                if video_key not in result.video_info:
+                    raise ValueError(
+                        f"Distributed result for episode {result.episode_index} has no video info "
+                        f"for {video_key!r}."
+                    )
+                if result.video_info[video_key] != expected_video_info:
+                    raise ValueError(
+                        f"Distributed results disagree on video info for {video_key!r} at episode "
+                        f"{result.episode_index}: {result.video_info[video_key]!r} != {expected_video_info!r}."
+                    )
             if base_total_episodes == 0:
-                staged_info.features[video_key]["info"] = first_result.video_info[video_key]
+                staged_info.features[video_key]["info"] = expected_video_info
+            else:
+                existing_video_info = staged_info.features[video_key].get("info") or {}
+                mismatched_keys = [
+                    field
+                    for field, expected_value in expected_video_info.items()
+                    if field in existing_video_info and existing_video_info[field] != expected_value
+                ]
+                if mismatched_keys:
+                    raise ValueError(
+                        f"Distributed append video info for {video_key!r} disagrees with existing "
+                        f"dataset metadata on {sorted(mismatched_keys)!r}."
+                    )
 
     expected_depth_keys = {key for key, feature in staged_info.features.items() if is_depth_map(feature)}
     declared_depth_units = {
@@ -1149,13 +1284,15 @@ def _normalize_metadata_stat_value(value: Any) -> Any:
 
 
 def publish_distributed_metadata(root: Path, staging_root: Path) -> None:
-    """Publish metadata with a persistent recovery journal (single driver)."""
-    with FileLock(root / ".distributed-metadata.lock"):
-        _publish_distributed_metadata(root, staging_root)
+    """Publish metadata with a persistent recovery journal under ``<root>/.session/meta/`` (single driver)."""
+    meta_dir = _meta_publish_dir(root)
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    _publish_distributed_metadata(root, staging_root)
 
 
 def _publish_distributed_metadata(root: Path, staging_root: Path) -> None:
-    journal = root / ".distributed-metadata-publish.json"
+    meta_dir = _meta_publish_dir(root)
+    journal = _publish_journal_path(root)
     if journal.exists():
         with journal.open(encoding="utf-8") as file:
             previous_source = json.load(file)["source"]
@@ -1172,12 +1309,12 @@ def _publish_distributed_metadata(root: Path, staging_root: Path) -> None:
             "Initialize the dataset with LeRobotDataset.create() before committing distributed results. "
             f"Staged metadata remains at {source_meta}."
         )
-    backup_meta = root / f".meta-distributed-backup-{uuid4().hex}"
+    backup_meta = meta_dir / f"backup-{uuid4().hex}"
     DistributedWriteSession._write_json_atomically(
         journal,
         {
             "source": str(source_meta.relative_to(root)),
-            "backup": backup_meta.name,
+            "backup": str(backup_meta.relative_to(root)),
         },
     )
     backup_restored = False
@@ -1196,13 +1333,14 @@ def _publish_distributed_metadata(root: Path, staging_root: Path) -> None:
 
 
 def recover_distributed_metadata(root: Path) -> bool:
-    """Recover a metadata swap; return whether staged metadata was published."""
-    with FileLock(root / ".distributed-metadata.lock"):
-        return _recover_distributed_metadata(root)
+    """Recover an interrupted metadata swap (single driver); return whether staged metadata was published."""
+    if not _publish_journal_path(root).is_file():
+        return False
+    return _recover_distributed_metadata(root)
 
 
 def _recover_distributed_metadata(root: Path) -> bool:
-    journal = root / ".distributed-metadata-publish.json"
+    journal = _publish_journal_path(root)
     if not journal.is_file():
         return False
     with journal.open(encoding="utf-8") as file:

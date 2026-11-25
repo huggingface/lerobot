@@ -27,7 +27,6 @@ from unittest.mock import patch
 import numpy as np
 import pyarrow.parquet as pq
 import pytest
-from filelock import Timeout
 
 import lerobot.datasets.distributed_writer as shard_writer_module
 from lerobot.configs import DEPTH_MILLIMETER_UNIT, DepthEncoderConfig
@@ -150,16 +149,37 @@ def crash_worker(root, shard, episodes, stage):
 
         with patch.object(session, "record_shard_boundary", side_effect=interrupt_after_boundary):
             worker.write_distributed_shard(shard, episodes)
-    elif stage in {"publish", "video_publish"}:
-        original = shard_writer_module.os.replace
+    elif stage == "publish":
+        original_digest = shard_writer_module.artifact_digest
 
-        def interrupt_publish(source, destination):
-            original(source, destination)
-            directory = "videos" if stage == "video_publish" else "data"
-            if Path(destination).is_relative_to(Path(root) / directory):
+        def interrupt_after_direct_writes(path):
+            original_digest(path)
+            os._exit(EXIT_CODE)
+
+        with patch.object(shard_writer_module, "artifact_digest", side_effect=interrupt_after_direct_writes):
+            worker.write_distributed_shard(shard, episodes)
+    elif stage == "video_publish":
+        import lerobot.datasets.dataset_writer as dw_module
+
+        original_move = dw_module.shutil.move
+        original_concat = dw_module.concatenate_video_files
+
+        def interrupt_move(source, destination):
+            result = original_move(source, destination)
+            if Path(destination).is_relative_to(Path(root) / "videos"):
                 os._exit(EXIT_CODE)
+            return result
 
-        with patch.object(shard_writer_module.os, "replace", side_effect=interrupt_publish):
+        def interrupt_concat(inputs, output, *args, **kwargs):
+            result = original_concat(inputs, output, *args, **kwargs)
+            if Path(output).is_relative_to(Path(root) / "videos"):
+                os._exit(EXIT_CODE)
+            return result
+
+        with (
+            patch.object(dw_module.shutil, "move", side_effect=interrupt_move),
+            patch.object(dw_module, "concatenate_video_files", side_effect=interrupt_concat),
+        ):
             worker.write_distributed_shard(shard, episodes)
     else:
         original_record = session.record_shard_results
@@ -207,17 +227,6 @@ def data_and_video_hashes(root):
         for pattern in ("data/**/*.parquet", "videos/**/*.mp4")
         for path in root.glob(pattern)
     }
-
-
-def block_inside_task(root, shard, episodes, entered, release):
-    def inputs():
-        yield episodes[0]
-        entered.set()
-        if not release.wait(timeout=60):
-            raise RuntimeError("Timed out waiting for the test to release the active task.")
-        yield from episodes[1:]
-
-    write_shard(root, shard, inputs())
 
 
 @pytest.mark.parametrize("append", [False, True], ids=["new", "append"])
@@ -387,45 +396,6 @@ def test_failed_second_episode_keeps_task_unpublished_and_retryable(tmp_path, fa
     assert len(loaded) == 8
     for index in range(8):
         np.testing.assert_array_equal(loaded[index]["action"], [index // 2, index % 2])
-
-
-def test_live_worker_lock_blocks_duplicate_and_releases_on_process_death(tmp_path):
-    driver = LeRobotDataset.create(
-        "test/packed",
-        root=tmp_path / "dataset",
-        fps=10,
-        features={"action": FEATURES["action"]},
-        use_videos=False,
-    )
-    episodes = [numeric_frames(index, 2) for index in range(2)]
-    plan = make_plan(driver, episodes)
-    session = driver.create_distributed_write_session(plan)
-    context = mp.get_context("spawn")
-    entered, release = context.Event(), context.Event()
-    process = context.Process(
-        target=block_inside_task,
-        args=(driver.root, plan.shards[0], episodes, entered, release),
-    )
-    process.start()
-    try:
-        assert entered.wait(timeout=60), "Worker never reached its second episode."
-        with pytest.raises(Timeout):
-            write_shard(driver.root, plan.shards[0], [])
-        with pytest.raises(Timeout):
-            session.cleanup_orphaned_artifacts()
-        assert session.load_results() == []
-    finally:
-        process.terminate()
-        process.join(timeout=30)
-        if process.is_alive():
-            process.kill()
-            process.join(timeout=10)
-    assert process.exitcode is not None and process.exitcode != 0
-    session.cleanup_orphaned_artifacts()
-    write_shard(driver.root, plan.shards[0], episodes)
-    driver.commit_distributed_results(plan, session.load_results())
-    driver.finalize()
-    assert LeRobotDataset("test/packed", root=driver.root).num_frames == 4
 
 
 @pytest.mark.parametrize("append", [False, True], ids=["new", "append"])
@@ -682,7 +652,7 @@ def test_hard_killed_shard_is_retried_as_a_whole(tmp_path, stage):
     if original_hash is not None:
         assert artifact_digest(results[0].data_path) == original_hash
     assert len({r.data_path for r in results}) == 1
-    assert not session.shard_staging_root(plan.shards[0]).exists()
+    assert not (driver.root / ".distributed-shards").exists()
     driver.commit_distributed_results(plan, session.load_results())
     driver.finalize()
     assert LeRobotDataset("test/packed", root=driver.root).num_frames == 4
@@ -701,30 +671,28 @@ def test_corrupt_shared_shard_retry_preserves_other_worker_and_committed_data(tm
     assert artifact_digest(second[0].data_path) == other_hash
     assert len(retry) == 2
     driver.commit_distributed_results(plan, session.load_results())
-    # Retained session objects can replay an already committed packed batch.
-    worker = LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
-    assert len(worker.write_distributed_shard(plan.shards[0], [])) == 2
-    retry[0].data_path.write_bytes(b"corrupt committed data")
-    with pytest.raises(ValueError):
-        worker.write_distributed_shard(plan.shards[0], episodes[:2])
-    assert retry[0].data_path.read_bytes() == b"corrupt committed data"
-    worker.finalize()
+    assert not (driver.root / ".session").exists()
+    assert not (driver.root / "meta" / "distributed-commits").exists()
+    # Late/zombie workers after commit fail fast without modifying committed data.
+    with pytest.raises(FileNotFoundError):
+        LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
+    assert artifact_digest(second[0].data_path) == other_hash
     driver.finalize()
 
 
-def test_packed_plan_excludes_episode_writes_and_duplicate_shard_attempts(tmp_path):
+def test_worker_rejects_unrecovered_metadata_journal(tmp_path):
+    """Workers fail fast if an interrupted metadata publish journal awaits driver recovery."""
     driver = create_driver(tmp_path / "dataset")
     episodes = [frames(i) for i in range(2)]
     plan = make_plan(driver, episodes)
     session = driver.create_distributed_write_session(plan)
+    journal_path = driver.root / ".session" / "meta" / "journal.json"
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text('{"source": ".session/meta/missing", "backup": ".session/meta/backup"}')
+    with pytest.raises(RuntimeError, match="Interrupted distributed metadata publication"):
+        LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
+    journal_path.unlink()
     worker = LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
-    with pytest.raises(ValueError, match="write_distributed_shard"):
-        worker.start_distributed_episode(plan.episodes[0])
-    with session.shard_lock(plan.shards[0]):
-        with pytest.raises(Timeout):
-            worker.write_distributed_shard(plan.shards[0], episodes)
-        with pytest.raises(Timeout):
-            session.cleanup_orphaned_artifacts()
     worker.finalize()
     driver.finalize()
 
@@ -834,11 +802,10 @@ def test_task_boundary_survives_crash_and_retry_preserves_completed_continuation
     assert session.shard_boundary_path(plan.shards[0]).read_bytes() == boundary_before
     assert all(artifact_digest(path) == digest for path, digest in before.items())
     driver.commit_distributed_results(plan, session.load_results())
-    assert not list((driver.root / ".distributed-shards").glob("shard-*"))
-    # After session cleanup, the commit receipt still preserves task boundaries.
-    worker = LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
-    assert len(worker.write_distributed_shard(plan.shards[0], [])) == 1
-    worker.finalize()
+    assert not (driver.root / ".session").exists()
+    assert not (driver.root / "meta" / "distributed-commits").exists()
+    with pytest.raises(FileNotFoundError):
+        LeRobotDataset.open_distributed_writer("test/packed", root=driver.root, session=session)
     driver.finalize()
     assert LeRobotDataset("test/packed", root=driver.root).num_frames == 6
 
@@ -988,9 +955,12 @@ def test_driver_recovers_packed_metadata_publish(tmp_path, stage, append, split)
     assert process.exitcode == EXIT_CODE
     session = LeRobotDataset.resume_distributed_write_session(driver.root)
     resumed = LeRobotDataset.resume("test/packed", root=driver.root)
-    resumed.commit_distributed_results(session.plan, session.load_results())
-    resumed.commit_distributed_results(session.plan, session.load_results())
+    loaded_results = session.load_results()
+    resumed.commit_distributed_results(session.plan, loaded_results)
+    resumed.commit_distributed_results(session.plan, loaded_results)
     resumed.finalize()
+    assert not (driver.root / ".session").exists()
+    assert not (driver.root / "meta" / "distributed-commits").exists()
     assert all(artifact_digest(path) == digest for path, digest in hashes.items())
     loaded = LeRobotDataset("test/packed", root=driver.root, video_backend="pyav")
     assert loaded.num_episodes == 2 + int(append)
@@ -1078,3 +1048,221 @@ def test_packed_multimodal_depth_and_rgb_roundtrip(tmp_path):
         np.testing.assert_array_equal(loaded[i]["history"], np.full((2, 3), i // 2 + i % 2))
     for key in (depth_image, depth_video):
         assert loaded.meta.features[key]["info"]["depth_unit"] == DEPTH_MILLIMETER_UNIT
+
+
+def test_plan_rle_compression_and_fast_digest_active_check(tmp_path):
+    """plan.json uses RLE for per-frame tasks and require_active uses the 64-byte digest."""
+    import json
+
+    from lerobot.datasets.distributed import _deserialize_plan, _serialize_plan
+
+    driver = create_driver(tmp_path / "dataset")
+    episodes = [frames(i, count=10) for i in range(3)]
+    plan = make_plan(driver, episodes)
+    session = driver.create_distributed_write_session(plan)
+
+    plan_payload = json.loads((session.session_root / "plan.json").read_text(encoding="utf-8"))
+    for ep in plan_payload["plan"]["episodes"]:
+        assert "tasks_rle" in ep
+        assert "tasks" not in ep
+        assert "task_indices" not in ep
+        assert len(ep["tasks_rle"]) == 1
+        assert ep["tasks_rle"][0][1] == 10
+    assert (session.session_root / "plan_digest").is_file()
+
+    # Legacy non-RLE plan payloads still deserialize identically.
+    legacy_payload = _serialize_plan(plan)
+    for ep, spec in zip(legacy_payload["episodes"], plan.episodes, strict=True):
+        ep.pop("tasks_rle")
+        ep["tasks"] = list(spec.tasks)
+        ep["task_indices"] = list(spec.task_indices)
+    assert _deserialize_plan(legacy_payload) == plan
+
+    # require_active() succeeds without touching plan.json when plan_digest matches.
+    session.require_active()
+
+
+def test_pending_shards_avoids_quadratic_revalidation_and_detects_tamper(tmp_path):
+    """Repeated pending_shards() calls reuse stat-validated cache and catch tampering."""
+    import lerobot.datasets.distributed as dist_module
+
+    driver = create_driver(tmp_path / "dataset")
+    episodes = [frames(i, count=2) for i in range(4)]
+    plan = make_plan(driver, episodes, max_frames_per_worker=4)
+    assert len(plan.shards) == 2
+    session = driver.create_distributed_write_session(plan)
+
+    write_shard(driver.root, plan.shards[0], episodes[:2])
+
+    digest_calls = 0
+    original_digest = dist_module.artifact_digest
+
+    def counting_digest(path):
+        nonlocal digest_calls
+        digest_calls += 1
+        return original_digest(path)
+
+    with patch.object(dist_module, "artifact_digest", side_effect=counting_digest):
+        # First scan hashes shard 0's artifacts once (1 parquet + 1 mp4 = 2 calls).
+        pending = session.pending_shards()
+        assert [s.shard_index for s in pending] == [2]
+        first_calls = digest_calls
+        assert first_calls == 2
+
+        # Repeated scans hit the stat-validated cache: zero additional hashes!
+        assert [s.shard_index for s in session.pending_shards()] == [2]
+        assert [s.shard_index for s in session.pending_shards()] == [2]
+        assert digest_calls == first_calls
+
+        # verify=False skips hashing even on a fresh session instance.
+        fresh_session = LeRobotDataset.resume_distributed_write_session(driver.root)
+        assert [s.shard_index for s in fresh_session.pending_shards(verify=False)] == [2]
+        assert digest_calls == first_calls
+
+    # Tampering with a cached artifact invalidates the stat signature and fails loudly.
+    first_parquet = driver.root / "data/chunk-000/file-000.parquet"
+    first_parquet.write_bytes(b"tampered")
+    with pytest.raises(ValueError):
+        session.pending_shards()
+
+
+def test_deferred_video_concat_runs_once_per_file_and_skips_single_episode(tmp_path):
+    """Packing N episodes concatenates each camera MP4 once at close instead of N-1 times."""
+    import lerobot.datasets.dataset_writer as writer_module
+
+    concat_calls = 0
+    original_concat = writer_module.concatenate_video_files
+
+    def counting_concat(*args, **kwargs):
+        nonlocal concat_calls
+        concat_calls += 1
+        return original_concat(*args, **kwargs)
+
+    # 1. Single-episode shard: 0 concatenations.
+    driver1 = create_driver(tmp_path / "single")
+    ep1 = [frames(0, count=2)]
+    plan1 = make_plan(driver1, ep1)
+    driver1.create_distributed_write_session(plan1)
+    with patch.object(writer_module, "concatenate_video_files", side_effect=counting_concat):
+        results1 = write_shard(driver1.root, plan1.shards[0], ep1)
+    assert concat_calls == 0
+    driver1.commit_distributed_results(plan1, results1)
+    driver1.finalize()
+
+    # 2. 4-episode packed shard: exactly 1 concatenation call (not 3).
+    driver4 = create_driver(tmp_path / "multi")
+    ep4 = [frames(i, count=2) for i in range(4)]
+    plan4 = make_plan(driver4, ep4)
+    driver4.create_distributed_write_session(plan4)
+    with patch.object(writer_module, "concatenate_video_files", side_effect=counting_concat):
+        results4 = write_shard(driver4.root, plan4.shards[0], ep4)
+    assert concat_calls == 1
+    driver4.commit_distributed_results(plan4, results4)
+    driver4.finalize()
+
+    loaded = LeRobotDataset("test/packed", root=driver4.root, video_backend="pyav")
+    assert len(loaded) == 8
+    assert loaded.meta.episodes[0]["tasks"] == ["z-pick"]
+
+
+def test_direct_write_parquet_mp4_with_local_scratch_and_clean_root(tmp_path):
+    """Parquet and final MP4 are written directly to root; transient scratch stays local and is cleaned."""
+    driver = create_driver(tmp_path / "dataset")
+    local_nvme = tmp_path / "local-nvme"
+    episodes = [frames(i, count=2) for i in range(3)]
+    plan = make_plan(driver, episodes)
+    session = driver.create_distributed_write_session(plan)
+
+    worker = LeRobotDataset.open_distributed_writer(
+        "test/packed", root=driver.root, session=session, local_staging_dir=local_nvme
+    )
+    try:
+        results = worker.write_distributed_shard(plan.shards[0], episodes)
+    finally:
+        worker.finalize()
+
+    # No shared-FS scratch dir or .tmp files under data/ or videos/.
+    assert not (driver.root / ".distributed-shards").exists()
+    assert not (driver.root / "images").exists()
+    assert list((driver.root / "data").rglob("*.tmp")) == []
+    assert list((driver.root / "videos").rglob("*.tmp")) == []
+    assert list(local_nvme.glob("lerobot-shard-*")) == []
+
+    driver.commit_distributed_results(plan, results)
+    driver.finalize()
+
+    # Verify root/ has zero residual hidden directories or non-standard meta/ files after commit.
+    assert [p.name for p in driver.root.iterdir() if p.name.startswith(".")] == []
+    assert not (driver.root / "meta" / "distributed-commits").exists()
+
+    loaded = LeRobotDataset("test/packed", root=driver.root, video_backend="pyav")
+    assert len(loaded) == 6
+    for i in range(6):
+        np.testing.assert_allclose(loaded[i]["action"].numpy(), [i // 2, i % 2])
+
+
+def test_commit_rejects_mismatched_video_info_across_workers(tmp_path):
+    """Metadata commit rejects inconsistent video_info across workers."""
+    driver = create_driver(tmp_path / "dataset")
+    episodes = [frames(i, count=2) for i in range(2)]
+    plan = make_plan(driver, episodes, max_frames_per_worker=2)
+    driver.create_distributed_write_session(plan)
+    results = write_pending_shards(driver.root, episodes)
+
+    mismatched_info = {**results[1].video_info[VIDEO], "video.fps": 60.0}
+    tampered = [
+        results[0],
+        replace(results[1], video_info={**results[1].video_info, VIDEO: mismatched_info}),
+    ]
+    with pytest.raises(ValueError, match="disagree on video info"):
+        driver.commit_distributed_results(plan, tampered)
+
+
+def test_rollover_in_shard_completes_single_stage_and_recovers(tmp_path):
+    """rollover_in_shard=True writes multiple files within one task with zero continuation rounds."""
+    driver = create_driver(tmp_path / "dataset", data_limit=0.0001, video_limit=0.0001)
+    episodes = [frames(i, count=2) for i in range(5)]
+    plan = make_plan(driver, episodes, max_frames_per_worker=10, rollover_in_shard=True)
+    assert len(plan.shards) == 1
+    assert plan.rollover_in_shard is True
+    session = driver.create_distributed_write_session(plan)
+
+    # Single task invocation consumes all 5 episodes and rolls over internally across reserved slots.
+    results = write_shard(driver.root, plan.shards[0], episodes)
+    assert [r.episode_index for r in results] == [0, 1, 2, 3, 4]
+    assert len({r.data_path for r in results}) == 5
+    assert session.pending_shards() == []
+    # Lockless + no boundary file for rollover shards: only shard-000000.result.json exists.
+    assert sorted(p.name for p in session.shards_root.iterdir()) == ["shard-000000.result.json"]
+
+    # Crash cleanup on a corrupt rollover shard removes all its slots and retries cleanly.
+    results[2].data_path.write_bytes(b"corrupt")
+    retried = write_shard(driver.root, plan.shards[0], episodes)
+    assert [r.episode_index for r in retried] == [0, 1, 2, 3, 4]
+    assert len({r.data_path for r in retried}) == 5
+
+    driver.commit_distributed_results(plan, session.load_results())
+    driver.finalize()
+
+    loaded = LeRobotDataset("test/packed", root=driver.root, video_backend="pyav")
+    assert loaded.meta.total_episodes == 5
+    assert len(loaded) == 10
+    for ep_idx in range(5):
+        assert loaded.meta.episodes[ep_idx]["tasks"] == ["z-pick" if ep_idx % 2 == 0 else "a-place"]
+    for i in range(10):
+        np.testing.assert_allclose(loaded[i]["action"].numpy(), [i // 2, i % 2])
+
+    # Appending another batch with rollover_in_shard=True works seamlessly.
+    appended_driver = LeRobotDataset.resume("test/packed", root=driver.root)
+    more_episodes = [frames(i % 5, count=2) for i in range(3)]
+    append_plan = make_plan(appended_driver, more_episodes, max_frames_per_worker=10, rollover_in_shard=True)
+    append_session = appended_driver.create_distributed_write_session(append_plan)
+    append_results = write_shard(driver.root, append_plan.shards[0], more_episodes)
+    assert [r.episode_index for r in append_results] == [5, 6, 7]
+    assert append_session.pending_shards() == []
+    appended_driver.commit_distributed_results(append_plan, append_session.load_results())
+    appended_driver.finalize()
+
+    reloaded = LeRobotDataset("test/packed", root=driver.root, video_backend="pyav")
+    assert reloaded.meta.total_episodes == 8
+    assert len(reloaded) == 16

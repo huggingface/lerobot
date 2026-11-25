@@ -158,18 +158,59 @@ mapping over the initial `plan.shards` once is not sufficient.
 
 `pending_shards()` is a discovery API, not a claim operation. It can include
 currently running tasks whose result has not yet been published. Track running
-IDs in the scheduler; the task lock provides exclusion if duplicate attempts
-are submitted. A durable boundary can expose a continuation before the preceding
-task returns, because their output files are disjoint.
+IDs in the scheduler and ensure only one active attempt runs per shard (disable
+speculative execution in engines that support it). A durable boundary can expose
+a continuation before the preceding task returns, because their output files are
+disjoint.
 
 Worker count and task count are independent. The library does not split the
 initial plan automatically based on executor size, migrate a running task,
 or split an episode between workers. Local subprocess tests exercise dynamic
 scheduling; multi-node Ray/Daft execution has not been validated.
 
-Pending-task discovery currently revalidates completed artifacts, including
-their checksums, on each scan. Its cost grows with completed data; large-scale
-scheduling throughput has not been benchmarked.
+Pending-task discovery uses a stat-validated in-memory cache so each completed
+shard is hashed and validated once per session instance unless its files change
+on disk. For large clusters where even `stat()` checks are deferred until
+commit, pass `pending_shards(verify=False)` / `load_results(verify=False)`.
+
+## Single-stage shard rollover (Daft / Ray / Spark)
+
+Pass `rollover_in_shard=True` to `create_distributed_write_plan()` when running
+on stateless map-based engines (Daft, Ray Data, Spark) where dynamic
+continuation re-enqueueing is undesirable:
+
+```python
+plan = driver.create_distributed_write_plan(
+    episode_lengths=lengths,
+    episode_tasks=tasks,
+    max_frames_per_worker=5_000,
+    rollover_in_shard=True,
+)
+```
+
+In rollover mode, each worker processes all episodes in its assigned
+`DistributedShardSpec` in a single task invocation. Whenever a soft size target
+(`data_files_size_in_mb` or `video_files_size_in_mb`) is reached, the worker
+flushes the current Parquet and MP4 files and rolls over internally to the next
+episode's reserved slot. No continuation tasks are emitted, so `plan.shards`
+can be mapped in a single query/stage.
+
+## Direct Parquet/MP4 writes and local NVMe scratch
+
+Because `data/` and `videos/` files are invisible to readers until referenced by
+published `meta/episodes`, workers write Parquet and final concatenated MP4
+files directly to their reserved slots under `<root>/data/` and `<root>/videos/`
+(no shared-filesystem staging copies or file renames).
+
+All transient scratch artifacts (per-frame temporary PNG/TIFF images and
+intermediate per-episode video segments) live strictly on worker-local disk
+(system temp by default, or `local_staging_dir="/tmp/lerobot-scratch"` passed
+to `open_distributed_writer()` / `write_distributed_shard()`) and are always
+cleaned up when the task exits.
+
+Within each output file group, per-episode videos are encoded in parallel across
+cameras (`parallel_encoding=True`) and concatenated once directly into the final
+MP4 on group close ($O(N)$ instead of $O(N^2)$ remuxing).
 
 ## Appending to an existing dataset
 
@@ -187,28 +228,45 @@ distributed workers are not supported.
 
 ## Failure recovery
 
-A persistent `DistributedWriteSession` is required. A task acquires an exclusive
-lock and writes privately under `<root>/.distributed-shards/`. Its protocol is:
+A persistent `DistributedWriteSession` is required. The protocol is lockless
+(no POSIX `filelock` dependency), relying on single-driver coordination and
+one active worker attempt per shard (disable speculative execution in engines
+that support it). Each task writes final Parquet/MP4 files directly to its
+reserved slots under `<root>` and keeps transient PNG/segment scratch strictly
+on worker-local disk:
 
 1. Consume complete episodes until reaching a soft size target or frame budget.
-2. Close all writers and persist the exact task boundary.
-3. Move the one Parquet and per-feature MP4 files to the task's reserved slot.
+2. Close the Parquet writer and persist the task boundary (only for multi-episode
+   continuation shards; `rollover_in_shard=True` and single-episode shards skip
+   boundary files).
+3. Flush concatenated per-feature MP4 files directly to the task's reserved slot.
 4. Publish one atomic success record containing locations, video intervals,
    statistics, and artifact SHA-256 digests.
 
-Task boundaries are immutable. They survive failed publication and corrupt
+Task boundaries are immutable. They survive failed writes and corrupt
 result records, so recovery of an earlier task cannot absorb, delete, or
 overwrite a continuation that has already run.
 
 - Before a boundary is persisted, a failed attempt can retry its original candidate task.
 - After a boundary is persisted, retries must rewrite exactly that recorded
   episode range, even if regenerated file sizes differ.
-- Cleanup removes only the failed task's output slot and private staging;
+- Cleanup removes only the failed task's output slot(s);
   successful continuations and committed data remain intact.
 - A corrupt boundary fails closed rather than guessing which files may be removed.
-- A duplicate attempt raises `filelock.Timeout` while the owner holds its lock.
-- A successful task is reused, including after metadata commit through the
-  retained commit receipt.
+- A successful task is reused during the active session without consuming source input.
+- Late workers arriving after metadata commit fail fast because `<root>/.session/` has been removed.
+- Workers refuse to start if an unrecovered `<root>/.session/meta/journal.json` is present;
+  recover on the driver first via `resume_distributed_write_session()` or `commit_distributed_results()`.
+
+All distributed coordination state lives under one temporary directory `<root>/.session/`:
+
+```text
+<root>/.session/
+├── plan.json
+├── plan_digest
+├── shards/        # shard-XXXXXX.result.json (+ .boundary.json only for continuation splits)
+└── meta/          # journal.json, staging-<uuid>/, backup-<uuid>/ (only during commit)
+```
 
 After interruption, resume the session before reopening the driver:
 
@@ -216,7 +274,7 @@ After interruption, resume the session before reopening the driver:
 session = LeRobotDataset.resume_distributed_write_session(ROOT)
 
 # Optional global cleanup; stop active workers first.
-# Each worker retry also cleans its own task under its exclusive lock.
+# Each worker retry also cleans its own task's output slot before rewriting.
 session.cleanup_orphaned_artifacts()
 
 driver = LeRobotDataset.resume(REPO_ID, root=ROOT)
@@ -229,10 +287,12 @@ Corrupt artifacts or result records cause `load_results()` and
 `pending_shards()` to fail until cleanup or a worker retry repairs them.
 Do not commit until every planned episode has a valid result.
 
-Metadata publication uses a recovery journal and commit receipt. Session resume
-recovers an interrupted metadata swap. Repeating the same commit is idempotent;
-conflicting results for an already committed plan are rejected. After successful
-commit, active session state and obsolete task staging are removed.
+Metadata publication uses a recovery journal under `<root>/.session/meta/journal.json`.
+Session resume recovers an interrupted metadata swap. Repeating the same commit
+is idempotent (verified directly against published `meta/episodes`, leaving
+`meta/` 100% standard LeRobot v3 with no extra receipt files); conflicting
+results for an already committed plan are rejected. After successful commit, the
+entire `<root>/.session/` directory is removed.
 
 These guarantees cover process interruption. Publishing `meta/` uses two
 directory renames and can briefly leave it absent. Concurrent readers during
@@ -242,13 +302,12 @@ or a guarantee against filesystem failure or machine power loss.
 ## Storage and codec requirements
 
 All workers and the driver must use the same shared filesystem at the same
-absolute path. Storage must provide cross-node visibility of closed files,
-atomic file replacement and directory rename, and advisory file locks released
-when the owning process exits.
+absolute path. Storage must provide cross-node visibility of closed files and
+atomic file/directory rename (no POSIX advisory file locks are required).
 
 Only the default local-path storage format is supported. Direct object-store
 URIs and alternate backends such as Lance are not supported. A shared mount is
-suitable only if it provides the required visibility, rename, and lock semantics.
+suitable only if it provides the required visibility and rename semantics.
 
 Run compatible LeRobot, PyArrow, PyAV, and FFmpeg versions on every worker.
 Use consistent encoder settings and depth units. Local HEVC tests reproduced
@@ -256,12 +315,39 @@ a boundary-frame decoding issue with the default GOP setting in both serial
 and distributed concatenation. Depth packing tests use
 `DepthEncoderConfig(g=1, use_log=False)`; upstream encoder defaults are unchanged.
 
-## Explicit episode-at-a-time mode
+## One-file-per-episode mode
 
-`pack_episodes=False` retains the earlier one-file-per-episode protocol:
-`plan.episodes`, `start_distributed_episode()`, `add_frame()`,
-`save_distributed_episode()`, and `pending_specs()`.
+Pass `pack_episodes=False` to `create_distributed_write_plan()` when you want
+each episode written to its own Parquet and MP4 files. Internally, every
+episode is represented as a single-episode `DistributedShardSpec`, so workers
+and schedulers use the exact same unified `write_distributed_shard()` and
+`pending_shards()` API without a separate code path.
 
-Packed plans default to task execution through `write_distributed_shard()` and
-the evolving `pending_shards()` queue. Episode-level writes are rejected for
-packed sessions.
+## HDF5 conversion tests with Daft
+
+`tests/datasets/test_distributed_daft_hdf5.py` exercises the write protocol through
+Daft's Ray runner. It creates real HDF5 episodes containing actions, states, task
+labels, and two cameras, dispatches task descriptors to workers, and compares the
+published dataset against the source with the standard LeRobot reader.
+
+Run this suite in a separate Python process:
+
+```bash
+LEROBOT_RUN_DAFT_E2E=1 RAY_ENABLE_UV_RUN_RUNTIME_ENV=0 \
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 RAYON_NUM_THREADS=2 \
+uv run --no-sync \
+  --with 'daft==0.7.26' --with 'ray==2.54.0' --with 'h5py==3.16.0' \
+  python -m pytest tests/datasets/test_distributed_daft_hdf5.py -vv
+```
+
+The fixture starts and shuts down its own Ray head and two logical worker nodes
+on the same machine. The 30-episode cases check that both workers execute tasks
+concurrently; these tests do not emulate separate physical machines. Set
+`LEROBOT_DAFT_E2E_REPORT` to a JSON path to retain per-task node IDs, process IDs,
+consumed episode indices, and execution intervals.
+
+Scenarios cover separate files, multiple episodes per file, uneven lengths,
+30-episode batches, Parquet/video size continuations, and append batches. They
+also exercise missing-source recovery and repeated task delivery without reading
+the source again. The test scheduler submits continuations in subsequent Daft
+query rounds, so each round waits for the preceding query to finish.
