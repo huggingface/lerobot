@@ -26,7 +26,7 @@ lerobot-convert-dcp --checkpoint_dir=... --delete_dcp=true --push_to_hub=user/my
 core artifacts (model.safetensors, config.json, processor files) always upload; the README
 model card is enriched with training/dataset metadata only when `train_config.json` (and the
 dataset it names) are reachable, with a WARNING naming exactly what was skipped otherwise.
-DCP shard artifacts are never uploaded — published repos carry safetensors only.
+DCP shard artifacts are never uploaded — published weights are safetensors only.
 """
 
 import logging
@@ -118,6 +118,8 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
     except Exception as e:  # noqa: BLE001
         logging.warning(f"Could not build the model card ({e}); publishing without README.")
 
+    from accelerate.utils.constants import FSDP_MODEL_NAME
+
     api = HfApi()
     repo_id = api.create_repo(repo_id=repo_id, private=private, exist_ok=True).repo_id
     commit_info = api.upload_folder(
@@ -125,10 +127,10 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
         repo_type="model",
         folder_path=str(pretrained_dir),
         commit_message="Upload converted policy (DCP -> safetensors)",
-        allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-        # The checkpoint keeps its DCP shard directory unless --delete_dcp was passed; the
-        # allow list above admits neither `.distcp` shards nor their `.metadata` sidecar.
-        ignore_patterns=["*.tmp", "*.log"],
+        # Everything the policy and its processors saved is uploaded, whatever the file type
+        # (tokenizer chat templates, remote-code modules, ...). Only the DCP shard directory,
+        # kept unless --delete_dcp was passed, stays out: it is resume-only state.
+        ignore_patterns=[f"{FSDP_MODEL_NAME}_0/*", "*.tmp", "*.log"],
     )
     logging.info(f"Model pushed to {commit_info.repo_url.url}")
 
