@@ -20,17 +20,19 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import Gemma2Config, Gemma2ForCausalLM, PreTrainedTokenizerFast
 
-from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.configs.sampling import EpisodeTable, SampleKey
+from lerobot.configs.types import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import LiberoEnvConfig
 from lerobot.envs.factory import make_env_pre_post_processors
+from lerobot.inference.sync import SyncInferenceEngine
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.sana_robot import modeling_sana_robot
-from lerobot.policies.sana_robot.configuration_sana_robot import SanaRobotConfig
+from lerobot.policies.sana_robot.configuration_sana_robot import EpisodeWindowSampler, SanaRobotConfig
 from lerobot.policies.sana_robot.modeling_sana_robot import (
     SanaRobotPolicy,
-    episode_window,
     resolve_training_backend,
+    window_shape,
 )
 from lerobot.policies.sana_robot.processor_sana_robot import (
     LIBERO_BASE_POS,
@@ -48,7 +50,8 @@ from lerobot.policies.sana_robot.processor_sana_robot import (
 from lerobot.policies.sana_robot.sana_robot_core.causal_vae import LTX2VideoEncoder3d
 from lerobot.policies.sana_robot.sana_robot_core.robot80 import rotation_to_rot6d
 from lerobot.policies.sana_robot.sana_robot_core.teacher_forcing import padded_window_frames
-from lerobot.policies.sana_robot.sana_robot_core.windows import window_chunk_count
+from lerobot.policies.sana_robot.sana_robot_core.windows import build_windows
+from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.rotation import Rotation
 from tests.utils import require_cuda
@@ -168,14 +171,19 @@ def observation(config, step, height=64, width=64, task="pick"):
     return batch
 
 
-def rollout(policy, preprocess, postprocess, steps, seed=0, **arguments):
-    policy.reset()
+def engine(policy, preprocess, postprocess):
+    """The runner of scripts and simulator evaluation, on the policy's cameras and state."""
+    keys = [*policy.config.camera_keys, OBS_STATE]
+    return SyncInferenceEngine(policy, preprocess, postprocess, observation_keys=keys)
+
+
+def rollout(policy, preprocess, postprocess, steps, seed=0, observations=None, **arguments):
+    """The actions of ``steps`` control steps, one call of the runner per step."""
+    runner = engine(policy, preprocess, postprocess)
+    runner.reset()
     torch.manual_seed(seed)
-    actions = [
-        postprocess(policy.select_action(preprocess(observation(policy.config, step, **arguments))))
-        for step in range(steps)
-    ]
-    return torch.cat(actions)
+    observations = observations or (lambda step: observation(policy.config, step, **arguments))
+    return torch.cat([runner.step(observations(step), float(step)) for step in range(steps)])
 
 
 @pytest.mark.parametrize(
@@ -201,18 +209,33 @@ def test_config_rejects_what_the_policy_cannot_run(encoders, overrides):
         make_config(encoders, **overrides)
 
 
-def test_select_action_plans_on_the_episode_clock(encoders):
+def test_chunks_are_planned_on_the_episode_clock_from_the_executed_frames(encoders):
     config = make_config(encoders)
     policy = make_policy(config)
+    spec = policy.chunk_inference_spec()
+    assert spec.complete_execution
+    assert spec.prediction_steps == spec.execution_steps == config.n_action_steps == 16
+    # The memory reads a frame every video_frame_stride steps: after actions 3, 7, 11 and 15 of a chunk.
+    for key in config.camera_keys:
+        assert list(config.inference_deltas.of(key, FeatureType.VISUAL)) == [-12, -8, -4, 0]
+    assert config.inference_deltas.of(OBS_STATE, FeatureType.STATE) is None
+
     (preprocess, postprocess) = make_pre_post_processors(config, dataset_stats=stats(config))
     planned = []
     plan = policy._plan
-    policy._plan = lambda state, instruction: (planned.append(policy._step), plan(state, instruction))
+    policy._plan = lambda episode, state, instruction: (
+        planned.append((episode.step, len(episode.window))),
+        plan(episode, state, instruction),
+    )[1]
+    runner = engine(policy, preprocess, postprocess)
     actions = rollout(policy, preprocess, postprocess, 40)
-    assert planned == [0, 16, 32]
+    assert planned == [(0, 8), (16, 8), (32, 8)]
     assert actions.shape == (40, len(config.action_slots))
     assert torch.isfinite(actions).all()
-    assert policy.count_queued_actions() == 8
+    runner.reset()
+    for step in range(40):
+        runner.step(observation(config, step), float(step))
+    assert runner.queued_actions == 8
     assert all(name.startswith("model.") for name in policy.state_dict())
 
 
@@ -225,13 +248,13 @@ def test_actions_repeat_after_reset_and_depend_on_the_memory(encoders):
     assert not torch.equal(first, rollout(policy, preprocess, postprocess, 36, seed=1))
 
     # The chunk generated at step 32 reads the frames before it: other frames in between give other actions.
-    policy.reset()
-    torch.manual_seed(0)
-    for step in range(36):
+    def other_frames(step):
         frames = observation(config, step if step < 4 or step >= 32 else step + 100)
-        batch = {**observation(config, step), **{key: frames[key] for key in config.camera_keys}}
-        action = postprocess(policy.select_action(preprocess(batch)))
-    assert not torch.equal(action, first[-1:])
+        return {**observation(config, step), **{key: frames[key] for key in config.camera_keys}}
+
+    changed = rollout(policy, preprocess, postprocess, 36, observations=other_frames)
+    assert torch.equal(changed[:4], first[:4])
+    assert not torch.equal(changed[-1:], first[-1:])
 
 
 @pytest.mark.parametrize("video_cfg_scale", [1.0, 3.0])
@@ -278,34 +301,43 @@ def test_a_new_instruction_takes_over_at_the_next_chunk(encoders):
     policy = make_policy(config)
     (preprocess, postprocess) = make_pre_post_processors(config, dataset_stats=stats(config))
     same = rollout(policy, preprocess, postprocess, 20)
-    policy.reset()
-    torch.manual_seed(0)
-    changed = torch.cat(
-        [
-            postprocess(
-                policy.select_action(
-                    preprocess(observation(config, step, task="pick" if step < 8 else "place"))
-                )
-            )
-            for step in range(20)
-        ]
+    changed = rollout(
+        policy,
+        preprocess,
+        postprocess,
+        20,
+        observations=lambda step: observation(config, step, task="pick" if step < 8 else "place"),
     )
     assert torch.equal(same[:16], changed[:16])
     assert not torch.equal(same[16:], changed[16:])
 
 
-def test_batches_of_episodes_are_rejected_at_inference(encoders):
+def test_every_environment_of_a_batch_has_its_own_episode(encoders):
     config = make_config(encoders)
     policy = make_policy(config)
-    with pytest.raises(NotImplementedError):
-        policy.predict_action_chunk({})
-    batch = observation(config, 0)
-    batch["task"] = ["pick", "place"]
-    preprocess = make_pre_post_processors(config, dataset_stats=stats(config))[0]
+    (preprocess, postprocess) = make_pre_post_processors(config, dataset_stats=stats(config))
+
+    def two_environments(step):
+        (first, second) = (observation(config, step), observation(config, step + 1000, task="place"))
+        batch = {key: torch.cat([first[key], second[key]]) for key in [*config.camera_keys, OBS_STATE]}
+        return {**batch, "task": ["pick", "place"]}
+
+    torch.manual_seed(0)
+    both = rollout(policy, preprocess, postprocess, 20, observations=two_environments)
+    assert both.shape == (40, len(config.action_slots)) and torch.isfinite(both).all()
+    # The first environment's first chunk draws its noise first, as when it runs alone.
+    alone = rollout(policy, preprocess, postprocess, 16)
+    assert torch.equal(both[0:32:2], alone)
+
+    # Missing frames would leave the memory behind the robot: the policy refuses the call.
+    policy.reset()
+    batch = preprocess(observation(config, 0))
+    policy.predict_action_chunk(batch)
+    batch = {**batch, **{key: batch[key][:, None].repeat(1, 3, 1, 1, 1) for key in config.camera_keys}}
+    with pytest.raises(ValueError, match="frames of the previous chunk"):
+        policy.predict_action_chunk(batch)
     with pytest.raises(ValueError):
-        policy.select_action(preprocess(batch))
-    with pytest.raises(ValueError):
-        SanaRobotPolicy(make_config(encoders, vae_path=None)).select_action(
+        SanaRobotPolicy(make_config(encoders, vae_path=None)).predict_action_chunk(
             preprocess(observation(config, 0))
         )
 
@@ -342,7 +374,7 @@ def test_state_and_actions_use_the_checkpoint_statistics(encoders):
         normalized, (state - statistics[OBS_STATE]["mean"]) / statistics[OBS_STATE]["std"], atol=1e-6
     )
     action = torch.rand(1, len(config.action_slots))
-    restored = postprocess(action.clone())
+    restored = postprocess({ACTION: action.clone()})[ACTION]
     assert torch.allclose(
         restored, action * statistics[ACTION]["std"] + statistics[ACTION]["mean"], atol=1e-6
     )
@@ -494,7 +526,7 @@ def test_a_converted_checkpoint_has_the_weights_the_robot_fields_and_the_statist
     assert torch.allclose(preprocess(batch)[OBS_STATE], expected, atol=1e-6)
     action = torch.rand(1, 7)
     restored = torch.cat(((action * scale[:7] + center[:7])[:, :6], action[:, 6:]), dim=1)
-    assert torch.allclose(postprocess(action.clone()), restored, atol=1e-6)
+    assert torch.allclose(postprocess({ACTION: action.clone()})[ACTION], restored, atol=1e-6)
     actions = rollout(policy, preprocess, postprocess, 18)
     assert actions.shape == (18, 7) and torch.isfinite(actions).all()
 
@@ -529,57 +561,76 @@ def loader_window(values, anchor, offsets):
     return (values[rows.clamp(0, len(values) - 1)], (rows < 0) | (rows >= len(values)))
 
 
-def training_batch(config, episode_rows, anchors, seed=0):
-    """A batch of training samples after the preprocessor: one episode per sample, sampled at its anchor."""
+def training_batch(config, episode_rows, head_rows, seed=0):
+    """A batch of training samples after the preprocessor, collated as the training loader does: the window of
+    `config.training_sampler` that opens ``head_rows`` rows before each episode."""
     generator = torch.Generator().manual_seed(seed)
+    sampler = config.training_sampler
+    episodes = EpisodeTable(np.arange(len(episode_rows)), np.asarray(episode_rows))
     samples = []
-    for rows, anchor in zip(episode_rows, anchors, strict=True):
-        sample = {}
+    for episode, (rows, head) in enumerate(zip(episode_rows, head_rows, strict=True)):
+        index = [window_head for (window_head, _chunks) in sampler.windows(rows)].index(head)
+        sample = sampler.sample(episodes, SampleKey(episode, index))
+        windows = {}
         for key, size in zip(config.camera_keys, config.view_sizes, strict=True):
             frames = torch.rand(rows, 3, *size, generator=generator) * 2 - 1
-            sample[key] = loader_window(frames, anchor, config.image_observation_delta_indices)[0]
+            windows[key] = loader_window(frames, sample.anchor, sample.deltas.of(key, FeatureType.VISUAL))
         state = torch.rand(rows, len(config.state_slots), generator=generator)
-        sample[OBS_STATE] = loader_window(state, anchor, config.state_observation_delta_indices)[0]
-        action = torch.rand(rows, len(config.action_slots), generator=generator)
-        (sample[ACTION], sample[f"{ACTION}_is_pad"]) = loader_window(
-            action, anchor, config.action_delta_indices
+        windows[OBS_STATE] = loader_window(
+            state, sample.anchor, sample.deltas.of(OBS_STATE, FeatureType.STATE)
         )
-        samples.append(sample)
-    batch = {key: torch.stack([sample[key] for sample in samples]) for key in samples[0]}
-    batch["task"] = ["pick"] * len(samples)
-    return batch
+        action = torch.rand(rows, len(config.action_slots), generator=generator)
+        windows[ACTION] = loader_window(action, sample.anchor, sample.deltas.action)
+        samples.append(
+            {
+                **{key: values for key, (values, _padding) in windows.items()},
+                **{f"{key}_is_pad": padding for key, (_values, padding) in windows.items()},
+                "task": "pick",
+            }
+        )
+    return lerobot_collate_fn(samples)
 
 
-@pytest.mark.parametrize("rows", [5, 36, 40, 100, 150])
-def test_a_sample_is_trained_on_the_window_of_its_episode(rows):
-    (reach, size, stride) = (256, 32, 4)
-    for anchor in range(rows):
-        offsets = torch.arange(-reach, reach) + anchor
-        (first_row, chunks, head_rows) = episode_window((offsets >= 0) & (offsets < rows), size, stride)
-        # The window starts at a chunk boundary at or before the first frame, and the sampled frame starts a chunk.
-        assert head_rows == -anchor % size
-        assert first_row == reach - anchor - head_rows
-        assert (reach - first_row) % size == 0
-        assert chunks == window_chunk_count(rows, head_rows, size, stride)
+def test_the_sampler_gives_the_windows_of_the_original_trainer():
+    # Every episode once per chunk phase, as whole chunks while a chunk has a real first target frame.
+    lengths = list(range(1, 400))
+    (episodes, heads, chunks) = build_windows(lengths, 32, 4)
+    sampler = EpisodeWindowSampler(32, 4)
+    windows = [(e, h, n) for e, rows in enumerate(lengths) for (h, n) in sampler.windows(rows)]
+    assert windows == list(zip(episodes.tolist(), heads.tolist(), chunks.tolist(), strict=True))
+    table = EpisodeTable(np.arange(3), np.array([4, 70, 120]))
+    # An episode too short for a trained chunk gives no window.
+    assert [sampler.count(table, episode) for episode in range(3)] == [0, 32, 32]
+    sample = sampler.sample(table, SampleKey(1, 29))
+    # 70 rows from 29 rows before the first frame are 3 chunks.
+    assert sample.anchor == -29
+    assert sample.deltas.action == tuple(range(96))
+    assert sample.deltas.of("observation.images.image", FeatureType.VISUAL) == tuple(range(0, 97, 4))
+    assert sample.deltas.of(OBS_STATE, FeatureType.STATE) == (0, 32, 64)
 
 
-def test_an_episode_beyond_the_reach_is_trained_on_whole_chunks_inside_it():
-    # In the middle the reach is cut on both sides; near the start only the end is cut and the window keeps its
-    # rows before the episode; near the end only the start is cut and the last chunk runs past the episode.
-    (reach, size, stride, rows) = (64, 32, 4, 400)
-    for anchor, expected in ((200, (0, 4, 0)), (10, (32, 3, 22)), (390, (0, 3, 0))):
-        offsets = torch.arange(-reach, reach) + anchor
-        assert episode_window((offsets >= 0) & (offsets < rows), size, stride) == expected
+@pytest.mark.parametrize("head_rows", [0, 1, 19, 29, 31])
+def test_a_window_is_read_back_from_its_padding_after_the_collate(head_rows):
+    sampler = EpisodeWindowSampler(32, 4)
+    for rows in (5, 36, 40, 100, 150):
+        chunks = dict(sampler.windows(rows)).get(head_rows)
+        if chunks is None:
+            continue
+        positions = torch.arange(chunks * 32) - head_rows
+        padding = (positions < 0) | (positions >= rows)
+        # The collate pads a window to the batch's longest one.
+        padded = torch.cat([padding, torch.ones(64, dtype=torch.bool)])
+        assert window_shape(padding, 32, 4) == window_shape(padded, 32, 4) == (head_rows, chunks)
 
 
 def test_training_loss_of_whole_episodes(encoders):
-    config = make_config(encoders, max_episode_steps=128, instruction_dropout=0.5)
+    config = make_config(encoders, instruction_dropout=0.5)
     policy = make_policy(config)
     policy.train()
-    assert config.image_observation_delta_indices == list(range(-128, 129, 4))
-    assert config.state_observation_delta_indices == list(range(-128, 128, 32))
-    assert config.action_delta_indices == list(range(-128, 128))
-    batch = training_batch(config, [70, 120], [3, 77])
+    batch = training_batch(config, [70, 120], [29, 19])
+    # Each sample holds its own window, padded to the longest of the batch.
+    assert batch[ACTION].shape == (2, 160, len(config.action_slots))
+    assert batch[config.camera_keys[0]].shape == (2, 41, 3, 64, 64)
     torch.manual_seed(0)
     (loss, info) = policy.forward(batch)
     assert loss.ndim == 0 and torch.isfinite(loss) and loss > 0
@@ -594,16 +645,16 @@ def test_training_loss_of_whole_episodes(encoders):
     (losses, _info) = policy.forward(batch, reduction="none")
     assert losses.shape == (2,) and torch.allclose(losses.mean(), loss.detach(), atol=1e-6)
 
-    with pytest.raises(ValueError, match="actions per sample"):
-        policy.forward({**batch, ACTION: batch[ACTION][:, :-1]})
+    with pytest.raises(ValueError, match="window of actions"):
+        policy.forward({**batch, ACTION: batch[ACTION][:, 0]})
 
 
 def test_a_packed_row_computes_every_window_as_alone(encoders, monkeypatch):
-    config = make_config(encoders, max_episode_steps=128, instruction_dropout=0.0)
+    config = make_config(encoders, instruction_dropout=0.0)
     policy = make_policy(config)
     policy.train()
-    batch = training_batch(config, [70, 120, 4, 40], [3, 77, 2, 0])
-    batch["task"] = ["pick", "place", "pick", "pick"]
+    batch = training_batch(config, [70, 120, 40], [29, 19, 0])
+    batch["task"] = ["pick", "place", "pick"]
     model_forward = policy.model.forward
     calls = []
 
@@ -614,9 +665,9 @@ def test_a_packed_row_computes_every_window_as_alone(encoders, monkeypatch):
     monkeypatch.setattr(policy.model, "forward", recorded_forward)
     torch.manual_seed(0)
     (losses, info) = policy.forward(batch, reduction="none")
-    # One pass of the model for the three episodes that have a chunk to train.
-    assert len(calls) == 1 and info["chunks"] == 2.5
-    assert losses[2] == 0 and (losses[[0, 1, 3]] > 0).all()
+    # One pass of the model for the three windows.
+    assert len(calls) == 1 and info["chunks"] == 10 / 3
+    assert (losses > 0).all()
     (arguments, packed) = calls[0]
     data_info = arguments["data_info"]
     assert data_info["chunk_counts"].tolist() == [3, 5, 2]
@@ -669,7 +720,6 @@ def test_the_triton_kernels_give_the_loss_and_the_gradients_of_pytorch(encoders)
     pytest.importorskip("triton")
     # The fused kernel takes heads of 128 channels under BF16 autocast.
     fields = {
-        "max_episode_steps": 128,
         "instruction_dropout": 0.0,
         "hidden_size": 256,
         "linear_head_dim": 128,
@@ -684,7 +734,7 @@ def test_the_triton_kernels_give_the_loss_and_the_gradients_of_pytorch(encoders)
         policy = make_policy(config).to("cuda")
         policy.train()
         if batch is None:
-            batch = training_batch(config, [70, 120], [3, 77])
+            batch = training_batch(config, [70, 120], [29, 19])
             batch = {
                 key: value.to("cuda") if torch.is_tensor(value) else value for (key, value) in batch.items()
             }
@@ -740,7 +790,7 @@ def test_augmentation_changes_a_window_once_for_all_its_frames(encoders):
         "color": {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "gamma": 0.1},
         "view_changes": {**LIBERO_VIEW_CHANGES, "camera_move": camera_move},
     }
-    config = make_config(encoders, max_episode_steps=128, augmentation=augmentation)
+    config = make_config(encoders, augmentation=augmentation)
     policy = make_policy(config)
     policy.train()
     generator = torch.Generator().manual_seed(0)
@@ -769,18 +819,16 @@ def test_augmentation_changes_a_window_once_for_all_its_frames(encoders):
         assert torch.allclose(result, clip, atol=1 / 255)
 
     torch.manual_seed(0)
-    (loss, _info) = policy.forward(training_batch(config, [70], [3]))
+    (loss, _info) = policy.forward(training_batch(config, [70], [29]))
     assert torch.isfinite(loss) and loss > 0
 
 
 def test_gradient_checkpointing_keeps_the_loss_and_the_gradients(encoders):
-    batch = training_batch(make_config(encoders, max_episode_steps=128), [90], [40])
+    batch = training_batch(make_config(encoders), [90], [24])
     results = []
     for checkpointing in (True, False):
         torch.manual_seed(1)
-        policy = make_policy(
-            make_config(encoders, max_episode_steps=128, gradient_checkpointing=checkpointing)
-        )
+        policy = make_policy(make_config(encoders, gradient_checkpointing=checkpointing))
         policy.train()
         torch.manual_seed(0)
         (loss, _info) = policy.forward(batch)
@@ -791,17 +839,8 @@ def test_gradient_checkpointing_keeps_the_loss_and_the_gradients(encoders):
         assert torch.allclose(with_checkpointing, without, atol=1e-5)
 
 
-def test_an_episode_too_short_for_a_chunk_trains_nothing(encoders):
-    config = make_config(encoders, max_episode_steps=128)
-    policy = make_policy(config)
-    policy.train()
-    (loss, info) = policy.forward(training_batch(config, [4], [2]))
-    assert float(loss.detach()) == 0.0 and info["chunks"] == 0.0
-    loss.backward()
-
-
 def test_training_reads_the_windows_of_a_lerobot_dataset(encoders, tmp_path):
-    config = make_config(encoders, max_episode_steps=64, instruction_dropout=0.0)
+    config = make_config(encoders, instruction_dropout=0.0)
     features = {
         key: {"dtype": "image", "shape": (64, 64, 3), "names": ["height", "width", "channels"]}
         for key in config.camera_keys
@@ -823,29 +862,23 @@ def test_training_reads_the_windows_of_a_lerobot_dataset(encoders, tmp_path):
         dataset.save_episode()
     dataset.finalize()
 
-    dataset = LeRobotDataset(
-        "test/sana_robot",
-        root=tmp_path / "data",
-        delta_timestamps=resolve_delta_timestamps(config, dataset.meta),
-    )
+    dataset = LeRobotDataset("test/sana_robot", root=tmp_path / "data", sampler=config.training_sampler)
+    # Every episode gives one window per chunk phase.
+    assert dataset.sample_counts == {0: 32, 1: 32} and len(dataset) == 64
     (preprocess, _postprocess) = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
-    samples = [dataset[10], dataset[45 + 60]]
-    batch = {
-        key: torch.stack([sample[key] for sample in samples])
-        for key in samples[0]
-        if torch.is_tensor(samples[0][key])
-    }
-    batch["task"] = [sample["task"] for sample in samples]
-    assert batch[config.camera_keys[0]].shape == (2, 33, 3, 64, 64)
-    assert batch[OBS_STATE].shape == (2, 4, len(config.state_slots))
-    assert batch[ACTION].shape == (2, 128, len(config.action_slots))
-    # The first sample is row 10 of 45: 54 rows before the episode and 29 after it are padding.
-    assert int(batch[f"{ACTION}_is_pad"][0].sum()) == 54 + 29
+    # Windows of 45 rows from 22 rows before the first frame (2 chunks) and of 70 rows from 4 (3 chunks).
+    batch = lerobot_collate_fn(dataset.__getitems__([SampleKey(0, 22), SampleKey(1, 4)]))
+    assert batch[config.camera_keys[0]].shape == (2, 25, 3, 64, 64)
+    assert batch[OBS_STATE].shape == (2, 3, len(config.state_slots))
+    assert batch[ACTION].shape == (2, 96, len(config.action_slots))
+    # The first window: 22 rows before the episode, and the collate pads it from 64 to 96 rows.
+    assert int(batch[f"{ACTION}_is_pad"][0].sum()) == 22 + 32
+    episode = dataset.__getitems__([SampleKey(0, 0)])[0]
+    torch.testing.assert_close(batch[ACTION][0, 22:64], episode[ACTION][:42])
 
     policy = make_policy(config)
     policy.train()
     (loss, info) = policy.forward(preprocess(batch))
-    # 45 rows from 22 rows before the first frame are 2 chunks; 70 rows from 4 rows before it are 3.
     assert info["chunks"] == 2.5 and torch.isfinite(loss)
 
 
@@ -911,7 +944,7 @@ def test_the_statistics_of_a_dataset_become_the_normalization(encoders, tmp_path
     assert torch.allclose(preprocess(batch)[OBS_STATE], expected, atol=1e-6)
     action = torch.rand(1, actions)
     expected = action * statistics[ACTION]["std"] + statistics[ACTION]["mean"]
-    assert torch.allclose(postprocess(action.clone()), expected, atol=1e-6)
+    assert torch.allclose(postprocess({ACTION: action.clone()})[ACTION], expected, atol=1e-6)
 
     # A fine-tune that keeps the checkpoint's normalization ignores the statistics of the dataset.
     (preprocess, _postprocess) = make_pre_post_processors(
@@ -942,5 +975,3 @@ def test_optimizer_and_scheduler_presets(encoders):
     biases = [parameter for name, parameter in policy.named_parameters() if name.endswith(".bias")]
     assert exempt["weight_decay"] == 0.0 and len(exempt["params"]) >= len(biases) > 0
     assert len(decayed["params"]) + len(exempt["params"]) == len(list(policy.parameters()))
-    with pytest.raises(ValueError, match="max_episode_steps"):
-        make_config(encoders, max_episode_steps=100)

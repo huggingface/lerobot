@@ -8,15 +8,59 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import EpisodeTable, Sample, SampleKey, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .sana_robot_core.multiview import SPATIAL_LAYOUT_2X2, SPATIAL_LAYOUT_T_SHAPE
 from .sana_robot_core.robot80 import ACTION_MODE_EEF, ACTION_MODE_JOINT, ROBOT_DIM
 from .sana_robot_core.video import RESIZE_CROP, RESIZE_STRETCH, VAE_SPATIAL_STRIDE
+from .sana_robot_core.windows import window_chunk_count
 
 TRAINING_BACKENDS = ("auto", "triton", "eager")
 AUGMENTATIONS = ("camera", "lighting", "color", "view_changes")
+
+
+@dataclass(frozen=True)
+class EpisodeWindowSampler(TrainingSampler):
+    """The training windows of SANA-Robot-AR: every episode once per chunk phase, as a whole.
+
+    A window opens ``h`` = 0 .. ``chunk_size`` - 1 rows before the first frame of its episode, so that every frame
+    starts a chunk in one window, and holds whole chunks up to the end of the episode while a chunk has a real
+    first target frame (`window_chunk_count`). The rows before the episode repeat its first frame and are flagged
+    as padding, like the rows after it. Episodes too short for a window give none.
+
+    A sample holds the frames at every ``video_frame_stride``-th row and the one after the last chunk, the state
+    at the first row of every chunk and every action.
+
+    Attributes:
+        chunk_size: Control steps per chunk.
+        video_frame_stride: Control steps between two video frames.
+    """
+
+    chunk_size: int
+    video_frame_stride: int
+
+    def windows(self, length: int) -> list[tuple[int, int]]:
+        """The (head rows, chunks) of every window of an episode of ``length`` frames."""
+        counts = (
+            window_chunk_count(length, h, self.chunk_size, self.video_frame_stride)
+            for h in range(self.chunk_size)
+        )
+        return [(h, chunks) for h, chunks in enumerate(counts) if chunks]
+
+    def count(self, episodes: EpisodeTable, episode: int) -> int:
+        return len(self.windows(episodes.length(episode)))
+
+    def sample(self, episodes: EpisodeTable, key: SampleKey) -> Sample:
+        head_rows, chunks = self.windows(episodes.length(key.episode))[key.sample]
+        rows = chunks * self.chunk_size
+        observation = {
+            FeatureType.VISUAL: range(0, rows + 1, self.video_frame_stride),
+            FeatureType.STATE: range(0, rows, self.chunk_size),
+        }
+        return Sample(-head_rows, Deltas(observation=observation, action=range(rows)))
 
 
 @PreTrainedConfig.register_subclass("sana_robot")
@@ -104,10 +148,6 @@ class SanaRobotConfig(PreTrainedConfig):
         dtype (`torch.dtype`, *optional*, defaults to `torch.bfloat16`):
             The precision of the policy's weights. Train with `torch.float32` weights and
             `--accelerator.mixed_precision=bf16`. The video VAE and the text encoder run in BF16.
-        max_episode_steps (`int`, *optional*, defaults to `512`):
-            Training reads this many control steps before and after the sampled frame, a multiple of `chunk_size`.
-            An episode of at most this length is trained as a whole; a longer one is trained on the part inside
-            this reach, which then starts after the first frame of the episode.
         keep_checkpoint_statistics (`bool`, *optional*, defaults to `False`):
             Fine-tune a checkpoint with the normalization it holds instead of the one computed from the new
             dataset, e.g. to train on more data of the robot the checkpoint was trained on.
@@ -200,7 +240,6 @@ class SanaRobotConfig(PreTrainedConfig):
 
     dtype: torch.dtype | None = torch.bfloat16
 
-    max_episode_steps: int = 512
     keep_checkpoint_statistics: bool = False
     action_loss_weight: float = 1.0
     timestep_weighting: bool = True
@@ -256,10 +295,6 @@ class SanaRobotConfig(PreTrainedConfig):
             raise ValueError("n_action_steps must be a multiple of video_frame_stride, at most chunk_size")
         if self.num_inference_steps <= 0 or min(self.video_flow_shift, self.action_flow_shift) <= 0:
             raise ValueError("num_inference_steps and the flow shifts must be positive")
-        if self.max_episode_steps <= 0 or self.max_episode_steps % self.chunk_size:
-            raise ValueError(
-                f"max_episode_steps must be a positive multiple of chunk_size ({self.chunk_size})"
-            )
         if not 0.0 <= self.instruction_dropout <= 1.0:
             raise ValueError("instruction_dropout must be in [0, 1]")
         unknown = set(self.augmentation or {}) - set(AUGMENTATIONS)
@@ -282,28 +317,16 @@ class SanaRobotConfig(PreTrainedConfig):
         self.validate_features()
 
     @property
-    def image_observation_delta_indices(self) -> list[int]:
-        """The frames of a training sample: every `video_frame_stride`-th control step within
-        `max_episode_steps` of the sampled frame. `SanaRobotPolicy.forward` keeps those of the episode's window."""
-        return list(range(-self.max_episode_steps, self.max_episode_steps + 1, self.video_frame_stride))
+    def training_sampler(self) -> EpisodeWindowSampler:
+        """Whole-episode windows, one per chunk phase (`EpisodeWindowSampler`)."""
+        return EpisodeWindowSampler(self.chunk_size, self.video_frame_stride)
 
     @property
-    def state_observation_delta_indices(self) -> list[int]:
-        """The states of a training sample: the control steps that can start a chunk, one every `chunk_size`."""
-        return list(range(-self.max_episode_steps, self.max_episode_steps, self.chunk_size))
-
-    @property
-    def observation_delta_indices(self) -> list[int]:
-        return self.state_observation_delta_indices
-
-    @property
-    def action_delta_indices(self) -> list[int]:
-        """The actions of a training sample: every control step within `max_episode_steps` of the sampled frame."""
-        return list(range(-self.max_episode_steps, self.max_episode_steps))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        """The camera frames after every ``video_frame_stride``-th action of the last chunk, the last one current,
+        and the current state."""
+        window = range(self.video_frame_stride - self.n_action_steps, 1, self.video_frame_stride)
+        return Deltas(observation=dict.fromkeys(self.camera_keys, window))
 
     def validate_features(self) -> None:
         if set(self.image_features) != set(self.camera_keys):

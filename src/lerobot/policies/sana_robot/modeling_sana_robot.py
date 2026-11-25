@@ -7,6 +7,7 @@ The model code is vendored in ``sana_robot_core``. This module drives it from Le
 """
 
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +15,12 @@ import torch
 from huggingface_hub import snapshot_download
 from torch import Tensor
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import is_package_available, require_package
 
+from ..chunk import ChunkPolicySpec
 from .configuration_sana_robot import SanaRobotConfig
 from .sana_robot_core.ar_session import ARSession
 from .sana_robot_core.augmentation import augment_views
@@ -67,39 +70,24 @@ def pad_rows(values: Tensor, rows: int) -> Tensor:
     return torch.cat((values, values.new_zeros(1, rows - values.shape[1], *values.shape[2:])), dim=1)
 
 
-def episode_window(real: Tensor, chunk_size: int, video_frame_stride: int) -> tuple[int, int, int]:
-    """Return the training window of one sample as (first row, chunks, head rows).
+def window_shape(padding: Tensor, chunk_size: int, video_frame_stride: int) -> tuple[int, int]:
+    """Return the (head rows, chunks) of a training window of `EpisodeWindowSampler` from its action padding.
 
-    A sample holds the control steps within a reach of the sampled frame, clamped to its episode. The window is
-    the episode from the last chunk boundary at or before its first frame, chosen so that the sampled frame
-    starts a chunk, to its end. When the episode starts or ends beyond the reach, the window is the whole chunks
-    inside the reach instead, and then starts after the first frame of the episode.
+    The window's leading padded rows lie before its episode; the rows of its episode inside it are its other
+    unpadded rows, and they give back its number of chunks. Rows after the window (the collate pads a batch to its
+    longest window) are padded too, so neither depends on the batch.
 
     Args:
-        real (`torch.Tensor`):
-            Which control steps of the sample are inside the episode, `[2 * reach]`; the sampled frame is at
-            index `reach`.
+        padding (`torch.Tensor`):
+            `action_is_pad` of the sample, `[T]`.
         chunk_size (`int`):
             Control steps per chunk.
         video_frame_stride (`int`):
             Control steps between two video frames.
-
-    Returns:
-        `tuple[int, int, int]`: The index of the window's first row in `real`, its number of chunks (0 when it
-        has no chunk to train) and the rows it starts before the episode. With rows before the episode, the
-        first chunk only fills the memory.
     """
-    reach = real.numel() // 2
-    (before, after) = (int(real[:reach].sum()), int(real[reach:].sum()))
-    head_rows = 0 if before == reach else -before % chunk_size
-    first_row = reach - before - head_rows
-    if after == reach:
-        return (first_row, (2 * reach - first_row) // chunk_size, head_rows)
-    return (
-        first_row,
-        window_chunk_count(before + after, head_rows, chunk_size, video_frame_stride),
-        head_rows,
-    )
+    real = ~padding
+    head_rows = int(real.int().argmax()) if bool(real.any()) else padding.numel()
+    return (head_rows, window_chunk_count(int(real.sum()), head_rows, chunk_size, video_frame_stride))
 
 
 def local_folder(path: str, revision: str | None, patterns: list[str] | None = None) -> str:
@@ -109,6 +97,28 @@ def local_folder(path: str, revision: str | None, patterns: list[str] | None = N
     return snapshot_download(path, revision=revision, allow_patterns=patterns)
 
 
+@dataclass
+class EpisodeMemory:
+    """What the policy keeps of one environment's episode between chunk calls.
+
+    Attributes:
+        stream: The video stream of the episode's frames.
+        window: Per memory frame, the frame of every camera `[3, 1, h, w]`: the last ``chunk_size`` control steps
+            at every ``video_frame_stride``-th one, copies of the first frame before the episode.
+        session: The model's session: the memory of the episode and the prompt.
+        controller: The memory of every chunk phase.
+        instruction: The instruction of the session's prompt.
+        step: The control step the next chunk starts at.
+    """
+
+    stream: ViewStream
+    window: deque[tuple[Tensor, ...]]
+    session: ARSession
+    controller: MemoryRTCController
+    instruction: str
+    step: int = 0
+
+
 class SanaRobotPolicy(PreTrainedPolicy):
     """SANA-Robot-AR: a world action model that denoises the future video latents of every camera and the action
     chunk together, on a memory of the episode.
@@ -116,12 +126,12 @@ class SanaRobotPolicy(PreTrainedPolicy):
     A checkpoint holds the weights of the policy alone. The LTX-2 video VAE and the Gemma 2 2B text encoder are
     loaded from ``config.vae_path`` and ``config.text_encoder_path`` when the first action is requested.
 
-    Call `select_action` on every control step: the memory reads a camera frame every
-    ``config.video_frame_stride`` steps and a chunk is generated every ``config.n_action_steps`` steps. The policy
-    runs one episode at a time (batch size 1).
+    `predict_action_chunk` returns the next ``config.n_action_steps`` actions of every environment. Each chunk is
+    executed completely and the next call reads its camera frames at every ``config.video_frame_stride``-th step
+    (`config.inference_deltas`); the policy keeps the memory of every environment's episode until `reset`.
 
-    `forward` trains on whole episodes with teacher forcing: every sample of a batch is the episode of its
-    sampled frame, and the episodes of a batch go through the model as one sequence.
+    `forward` trains on whole episodes with teacher forcing: every sample of a batch is one window of
+    `EpisodeWindowSampler`, and the windows of a batch go through the model as one sequence.
     """
 
     config_class = SanaRobotConfig
@@ -178,33 +188,35 @@ class SanaRobotPolicy(PreTrainedPolicy):
         return [group for group in groups if group["params"]]
 
     def reset(self) -> None:
-        """Start a new episode: drop the memory, the frames and the queued actions."""
-        self._step = 0
-        self._window: deque[tuple[Tensor, ...]] = deque(
-            maxlen=self.config.chunk_size // self.config.video_frame_stride
-        )
-        self._action_queue: deque[Tensor] = deque()
-        self._instruction: str | None = None
-        self._session: ARSession | None = None
-        self._controller: MemoryRTCController | None = None
+        """Start new episodes: drop the memory of every environment."""
+        self._episodes: list[EpisodeMemory] = []
 
-    def drop_queued_actions(self) -> None:
-        """Queued actions belong to the memory's clock, so a new instruction takes over at the next chunk instead."""
-        return None
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Chunks of ``n_action_steps`` actions, each executed completely before the next call.
+
+        The memory reads the frames observed after every ``video_frame_stride``-th executed action
+        (``config.inference_deltas``), and its clock is the executed steps, which is why a chunk must execute
+        completely.
+        """
+        config = self.config
+        return ChunkPolicySpec(
+            prediction_steps=config.n_action_steps,
+            execution_steps=config.n_action_steps,
+            complete_execution=True,
+        )
 
     def forward(self, batch: dict[str, Any], reduction: str = "mean") -> tuple[Tensor, dict | None]:
         """Return the flow-matching loss of a batch of whole-episode windows.
 
-        Every sample is trained on the window of its episode (`episode_window`), on the teacher-forcing sequence:
+        Every sample is one window of `EpisodeWindowSampler`, trained on the teacher-forcing sequence:
         each chunk denoises its video latents and its actions at its own noise level, from its observation, the
         first frame of the window and the clean latents of the chunks before it.
 
         Args:
             batch (`dict[str, Any]`):
-                A batch of the dataset after the policy's preprocessor, with the windows of
-                `config.image_observation_delta_indices`, `config.state_observation_delta_indices` and
-                `config.action_delta_indices`: every camera of `config.camera_keys` as `[B, T, 3, h, w]` in
-                [-1, 1] at its view size, `observation.state` `[B, T_state, state dimensions]` and `action`
+                A batch of `config.training_sampler` windows after the policy's preprocessor, padded to the
+                longest window: every camera of `config.camera_keys` as `[B, T, 3, h, w]` in [-1, 1] at its view
+                size, `observation.state` `[B, T_state, state dimensions]` and `action`
                 `[B, T_action, action dimensions]` normalized, `action_is_pad` `[B, T_action]`, and the
                 instructions under `task`.
             reduction (`str`, *optional*, defaults to `"mean"`):
@@ -217,28 +229,21 @@ class SanaRobotPolicy(PreTrainedPolicy):
         """
         config = self.config
         actions = batch[ACTION]
-        if actions.ndim != 3 or actions.shape[1] != 2 * config.max_episode_steps:
-            raise ValueError(
-                f"Training reads {2 * config.max_episode_steps} actions per sample (config.action_delta_indices), "
-                f"got {tuple(actions.shape)}"
-            )
+        if actions.ndim != 3:
+            raise ValueError(f"Training reads a window of actions per sample, got {tuple(actions.shape)}")
         device = actions.device
         # The frozen encoders run in BF16 on a GPU, whatever the precision of the trained weights.
         self._load_encoders(torch.bfloat16 if device.type == "cuda" else None)
         self._apply_training_backend(device)
-        real = ~batch[f"{ACTION}_is_pad"]
+        padding = batch[f"{ACTION}_is_pad"]
         tasks = [batch["task"]] * actions.shape[0] if isinstance(batch["task"], str) else batch["task"]
         (windows, trained, chunk_counts) = ([], [], [])
         for index in range(actions.shape[0]):
-            (first_row, chunks, head_rows) = episode_window(
-                real[index], config.chunk_size, config.video_frame_stride
-            )
+            (head_rows, chunks) = window_shape(padding[index], config.chunk_size, config.video_frame_stride)
             chunk_counts.append(chunks)
-            # An episode too short for one trained chunk is left out of the step.
+            # A window without a trained chunk (from another sampler) is left out of the step.
             if chunks:
-                windows.append(
-                    self._training_window(batch, index, first_row, chunks, head_rows, tasks[index])
-                )
+                windows.append(self._training_window(batch, index, chunks, head_rows, tasks[index]))
                 trained.append(index)
         sample_losses = actions.new_zeros(actions.shape[0], dtype=torch.float32)
         info = {"video_loss": 0.0, "action_loss": 0.0, "chunks": sum(chunk_counts) / len(chunk_counts)}
@@ -266,33 +271,32 @@ class SanaRobotPolicy(PreTrainedPolicy):
             self.training_backend = backend
 
     def _training_window(
-        self, batch: dict[str, Any], index: int, first_row: int, chunks: int, head_rows: int, instruction: str
+        self, batch: dict[str, Any], index: int, chunks: int, head_rows: int, instruction: str
     ) -> dict[str, Tensor]:
-        """Return the window of one sample, ``chunks`` chunks from ``first_row`` of its actions: its robot rows, its clean latents and its text."""
+        """Return the window of one sample, ``chunks`` chunks with ``head_rows`` rows before its episode: its robot
+        rows, its clean latents and its text."""
         config = self.config
         (size, stride) = (config.chunk_size, config.video_frame_stride)
         device = batch[ACTION].device
-        rows = slice(first_row, first_row + chunks * size)
+        rows = chunks * size
 
-        action = torch.zeros(chunks * size, ROBOT_DIM, device=device)
-        action[:, config.action_slots] = batch[ACTION][index, rows].float()
-        action_mask = torch.zeros(chunks * size, ROBOT_DIM, dtype=torch.bool, device=device)
-        action_mask[:, config.action_slots] = True
-        supervised = torch.ones(chunks, dtype=torch.bool, device=device)
-        supervised[0] = head_rows == 0
-        inside_episode = ~batch[f"{ACTION}_is_pad"][index, rows]
-        loss_mask = action_mask & inside_episode[:, None] & supervised.repeat_interleave(size)[:, None]
-
-        first_state = first_row // size
+        first_state = slice(0, chunks)
         state = torch.zeros(chunks, ROBOT_DIM, device=device)
-        state[:, config.state_slots] = batch[OBS_STATE][index, first_state : first_state + chunks].float()
+        state[:, config.state_slots] = batch[OBS_STATE][index, first_state].float()
         state_mask = torch.zeros(chunks, ROBOT_DIM, dtype=torch.bool, device=device)
         state_mask[:, config.state_slots] = True
 
-        (first_frame, frames) = (first_row // stride, chunks * size // stride + 1)
-        clips = [
-            batch[key][index : index + 1, first_frame : first_frame + frames] for key in config.camera_keys
-        ]
+        action = torch.zeros(rows, ROBOT_DIM, device=device)
+        action[:, config.action_slots] = batch[ACTION][index, :rows].float()
+        action_mask = torch.zeros(rows, ROBOT_DIM, dtype=torch.bool, device=device)
+        action_mask[:, config.action_slots] = True
+        supervised = torch.ones(chunks, dtype=torch.bool, device=device)
+        supervised[0] = head_rows == 0
+        inside_episode = ~batch[f"{ACTION}_is_pad"][index, :rows]
+        loss_mask = action_mask & inside_episode[:, None] & supervised.repeat_interleave(size)[:, None]
+
+        frames = rows // stride + 1
+        clips = [batch[key][index : index + 1, :frames] for key in config.camera_keys]
         if self.training and config.augmentation:
             clips = self._augment(clips, config.augmentation)
         views = [encode_teacher_forcing_latents(self._encoders["video"], clip, chunks) for clip in clips]
@@ -389,52 +393,69 @@ class SanaRobotPolicy(PreTrainedPolicy):
             for name in ("loss", "video_loss", "action_loss")
         }
 
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        raise NotImplementedError(
-            "SANA-Robot reads a frame every video_frame_stride control steps: call select_action on every step"
-        )
-
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
-        """Return the action of the current control step, [1, action dimensions], normalized.
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Return the next ``n_action_steps`` actions of every environment, `[B, n_action_steps, action dimensions]`,
+        normalized.
+
+        The first call of an episode opens its memory at the current frames. A later call reads the frames observed
+        while the previous chunk executed, brings the memory to the current step and generates the chunk that
+        starts there.
 
         Args:
-            batch (`dict[str, Tensor]`):
-                The observation of the step after the policy's preprocessor: every camera of
-                `config.camera_keys` as [1, 3, h, w] in [-1, 1] at its view size, `observation.state` as
-                [1, state dimensions] normalized, and the instruction under `task`.
+            batch (`dict[str, Any]`):
+                The observation after the policy's preprocessor: every camera of `config.camera_keys` in [-1, 1] at
+                its view size, as the window of `config.inference_deltas`
+                `[B, n_action_steps / video_frame_stride, 3, h, w]` (oldest first, the current one last) or the current
+                frame `[B, 3, h, w]`,
+                `observation.state` `[B, state dimensions]` normalized, and the instructions under `task`.
         """
         self.eval()
+        self._load_encoders()
         config = self.config
-        frames = self._frames(batch)
-        instruction = self._task(batch)
-        if self._step == 0:
-            self._open(frames, instruction)
-        elif self._step % config.video_frame_stride == 0:
-            self._window.append(frames)
-        if self._step % config.n_action_steps == 0:
-            self._plan(batch[OBS_STATE], instruction)
-        self._step += 1
-        return self._action_queue.popleft()
+        state = batch[OBS_STATE]
+        size = state.shape[0]
+        tasks = [batch["task"]] * size if isinstance(batch["task"], str) else list(batch["task"])
+        frames = self._camera_frames(batch, size)
+        if not self._episodes:
+            self._episodes = [self._open(views[-1], task) for views, task in zip(frames, tasks, strict=True)]
+        elif len(self._episodes) != size:
+            raise ValueError(
+                f"The episodes of {len(self._episodes)} environments are open, got a batch of {size}"
+            )
+        else:
+            expected = config.n_action_steps // config.video_frame_stride
+            if len(frames[0]) != expected:
+                raise ValueError(
+                    f"Expected the {expected} frames of the previous chunk, got {len(frames[0])} (see "
+                    "config.inference_deltas)"
+                )
+            for episode, views in zip(self._episodes, frames, strict=True):
+                episode.window.extend(views)
+                episode.step += config.n_action_steps
+        actions = [
+            self._plan(episode, state[index : index + 1], tasks[index])
+            for index, episode in enumerate(self._episodes)
+        ]
+        return PolicyOutput(action=torch.cat(actions))
 
-    def _frames(self, batch: dict[str, Tensor]) -> tuple[Tensor, ...]:
-        """Return the current frame of every camera as [3, 1, h, w]."""
-        frames = []
-        for key, size in zip(self.config.camera_keys, self.config.view_sizes, strict=True):
+    def _camera_frames(self, batch: dict[str, Any], size: int) -> list[list[tuple[Tensor, ...]]]:
+        """Return, per environment, its frames oldest first, each the frame of every camera `[3, 1, h, w]`."""
+        per_camera = []
+        for key, view in zip(self.config.camera_keys, self.config.view_sizes, strict=True):
             image = batch[key]
-            if image.ndim != 4 or tuple(image.shape) != (1, 3, *size):
-                raise ValueError(f"{key} must be [1, 3, {size[0]}, {size[1]}], got {tuple(image.shape)}")
-            frames.append(image[0].unsqueeze(1))
-        return tuple(frames)
-
-    @staticmethod
-    def _task(batch: dict[str, Any]) -> str:
-        task = batch["task"]
-        if isinstance(task, str):
-            return task
-        if len(task) != 1:
-            raise ValueError("SANA-Robot runs one episode at a time: use a batch size of 1")
-        return task[0]
+            if image.ndim == 4:
+                image = image[:, None]
+            if image.ndim != 5 or image.shape[0] != size or tuple(image.shape[2:]) != (3, *view):
+                raise ValueError(
+                    f"{key} must be [B, 3, {view[0]}, {view[1]}] or [B, T, 3, {view[0]}, {view[1]}], "
+                    f"got {tuple(batch[key].shape)}"
+                )
+            per_camera.append(image.unsqueeze(3))
+        return [
+            [tuple(camera[index, frame] for camera in per_camera) for frame in range(per_camera[0].shape[1])]
+            for index in range(size)
+        ]
 
     def _load_encoders(self, dtype: torch.dtype | None = None) -> None:
         """Load the text encoder and the video VAE on the policy's device, once: in ``dtype``, or in the precision
@@ -455,7 +476,6 @@ class SanaRobotPolicy(PreTrainedPolicy):
             "text": load_text_encoder(text_folder, parameter.device, dtype),
             "video": load_video_encoder(vae_folder, parameter.device, dtype),
         }
-        self._encoders["stream"] = ViewStream(self._encoders["video"])
         torch.set_rng_state(random_state)
         self._text_cache = {}
 
@@ -492,12 +512,11 @@ class SanaRobotPolicy(PreTrainedPolicy):
             "video_frame_stride": config.video_frame_stride,
         }
 
-    def _open(self, frames: tuple[Tensor, ...], instruction: str) -> None:
+    def _open(self, frames: tuple[Tensor, ...], instruction: str) -> EpisodeMemory:
         """Open an episode at its first frames: a new session and a window of copies of the first frame."""
-        self._load_encoders()
         config = self.config
         unconditional = self._text(None) if config.video_cfg_scale != 1.0 else (None, None)
-        self._session = ARSession(
+        session = ARSession(
             self.model,
             *self._text(instruction),
             self._data_info(frames[0].device),
@@ -507,32 +526,33 @@ class SanaRobotPolicy(PreTrainedPolicy):
             config.video_cfg_scale,
             *unconditional,
         )
-        self._controller = MemoryRTCController(
-            self._session, self._encoders["stream"], 0, config.n_action_steps
+        stream = ViewStream(self._encoders["video"])
+        frames_per_window = config.chunk_size // config.video_frame_stride
+        return EpisodeMemory(
+            stream=stream,
+            window=deque([frames] * frames_per_window, maxlen=frames_per_window),
+            session=session,
+            controller=MemoryRTCController(session, stream, 0, config.n_action_steps),
+            instruction=instruction,
         )
-        self._instruction = instruction
-        self._window.clear()
-        self._window.extend([frames] * (config.chunk_size // config.video_frame_stride))
 
-    def _plan(self, state: Tensor, instruction: str) -> None:
-        """Bring the memory to the current step, generate the next chunk and queue its first actions."""
+    def _plan(self, episode: EpisodeMemory, state: Tensor, instruction: str) -> Tensor:
+        """Bring an episode's memory to its current step and return the first ``n_action_steps`` actions of the
+        chunk that starts there, `[1, n_action_steps, action dimensions]`."""
         config = self.config
-        if self._session is None or self._controller is None:
-            raise RuntimeError("No episode is open")
-        if instruction != self._instruction:
-            self._session.set_prompt(*self._text(instruction))
-            self._instruction = instruction
+        if instruction != episode.instruction:
+            episode.session.set_prompt(*self._text(instruction))
+            episode.instruction = instruction
         device = state.device
-        clips = [torch.cat(view, dim=1) for view in zip(*self._window, strict=True)]
+        clips = [torch.cat(view, dim=1) for view in zip(*episode.window, strict=True)]
         row = torch.zeros(1, ROBOT_DIM, dtype=torch.float32, device=device)
         row[:, config.state_slots] = state.float()
         state_mask = torch.zeros(1, ROBOT_DIM, dtype=torch.bool, device=device)
         state_mask[:, config.state_slots] = True
         action_mask = torch.zeros(1, config.chunk_size, ROBOT_DIM, dtype=torch.bool, device=device)
         action_mask[:, :, config.action_slots] = True
-        if self._step == 0:
-            actions = self._controller.open(clips, row, state_mask, action_mask)
+        if episode.step == 0:
+            actions = episode.controller.open(clips, row, state_mask, action_mask)
         else:
-            actions = self._controller.generate(self._step, clips, row, state_mask, action_mask)
-        actions = actions[:, : config.n_action_steps, config.action_slots].float()
-        self._action_queue.extend(actions.transpose(0, 1))
+            actions = episode.controller.generate(episode.step, clips, row, state_mask, action_mask)
+        return actions[:, : config.n_action_steps, config.action_slots].float()
