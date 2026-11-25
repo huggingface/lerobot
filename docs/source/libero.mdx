@@ -122,6 +122,13 @@ differ slightly. Use hard resets when reproducing benchmark results.
 - `observation.images.image` — main camera view (`agentview_image`), HWC uint8
 - `observation.images.image2` — wrist camera view (`robot0_eye_in_hand_image`), HWC uint8
 
+The state gives the end effector in the world frame. A policy that reads joint positions, or poses in the frame
+of the robot base, can ask for them with `--env.obs_type=pixels_agent_pos_joints`, which adds:
+
+- `observation.joint_pos` — the 7 joint positions of the arm, in radians
+- `observation.base_pos` — position of the robot base in the world frame, in meters
+- `observation.base_quat` — orientation of the robot base in the world frame, xyzw quaternion
+
 <Tip warning={true}>
   LeRobot enforces the `.images.*` prefix for visual features. Ensure your
   policy config `input_features` use the same naming keys, and that your dataset
