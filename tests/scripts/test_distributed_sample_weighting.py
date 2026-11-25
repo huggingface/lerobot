@@ -74,6 +74,8 @@ def _weighted_worker(rank: int, port: int, directory: str) -> None:
         ("uniform", [0.2] * 4, [0, 1, 2, 3], 1e-6, 1.0),
         ("unequal", [0.2, 0.2, 0.2, -0.2], [0, 1, 2, 3], 1e-6, 1.0),
     ]:
+        # Indexed and fallback ranks must agree on the collective dtype even with a float64 default.
+        torch.set_default_dtype(torch.float64 if name == "mixed_index" else torch.float32)
         for accumulation in [1, 2]:
             accelerator = Accelerator(cpu=True, gradient_accumulation_steps=accumulation)
             path = root / f"{name}-{accumulation}-{rank}.parquet"

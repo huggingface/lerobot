@@ -206,7 +206,8 @@ class RABCWeights(SampleWeighter):
             weights_tensor = torch.ones(batch_size, device=self.device)
             # All distributed ranks must take part even when one has no frame indices.
             if self._normalization_stats_reducer is not None:
-                weights_tensor = self._normalize_weights(weights_tensor, missing_indices=True)
+                # Match the float32 statistics from ranks with frame indices.
+                weights_tensor = self._normalize_weights(weights_tensor.float(), missing_indices=True)
             return weights_tensor, stats
 
         # Convert to list of ints
