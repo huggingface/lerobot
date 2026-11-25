@@ -3,7 +3,7 @@
 **Goal:** a policy that solves a simulated task, and its success rate. **Time:** 10 minutes to set up, then several hours of training on a GPU. **You need:** LeRobot [installed](./installation), and an NVIDIA GPU, on your computer or in the cloud. No robot.
 
 > [!TIP]
-> **Key idea:** in [simulation](./glossary#simulation), the computer can run your policy over and over, from the same starting positions, and check each time whether it succeeded. That gives you its [success rate](./glossary#success-rate): one number that says how good the policy is, and lets you compare policies fairly.
+> **Key idea:** in [simulation](./glossary#simulator), the computer can run your policy over and over, from the same starting positions, and check each time whether it succeeded. That gives you its [success rate](./glossary#success-rate): one number that says how good the policy is, and lets you compare policies fairly.
 
 This page uses **PushT**, a small 2D simulation that runs on any computer. A blue dot pushes a grey T-shaped block onto the green T-shaped target. The policy sees a 96×96 image from above and the position of the dot, and decides where the dot moves next (the red cross). An episode succeeds when the block covers at least 95% of the target, within 300 steps (30 seconds).
 

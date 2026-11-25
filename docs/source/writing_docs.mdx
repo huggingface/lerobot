@@ -117,6 +117,7 @@ Spelling: **SO-101**, **SO-100** in prose (`so101_follower` in code), **π₀ (p
 - Link to other pages with relative links: `[Record a dataset](./record_dataset)`.
 - **Never rename or delete a page** without adding a line to `docs/source/_redirects.yml` (`old_name: new_name`). Many URLs are printed by the code, written into model cards on the Hub, or shared in blog posts.
 - When you rewrite a heading that other pages link to, keep its old anchor: `## New title[[old-anchor]]`.
+- Before you link to a heading, check that its anchor isn't also the name of a page, such as `#troubleshooting` or `#installation`. The sidebar link to that page has the same id, so the link opens at the wrong place. Give the heading its own anchor: `## Troubleshooting[[damiao-troubleshooting]]`.
 
 ## Check your page
 

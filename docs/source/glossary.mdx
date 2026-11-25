@@ -12,7 +12,7 @@ The command sent to the robot's motors at one moment, usually the target positio
 
 A short sequence of future actions that a policy predicts at once, for example the next 100. The robot carries them out one after another, which gives smoother movements than predicting one action at a time.
 
-### ACT
+### ACT[[act-policy]]
 
 Action Chunking with Transformers, a small and fast policy trained from scratch on your own data. It's the usual first policy to train. See [ACT](./act).
 
@@ -132,7 +132,7 @@ The name you give each arm, such as `my_follower`, with `--robot.id` or `--teleo
 
 Teaching a robot by showing it what to do: the policy learns to copy the episodes you recorded. Also called behavior cloning. It's the main way to train policies in LeRobot.
 
-### Inference
+### Inference[[policy-inference]]
 
 Running a trained policy to get its actions. "Inference speed" is how long the policy takes to decide.
 
@@ -210,7 +210,7 @@ Running a trained policy on a robot, real or simulated: the policy controls the 
 
 ## S
 
-### Simulation
+### Simulation[[simulator]]
 
 Software that imitates a robot and its surroundings, so you can record, train and test without real hardware. A **simulated robot** can stand in for a real one in most LeRobot commands. See [Simulation: when and why](./simulation_overview).
 

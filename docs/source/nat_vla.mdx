@@ -1,5 +1,18 @@
 # NAT VLA
 
+| At a glance |                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=nat_vla`                                                                  |
+| Family      | Vision-language-action model (VLA)                                                       |
+| Size        | 540M parameters                                                                          |
+| GPU memory  | About 18 GB to train with batch 16 (measured on an RTX 4090)                             |
+| Takes text  | Yes                                                                                      |
+| Starts from | Pretrained: [`ahad-j/nat-vla-450m`](https://huggingface.co/ahad-j/nat-vla-450m)          |
+| Install     | `pip install 'lerobot[nat_vla]'`                                                         |
+| Guide shows | Simulation (LIBERO), running on a real robot (SO-100)                                    |
+| License     | LFM Open License v1.0 for the checkpoint, limits commercial use: see [License](#license) |
+| Paper       | [NAT](https://huggingface.co/papers/2611.28873) (Jawaid et al., 2026)                    |
+
 NAT VLA is a vision-language-action model built on LFM2-VL that writes robot actions as tokens of the NAT action tokenizer, introduced in the paper [NAT: Scaling Neural Action Tokenizers Across Embodiments](https://ahadjawaid.com/nat-paper). The pretrained checkpoint is [`ahad-j/nat-vla-450m`](https://huggingface.co/ahad-j/nat-vla-450m).
 
 ## Model Overview
