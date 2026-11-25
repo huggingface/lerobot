@@ -309,13 +309,13 @@ def localize_remote_root(
     them in place. ``storage_options`` configures the connection used to read
     remote metadata.
 
-    A backend that raises ``FileNotFoundError`` does not own the root. One that
+    A backend that raises ``FileNotFoundError`` does not own the root, one that
     raises ``ImportError`` lacks its optional dependencies, and any other error
-    is a failed probe; either way the next backend is still tried. If none
-    succeeds, ``FileNotFoundError`` is raised only when every backend disowned
-    the root and no contested format was left unprobed. Otherwise the result is
-    inconclusive and ``RuntimeError`` is raised: a format that could not be
-    checked does not show the dataset is absent.
+    is a failed probe; in every case the next backend is still tried. If none
+    succeeds and every backend raised one of the first two, ``FileNotFoundError``
+    is raised. A failed probe or a contested format left unprobed makes the
+    result inconclusive instead, and ``RuntimeError`` is raised: a format that
+    could not be checked does not show the dataset is absent.
     """
     _discover_plugin_readers()
     attempts: list[str] = []
@@ -333,7 +333,7 @@ def localize_remote_root(
             )
         except Exception as error:
             # One backend failing must not stop the probe from reaching the others.
-            inconclusive = inconclusive or not isinstance(error, FileNotFoundError)
+            inconclusive = inconclusive or not isinstance(error, (FileNotFoundError, ImportError))
             attempts.append(
                 f"{storage_format} ({module_name}): {stage} raised {type(error).__name__}; "
                 f"{_probe_note(storage_format, error, storage_options)}"
@@ -350,8 +350,8 @@ def localize_remote_root(
     if inconclusive:
         raise RuntimeError(
             "Could not localize the dataset root: no storage backend recognized it, but some formats "
-            "could not be checked (missing dependencies, a failed probe or a contested format), so "
-            f"this does not show that no dataset exists there. Tried:{tried}\n{hint}"
+            "could not be checked (a failed probe or a contested format), so this does not show "
+            f"that no dataset exists there. Tried:{tried}\n{hint}"
         )
     raise FileNotFoundError(f"No dataset found at the given root. Tried:{tried}\n{hint}")
 

@@ -415,14 +415,15 @@ A backend is a module exposing two names:
 - `localize_root(repo_id, root, revision, token=..., force_cache_sync=..., storage_options=...)` — materializes
   `meta/` locally for an object-store root and returns the directory holding it. Raise
   `FileNotFoundError` if the root is not yours, so the other registered formats still get
-  their turn. Raise `ImportError` if your optional dependencies are missing; any other
-  exception counts as a failed probe. Either way the other formats are still tried, but the
-  outcome is inconclusive: if none succeeds, the error says the root could not be localized
-  and names your format as missing dependencies or failed. Only when every format raised
-  `FileNotFoundError` does the error say no dataset was found. It reports your format, the
-  failing step and the exception type, never your exception's message, which could quote
-  credentials. Like the reader, this hook receives `storage_options` only when nonempty; give
-  it a default such as `None` so calls without connection settings also work.
+  their turn. Raise `ImportError` if your optional dependencies are missing: it is treated
+  like `FileNotFoundError`, except that the error names your format as missing its
+  dependencies. Any other exception counts as a failed probe. In every case the other formats
+  are still tried. If none succeeds, the error says no dataset was found, unless a probe
+  failed or a contested format could not be probed; then the outcome is inconclusive and the
+  error says the root could not be localized. It reports your format, the failing step and
+  the exception type, never your exception's message, which could quote credentials. Like
+  the reader, this hook receives `storage_options` only when nonempty; give it a default such
+  as `None` so calls without connection settings also work.
 
 Declare an entry point so your format is available as soon as your package is installed:
 

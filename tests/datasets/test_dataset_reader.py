@@ -492,7 +492,9 @@ MISSING_DEPENDENCIES = "optional dependencies missing"
 PROBE_FAILED = "probe failed; check the connection settings and access to the root"
 
 # kind -> (source of a backend that does not own the root, failing stage,
-# exception type, fixed note reported for it)
+# exception type, fixed note reported for it, what localizing raises when no
+# backend succeeds). Disowning the root or lacking optional dependencies leaves
+# "no dataset found", as upstream always did; any other failure is inconclusive.
 _BROKEN_BACKENDS = {
     "import OSError": (
         """
@@ -502,6 +504,7 @@ _BROKEN_BACKENDS = {
         "import",
         "OSError",
         PROBE_FAILED,
+        RuntimeError,
     ),
     "import ImportError": (
         """
@@ -511,6 +514,7 @@ _BROKEN_BACKENDS = {
         "import",
         "ImportError",
         MISSING_DEPENDENCIES,
+        FileNotFoundError,
     ),
     "missing hook": (
         """
@@ -519,6 +523,7 @@ _BROKEN_BACKENDS = {
         "localize_root lookup",
         "AttributeError",
         PROBE_FAILED,
+        RuntimeError,
     ),
     "hook ValueError": (
         """
@@ -529,6 +534,7 @@ _BROKEN_BACKENDS = {
         "localize_root",
         "ValueError",
         PROBE_FAILED,
+        RuntimeError,
     ),
     "hook PermissionError": (
         """
@@ -539,6 +545,7 @@ _BROKEN_BACKENDS = {
         "localize_root",
         "PermissionError",
         PROBE_FAILED,
+        RuntimeError,
     ),
     "hook FileNotFoundError": (
         """
@@ -549,6 +556,7 @@ _BROKEN_BACKENDS = {
         "localize_root",
         "FileNotFoundError",
         NOT_FOUND,
+        FileNotFoundError,
     ),
 }
 
@@ -606,20 +614,17 @@ def test_remote_probe_reaches_the_owner_past_a_broken_backend(tmp_path, monkeypa
 
 @pytest.mark.parametrize("kind", list(_BROKEN_BACKENDS))
 def test_remote_probe_failure_is_not_reported_as_missing_data(monkeypatch, plugin_dir, caplog, kind):
-    """Only a root every backend disowned reads as "not found"; nothing secret is echoed."""
-    broken_source, stage, error_type, note = _BROKEN_BACKENDS[kind]
+    """Only a probe that failed reads as inconclusive rather than "not found"; nothing secret is echoed."""
+    broken_source, stage, error_type, note, raised = _BROKEN_BACKENDS[kind]
     nonowner_source = """
         def localize_root(repo_id, root, revision, **kwargs):
             lr_probe_log.attempts.append("owner")
             raise FileNotFoundError(f"nothing at {root} {kwargs} " + SECRET)
         """
     log = _set_up_remote_probe(monkeypatch, plugin_dir, broken_source, nonowner_source)
-    disowned = error_type == "FileNotFoundError"
+    disowned = raised is FileNotFoundError
 
-    with (
-        caplog.at_level(logging.DEBUG),
-        pytest.raises(FileNotFoundError if disowned else RuntimeError) as caught,
-    ):
+    with caplog.at_level(logging.DEBUG), pytest.raises(raised) as caught:
         localize_remote_root(
             DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=_secret_options()
         )
@@ -650,19 +655,22 @@ def test_builtin_lance_failures_keep_a_fixed_hint(tmp_path, monkeypatch, caplog,
     monkeypatch.setenv("LANCE_IO_THREADS", "256")
     options = _secret_options()
     if case == "lancedb missing":
+        # The default install: upstream reports this as "no dataset found", with the fix.
         monkeypatch.setitem(import_utils._require_package_cache, "lancedb", False)
+        raised, headline = FileNotFoundError, "No dataset found"
         expected = "optional dependencies missing; install them with: pip install 'lerobot[lancedb]'"
     else:
         # Rejected before any connection is opened, so lancedb itself is never called.
         monkeypatch.setitem(import_utils._require_package_cache, "lancedb", True)
         options["Revision"] = f"{SECRET}-revision"
+        raised, headline = RuntimeError, "Could not localize"
         expected = "storage_options must not contain 'revision'; use the revision argument instead"
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError) as caught:
+    with caplog.at_level(logging.DEBUG), pytest.raises(raised) as caught:
         localize_remote_root(DUMMY_REPO_ID, SIGNED_ROOT, token=f"{SECRET}-token", storage_options=options)
 
     message = str(caught.value)
-    assert "Could not localize" in message
+    assert headline in message
     assert "lance (lerobot.datasets.lance_backend): " in message
     assert expected in message
     assert SECRET not in message
