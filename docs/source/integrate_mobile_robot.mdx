@@ -1,0 +1,102 @@
+# Adding a Mobile Robot
+
+Mobile robots use the same `Robot` interface as arms. Follow [Bring Your Own Hardware](./integrate_hardware) to register your robot and implement its connection, observation, and action methods. This guide covers the additional conventions needed to reuse keyboard teleoperation and dataset recording, with an optional leader arm.
+
+## Define the action space
+
+Expose body-frame base velocities in `action_features`:
+
+| Feature     | Positive direction         | Unit  |
+| ----------- | -------------------------- | ----- |
+| `x.vel`     | Forward                    | m/s   |
+| `y.vel`     | Left                       | m/s   |
+| `theta.vel` | Counter-clockwise rotation | deg/s |
+
+```python
+@property
+def action_features(self) -> dict[str, type]:
+    return {"x.vel": float, "y.vel": float, "theta.vel": float}
+```
+
+Convert these values to your driver's units inside `send_action()`. For example, a driver expecting yaw in radians per second needs `math.radians(action["theta.vel"])`. A wheeled base may instead convert body velocities to wheel speeds. Keep that conversion in the robot implementation so teleoperation and policies share the same action space.
+
+If the base cannot move sideways, reject nonzero `y.vel` explicitly or document how your driver handles it. Add joint position features for an attached arm using names that match its observations. For example, LeKiwi uses `arm_shoulder_pan.pos` alongside the three base velocities.
+
+Declare feature names and camera shapes before connecting. Observations should contain measured state; requested velocities are not measured odometry. Expose cameras through the usual `CameraConfig` objects and return RGB arrays with shape `(height, width, 3)` from `get_observation()`.
+
+## Keep input handling in the teleoperator pipeline
+
+The standard CLI builds this path:
+
+```text
+Keyboard (+ optional leader arm)
+    → CompositeTeleoperator
+    → base input mapping
+    → hold uncommanded joints
+    → robot action processor
+    → Robot.send_action()
+```
+
+`CompositeTeleoperator` combines a `base` input and an optional `arm`. The base mapping converts raw input into the three velocity features. `make_default_teleop_action_processor()` selects the mapping registered for the base input, or uses the explicitly configured `teleop.mapping`. The robot receives velocities and joint targets, not key names.
+
+For a robot whose arm features have a prefix, expose `arm_action_prefix`, for example `arm_action_prefix = "arm_"`. The default processor setup applies it to the leader's action names. Leave it empty if the names already match.
+
+Without a leader arm, `HoldUncommandedJointsProcessorStep` fills missing `.pos` commands using the position observed the first time each joint is uncommanded. It retains that target across subsequent observations and recording phases; resetting the processor clears the targets. This requires valid joint observations and position control that can support the arm. It does not implement a base stop or a balancing controller.
+
+New base input devices can reuse this path by implementing a `Teleoperator` and registering a `BaseActionProcessorStep` under the same choice name as the device. The mapping must declare its output features as well as convert actions. No robot-specific mobile factory or extra top-level CLI flags are needed.
+
+## Set speeds and enforce robot limits
+
+The keyboard mapping controls requested speeds. Your robot must enforce its own limits in `send_action()` and return the command it actually applied. Increasing an input speed does not override a lower robot limit; increasing a robot limit does not increase a lower input speed.
+
+Send zero base velocity when input is released. Also implement a driver or firmware command timeout so a stalled client cannot leave the last velocity active. Disconnect and partial-connection cleanup must release resources and stop motion using the robot's supported procedure. For a balancing robot, zero velocity and disabling the motors are different operations.
+
+Do not opt a velocity-controlled base into `supports_position_hold`: repeating a retained velocity continues motion. See the [waiting contract](./integrate_hardware#waiting-between-predictions) for rollout requirements.
+
+## Teleoperate and record
+
+Here is a low-speed LeKiwi example; replace the robot arguments with those of your integration:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=lekiwi_client \
+  --robot.remote_ip=192.168.1.100 \
+  --robot.cameras='{}' \
+  --teleop.type=composite \
+  --teleop.base.type=keyboard \
+  --teleop.mapping.type=keyboard \
+  --teleop.mapping.layout=azerty \
+  --teleop.mapping.linear_speeds='[0.05]' \
+  --teleop.mapping.angular_speeds='[10]' \
+  --fps=30
+```
+
+Layouts are `qwerty` (default), `azerty`, and `qwertz`. A complete `teleop.mapping.key_bindings` dictionary overrides the preset. Recording reserves these movement keys so, for example, AZERTY's `q` can move left without ending the recording.
+
+To add a calibrated leader arm, append:
+
+```bash
+  --teleop.arm.type=so101_leader \
+  --teleop.arm.port=/dev/ttyACM0 \
+  --teleop.arm.id=my_leader
+```
+
+The same robot and teleoperator arguments work with `lerobot-record`. Replace `--fps=30` with dataset options, for example:
+
+```bash
+  --dataset.repo_id="${HF_USER}/mobile-test" \
+  --dataset.single_task="Drive forward and turn" \
+  --dataset.fps=30 \
+  --dataset.num_episodes=1 \
+  --dataset.episode_time_s=30 \
+  --dataset.reset_time_s=0 \
+  --dataset.push_to_hub=true
+```
+
+The dataset stores processed actions rather than keyboard events. To record images, configure cameras on the robot and enable `--dataset.video=true`; that flag alone does not create a camera stream. See [LeKiwi](./lekiwi) for the host setup and camera configuration.
+
+## Validate the integration
+
+Test coordinate directions and unit conversion, command limits, release-to-zero behavior, and cleanup after a failed connection. For an attached arm, check leader feature names and the retained targets when no leader is present. These checks can use a mocked driver.
+
+On hardware, start at low speed and check forward, sideways, and rotation separately, then release the controls and interrupt the client. Record a short episode and inspect the action values, measured observations, and any video files. A successful upload confirms storage; it does not by itself verify that the robot followed the commands.
