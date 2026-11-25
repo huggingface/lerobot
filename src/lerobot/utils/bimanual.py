@@ -64,5 +64,7 @@ class BimanualMixin:
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        try:
+            self.left_arm.disconnect()
+        finally:
+            self.right_arm.disconnect()

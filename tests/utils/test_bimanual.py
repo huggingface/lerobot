@@ -18,8 +18,9 @@ from lerobot.utils.bimanual import BimanualMixin
 
 
 class FakeArm:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, fail_disconnect=False):
         self.fail = fail
+        self.fail_disconnect = fail_disconnect
         self.is_connected = False
 
     def connect(self, calibrate=True):
@@ -29,6 +30,8 @@ class FakeArm:
 
     def disconnect(self):
         self.is_connected = False
+        if self.fail_disconnect:
+            raise ConnectionError("close failed")
 
 
 class FakePair(BimanualMixin):
@@ -48,3 +51,12 @@ def test_connects_both_arms():
     pair = FakePair(right_fails=False)
     pair.connect()
     assert pair.is_connected
+
+
+def test_disconnect_reaches_the_right_arm_when_the_left_one_fails():
+    pair = FakePair(right_fails=False)
+    pair.connect()
+    pair.left_arm.fail_disconnect = True
+    with pytest.raises(ConnectionError):
+        pair.disconnect()
+    assert not pair.right_arm.is_connected

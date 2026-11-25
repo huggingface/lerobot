@@ -334,7 +334,12 @@ def clip_to_limits(values: np.ndarray, joint_limits: np.ndarray) -> np.ndarray:
 
     Returns:
         `np.ndarray`: A clipped copy of `values`.
+
+    Raises:
+        ValueError: If a value is NaN or infinite, which clipping would turn into a limit.
     """
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"Joint targets must be finite, got {values}")
     n = len(joint_limits)
     clipped = values.copy()
     clipped[:n] = np.clip(clipped[:n], *np.asarray(joint_limits).T)

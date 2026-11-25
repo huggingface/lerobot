@@ -249,6 +249,12 @@ def test_controller_copies_submitted_target():
     assert controller._target[0] == 0.5
 
 
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_clip_rejects_non_finite_values(bad):
+    with pytest.raises(ValueError, match="finite"):
+        mit_control.clip_to_limits(np.array([bad, 0.5, 0.5]), np.array([[-1.0, 1.0], [0.0, 2.0]]))
+
+
 @pytest.mark.parametrize("bad", [np.nan, np.inf])
 def test_controller_rejects_non_finite_target(bad):
     controller = make_controller()
