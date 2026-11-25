@@ -599,8 +599,11 @@ class MitController:
                 Joint positions in radians followed by the normalized gripper opening.
 
         Raises:
+            ValueError: If the target has a NaN or infinite value.
             ConnectionError: If the controller stopped or its feedback is stale.
         """
+        if not np.all(np.isfinite(target)):
+            raise ValueError(f"{self.name} target must be finite, got {target}")
         with self._lock:
             self._check_healthy()
             if self.idle and self._params.idle_mode == "float":

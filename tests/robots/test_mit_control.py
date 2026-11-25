@@ -249,6 +249,15 @@ def test_controller_copies_submitted_target():
     assert controller._target[0] == 0.5
 
 
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_controller_rejects_non_finite_target(bad):
+    controller = make_controller()
+    controller.set_target(np.array([0.5, 0.5, 1.0]))
+    with pytest.raises(ValueError, match="finite"):
+        controller.set_target(np.array([bad, 0.5, 1.0]))
+    assert controller._target[0] == 0.5
+
+
 def test_float_step_compensates_gravity_and_friction_without_stiffness():
     state = mit_control.JointState(
         position=np.array([0.2, 0.5, 0.5]), velocity=np.array([1.0, 1.0, 0.0]), torque=np.zeros(3)
