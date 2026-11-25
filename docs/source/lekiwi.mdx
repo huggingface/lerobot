@@ -13,6 +13,8 @@ In the steps below, we explain how to assemble the LeKiwi mobile robot.
 Follow this [README](https://github.com/SIGRobotics-UIUC/LeKiwi). It contains the bill of materials, with a link to source the parts, as well as the instructions to 3D print the parts.
 It also includes advice if it's your first time printing or if you don't own a 3D printer.
 
+This setup was validated on LeKiwi over Wi-Fi with an SO101 leader and an 8BitDo Ultimate 2C Wireless gamepad. On macOS, this controller required pygame-ce 2.5.8 (SDL 2.32.10) with `SDL_JOYSTICK_HIDAPI=0`, `SDL_JOYSTICK_MFI=0`, and `SDL_JOYSTICK_IOKIT=1`.
+
 ### Wired version
 
 If you have the **wired** LeKiwi version, you can skip the installation of the Raspberry Pi and setting up SSH. You can also run all commands directly on your PC for both the LeKiwi scripts and the leader arm scripts for teleoperating.
@@ -285,6 +287,8 @@ lerobot-teleoperate \
 ```
 
 The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--teleop.mapping`, e.g. `--teleop.mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--teleop.mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
+
+To drive the base with a gamepad, install `lerobot[gamepad]` and replace `--teleop.base.type=keyboard` with `--teleop.base.type=gamepad --teleop.base.use_gripper=false`. The existing gamepad mapping uses the left stick for translation and the right stick's horizontal axis for rotation. To customize the mapping, select `--teleop.mapping.type=gamepad` and set maximum speeds with `--teleop.mapping.linear_speed=0.1` (m/s) and `--teleop.mapping.angular_speed=30` (deg/s). The same optional leader arm and held-joint behavior apply. Controller axis assignments can vary; check the commands before driving the robot.
 
 ### Wired version
 

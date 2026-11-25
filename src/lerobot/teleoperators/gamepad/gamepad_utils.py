@@ -221,10 +221,11 @@ class KeyboardController(InputController):
 class GamepadController(InputController):
     """Generate motion deltas from gamepad input."""
 
-    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1):
+    def __init__(self, x_step_size=1.0, y_step_size=1.0, z_step_size=1.0, deadzone=0.1, right_stick_axis="y"):
         require_package("pygame", extra="gamepad")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
+        self.right_stick_axis = right_stick_axis
         self.joystick = None
         self.intervention_flag = False
 
@@ -244,7 +245,7 @@ class GamepadController(InputController):
 
         print("Gamepad controls:")
         print("  Left analog stick: Move in X-Y plane")
-        print("  Right analog stick (vertical): Move in Z axis")
+        print(f"  Right analog stick ({self.right_stick_axis} axis): Third motion channel")
         print("  B/Circle button: Exit")
         print("  Y/Triangle button: End episode with SUCCESS")
         print("  A/Cross button: End episode with FAILURE")
@@ -305,7 +306,7 @@ class GamepadController(InputController):
             x_input = self.joystick.get_axis(1)  # Left/Right
 
             # Right stick Y (typically axis 3 or 4)
-            z_input = self.joystick.get_axis(3)  # Up/Down for Z
+            z_input = self.joystick.get_axis(2 if self.right_stick_axis == "x" else 3)
 
             # Apply deadzone to avoid drift
             x_input = 0 if abs(x_input) < self.deadzone else x_input
@@ -333,6 +334,7 @@ class GamepadControllerHID(InputController):
         y_step_size=1.0,
         z_step_size=1.0,
         deadzone=0.1,
+        right_stick_axis="y",
     ):
         """
         Initialize the HID gamepad controller.
@@ -345,6 +347,7 @@ class GamepadControllerHID(InputController):
         require_package("hidapi", extra="gamepad", import_name="hid")
         super().__init__(x_step_size, y_step_size, z_step_size)
         self.deadzone = deadzone
+        self.right_stick_axis = right_stick_axis
         self.device = None
         self.device_info = None
 
@@ -389,7 +392,7 @@ class GamepadControllerHID(InputController):
 
             logging.info("Gamepad controls (HID mode):")
             logging.info("  Left analog stick: Move in X-Y plane")
-            logging.info("  Right analog stick: Move in Z axis (vertical)")
+            logging.info("  Right analog stick (%s axis): Third motion channel", self.right_stick_axis)
             logging.info("  Button 1/B/Circle: Exit")
             logging.info("  Button 2/A/Cross: End episode with SUCCESS")
             logging.info("  Button 3/X/Square: End episode with FAILURE")
@@ -468,6 +471,7 @@ class GamepadControllerHID(InputController):
         # Calculate deltas - invert as needed based on controller orientation
         delta_x = -self.left_x * self.x_step_size  # Forward/backward
         delta_y = -self.left_y * self.y_step_size  # Left/right
-        delta_z = -self.right_y * self.z_step_size  # Up/down
+        right_input = self.right_x if self.right_stick_axis == "x" else self.right_y
+        delta_z = -right_input * self.z_step_size
 
         return delta_x, delta_y, delta_z

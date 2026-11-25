@@ -378,7 +378,8 @@ def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
 
 
 @pytest.mark.parametrize("command", ["teleoperate", "record", "rollout"])
-def test_lekiwi_cli_registration_in_a_fresh_process(command):
+@pytest.mark.parametrize("base_input", ["keyboard", "gamepad"])
+def test_lekiwi_cli_registration_in_a_fresh_process(command, base_input):
     result = subprocess.run(
         [
             sys.executable,
@@ -386,8 +387,8 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
             f"lerobot.scripts.lerobot_{command}",
             "--robot.type=lekiwi_client",
             "--teleop.type=composite",
-            "--teleop.base.type=keyboard",
-            "--teleop.mapping.type=keyboard",
+            f"--teleop.base.type={base_input}",
+            f"--teleop.mapping.type={base_input}",
             "--help",
         ],
         capture_output=True,
@@ -395,5 +396,6 @@ def test_lekiwi_cli_registration_in_a_fresh_process(command):
         check=True,
     )
     assert "--robot.remote_ip" in result.stdout
-    assert "--teleop.mapping.layout" in result.stdout
+    mapping_option = "layout" if base_input == "keyboard" else "linear_speed"
+    assert f"--teleop.mapping.{mapping_option}" in result.stdout
     assert "--teleop.base.calibration_dir" in result.stdout

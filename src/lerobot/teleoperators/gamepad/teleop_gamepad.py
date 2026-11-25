@@ -60,6 +60,7 @@ class GamepadTeleop(Teleoperator):
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
+        self.right_stick_axis = config.right_stick_axis or "y"
 
         self.gamepad: InputController | None = None
 
@@ -71,19 +72,11 @@ class GamepadTeleop(Teleoperator):
             )
 
     @property
-    def action_features(self) -> dict:
+    def action_features(self) -> dict[str, type]:
+        features: dict[str, type] = dict.fromkeys(("delta_x", "delta_y", "delta_z"), float)
         if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (3,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-            }
+            features["gripper"] = int
+        return features
 
     @property
     def feedback_features(self) -> dict:
@@ -93,12 +86,15 @@ class GamepadTeleop(Teleoperator):
         if self.hidapi_fallback:
             from .gamepad_utils import GamepadControllerHID
 
-            self.gamepad = GamepadControllerHID()
+            self.gamepad = GamepadControllerHID(right_stick_axis=self.right_stick_axis)
         else:
             from .gamepad_utils import GamepadController
 
-            self.gamepad = GamepadController()
+            self.gamepad = GamepadController(right_stick_axis=self.right_stick_axis)
         self.gamepad.start()
+        if not self.gamepad.running:
+            self.disconnect()
+            raise DeviceNotConnectedError("No gamepad connected. Check the controller connection.")
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
