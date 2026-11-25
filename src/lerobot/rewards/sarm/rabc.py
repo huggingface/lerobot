@@ -29,6 +29,7 @@ See: https://arxiv.org/abs/2509.25358 for the SARM paper.
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -77,6 +78,9 @@ class RABCWeights(SampleWeighter):
         epsilon: Small constant for numerical stability (default: 1e-6).
         fallback_weight: Weight to use for frames without valid delta (default: 1.0).
         device: Device to return tensors on.
+        normalization_stats_reducer: Optional sum reduction of the raw weight sum,
+            sample count, and indexed sample count. Distributed training normalizes one global batch;
+            standalone calls retain local batch normalization.
     """
 
     def __init__(
@@ -88,6 +92,8 @@ class RABCWeights(SampleWeighter):
         epsilon: float = 1e-6,
         fallback_weight: float = 1.0,
         device: torch.device | None = None,
+        *,
+        normalization_stats_reducer: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ):
         self.progress_path = resolve_hf_path(progress_path)
         self.chunk_size = chunk_size
@@ -96,6 +102,7 @@ class RABCWeights(SampleWeighter):
         self.epsilon = epsilon
         self.fallback_weight = fallback_weight
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._normalization_stats_reducer = normalization_stats_reducer
 
         # Determine progress column name
         self.progress_column = f"progress_{head_mode}"
@@ -187,7 +194,8 @@ class RABCWeights(SampleWeighter):
 
         Returns:
             Tuple of:
-            - Weights tensor (batch_size,) normalized to sum to batch_size.
+            - Weights tensor (batch_size,) normalized over the local batch, or the
+              global batch when a normalization stats reducer is supplied.
             - Stats dict with weighting statistics for logging.
         """
         indices = batch.get("index")
@@ -195,7 +203,11 @@ class RABCWeights(SampleWeighter):
             logging.warning("RA-BC: Batch missing 'index' key, using uniform weights")
             batch_size = self._get_batch_size(batch)
             stats = {"mean_weight": 1.0, "num_zero_weight": 0, "num_full_weight": batch_size}
-            return torch.ones(batch_size, device=self.device), stats
+            weights_tensor = torch.ones(batch_size, device=self.device)
+            # All distributed ranks must take part even when one has no frame indices.
+            if self._normalization_stats_reducer is not None:
+                weights_tensor = self._normalize_weights(weights_tensor, missing_indices=True)
+            return weights_tensor, stats
 
         # Convert to list of ints
         if isinstance(indices, torch.Tensor):
@@ -227,12 +239,23 @@ class RABCWeights(SampleWeighter):
 
         weights_tensor = torch.tensor(weights, device=self.device, dtype=torch.float32)
 
-        # Normalize to sum to batch_size
-        batch_size = len(weights_tensor)
-        weight_sum = weights_tensor.sum() + self.epsilon
-        weights_tensor = weights_tensor * batch_size / weight_sum
+        return self._normalize_weights(weights_tensor), batch_stats
 
-        return weights_tensor, batch_stats
+    def _normalize_weights(self, weights: torch.Tensor, *, missing_indices: bool = False) -> torch.Tensor:
+        """Keep relative raw weights across ranks before normalizing their shared batch."""
+        weight_sum = weights.sum()
+        if self._normalization_stats_reducer is None:
+            return weights * len(weights) / (weight_sum + self.epsilon)
+
+        batch_size = weights.new_tensor(weights.numel())
+        indexed_count = torch.zeros_like(batch_size) if missing_indices else batch_size
+        weight_sum, batch_size, indexed_count = self._normalization_stats_reducer(
+            torch.stack((weight_sum, batch_size, indexed_count))
+        ).unbind()
+        normalized = weights * batch_size / (weight_sum + self.epsilon)
+        # Preserve the existing unnormalized-ones fallback when the entire batch
+        # lacks indices; mixed batches share the same normalization on every rank.
+        return torch.where(indexed_count > 0, normalized, weights)
 
     def _compute_delta(self, global_idx: int) -> float:
         """Compute progress delta for a single frame."""

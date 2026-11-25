@@ -36,6 +36,7 @@ Example usage:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -106,6 +107,8 @@ def make_sample_weighter(
     device: torch.device,
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
+    *,
+    normalization_stats_reducer: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> SampleWeighter | None:
     """
     Factory function to create a SampleWeighter from config.
@@ -118,12 +121,21 @@ def make_sample_weighter(
         device: Device to place weight tensors on.
         dataset_root: Local path to dataset root (for auto-detecting progress_path).
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        normalization_stats_reducer: Optional sum reduction for batch-normalized weighters.
+            It combines additive normalization statistics across data-parallel ranks.
     """
     if config is None:
         return None
 
     if config.type == "rabc":
-        return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
+        return _make_rabc_weighter(
+            config,
+            policy,
+            device,
+            dataset_root,
+            dataset_repo_id,
+            normalization_stats_reducer=normalization_stats_reducer,
+        )
 
     if config.type == "uniform":
         # No-op weighter that returns uniform weights
@@ -138,6 +150,8 @@ def _make_rabc_weighter(
     device: torch.device,
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
+    *,
+    normalization_stats_reducer: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> SampleWeighter:
     """Create RABC weighter with policy-specific initialization.
 
@@ -147,6 +161,7 @@ def _make_rabc_weighter(
         device: Device to place weight tensors on.
         dataset_root: Local path to dataset root (for auto-detecting progress_path).
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        normalization_stats_reducer: Optional sum reduction of additive normalization statistics.
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -181,6 +196,7 @@ def _make_rabc_weighter(
         kappa=config.kappa,
         epsilon=config.epsilon,
         device=device,
+        normalization_stats_reducer=normalization_stats_reducer,
         **config.extra_params,
     )
 
