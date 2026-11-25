@@ -42,6 +42,7 @@ from .utils import is_main_process
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
+    from accelerate.utils import FullyShardedDataParallelPlugin
 
 
 def is_sharded_module(module: nn.Module) -> bool:
@@ -108,7 +109,7 @@ def save_peft_adapter(model: nn.Module, save_directory: Path) -> None:
         model.save_pretrained(save_directory, state_dict=state_dict)
 
 
-def _fsdp_plugin(accelerator: "Accelerator") -> object:
+def _fsdp_plugin(accelerator: "Accelerator") -> "FullyShardedDataParallelPlugin":
     """The accelerator's FSDP plugin, required by every DCP save/load helper below.
 
     Args:
@@ -231,20 +232,60 @@ def load_sharded_optimizer(
         optimizer (torch.optim.Optimizer): The prepared optimizer to restore the state into.
         model (nn.Module): The prepared (sharded) model the optimizer state is keyed by.
         input_dir (Path): The directory containing the `optimizer_0/` shard subdirectory.
-    """
-    from accelerate.utils import load_fsdp_optimizer
-    from accelerate.utils.constants import OPTIMIZER_NAME
 
+    Raises:
+        KeyError: If a trainable parameter of `optimizer` is absent from the saved param groups.
+    """
+    import torch.distributed.checkpoint as dcp
+    from accelerate.utils.constants import OPTIMIZER_NAME
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_optimizer_state_dict,
+        set_optimizer_state_dict,
+    )
+
+    class SavedStatePlanner(dcp.DefaultLoadPlanner):
+        # Request optimizer state only for the parameters the checkpoint holds state for.
+        saved: set[str]
+
+        def set_up_planner(
+            self, state_dict: dict, metadata: dcp.Metadata | None = None, is_coordinator: bool = False
+        ) -> None:
+            assert metadata is not None  # dcp.load always passes the saved checkpoint's metadata
+            paths = metadata.planner_data.values()
+            self.saved = {path[2] for path in paths if path[:2] == ("optimizer", "state")}
+            optim = state_dict["optimizer"]
+            optim["state"] = {fqn: value for fqn, value in optim["state"].items() if fqn in self.saved}
+            super().set_up_planner(state_dict, metadata, is_coordinator)
+
+    plugin = _fsdp_plugin(accelerator)
+    options = StateDictOptions(cpu_offload=getattr(plugin.state_dict_config, "offload_to_cpu", False))
     # Unwrapped optimizer: torch's `_init_optim_state` runs a dummy step here (the state is
     # always empty on a fresh resume), which must not reach the fp16 scaler — see
-    # `_inner_optimizer`.
-    load_fsdp_optimizer(
-        _fsdp_plugin(accelerator),
-        accelerator,
-        _inner_optimizer(optimizer),
-        model,
-        str(input_dir / f"{OPTIMIZER_NAME}_0"),
-    )
+    # `_inner_optimizer`. That step creates state for every trainable parameter, but AdamW
+    # creates it lazily: the checkpoint has none for parameters that never got a gradient.
+    optimizer = _inner_optimizer(optimizer)
+    state = get_optimizer_state_dict(model, optimizer, options=options)
+    # Captured before `dcp.load` replaces the groups' parameter names with the saved ones.
+    trainable = {
+        fqn
+        for named, group in zip(state["param_groups"], optimizer.param_groups, strict=True)
+        for fqn, param in zip(named["params"], group["params"], strict=True)
+        if param.requires_grad
+    }
+    planner = SavedStatePlanner()
+    dcp.load({"optimizer": state}, checkpoint_id=input_dir / f"{OPTIMIZER_NAME}_0", planner=planner)  # nosec B614
+    saved_params = {fqn for group in state["param_groups"] for fqn in group["params"]}
+    # torch matches loaded state to parameters by name only when some state was loaded.
+    if absent := trainable - saved_params:
+        raise KeyError(f"The optimizer checkpoint has no entry for parameters: {sorted(absent)}")
+    # Saved group members without state stay uninitialized until their first gradient. The empty
+    # entries only serve torch's by-name matching, which runs only when some state was loaded.
+    if state["state"]:
+        state["state"].update({fqn: {} for fqn in saved_params - planner.saved})
+    set_optimizer_state_dict(model, optimizer, state, options=options)
+    for param in [param for param, value in optimizer.state.items() if not value]:
+        del optimizer.state[param]
 
 
 def save_sharded_ema(ema: EMA, output_dir: Path) -> None:

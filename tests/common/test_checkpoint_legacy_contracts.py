@@ -15,7 +15,7 @@
 # limitations under the License.
 """Legacy-checkpoint contracts.
 
-Two contracts are pinned here so they are documented behavior, not accidents:
+The tests here cover existing checkpoint layouts:
 
 - **The v0.6.0 hard break.** The v0.6.0 #3810 FSDP checkpoint layout
   (full gathered ``model.safetensors`` + full ``optimizer_state.safetensors``, no DCP dirs,
@@ -24,6 +24,8 @@ Two contracts are pinned here so they are documented behavior, not accidents:
   must fail through the ORDINARY missing-artifact path (torch DCP erroring on the absent
   ``training_state/optimizer_0/``), while the model weights remain loadable forever via
   ``from_pretrained`` and the old ``num_processes`` key keeps feeding the topology reader.
+- **Lazy optimizer state.** The DCP groups can include trainable parameters without moments.
+  They must resume uninitialized and start at their first applied update.
 - **Converter equivalence.** ``dcp_to_safetensors`` (real ``merge_fsdp_weights``, no mocks)
   on accelerate's ``save_fsdp_model`` DCP layout reproduces exactly the tensors that the
   direct-gather ``save_pretrained`` artifact contains.
@@ -52,7 +54,12 @@ from lerobot.common.train_utils import (
 from lerobot.configs.accelerator import FSDPConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, CheckpointFormat, TrainPipelineConfig
-from lerobot.distributed.checkpoint import dcp_to_safetensors, is_sharded_module
+from lerobot.distributed.checkpoint import (
+    dcp_to_safetensors,
+    is_sharded_module,
+    load_sharded_optimizer,
+    save_sharded_optimizer,
+)
 from lerobot.optim.optimizers import save_optimizer_state
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR, TRAINING_STEP
 from lerobot.utils.io_utils import write_json
@@ -64,7 +71,7 @@ from tests.fixtures.dummy_checkpoint_policy import DummyCheckpointPolicy, make_d
 def accelerate_state():
     """accelerate's process state, as the trainer's `Accelerator()` would have initialized it.
 
-    `load_fsdp_optimizer` and `merge_fsdp_weights` both consult `PartialState` internals
+    `save_fsdp_optimizer` and `merge_fsdp_weights` both consult `PartialState` internals
     (logging and main-process gating). Single-process CPU state; reset on teardown so no
     global accelerate state leaks into other tests.
     """
@@ -138,6 +145,65 @@ def sharded_passthrough_accelerator() -> SimpleNamespace:
         state=SimpleNamespace(fsdp_plugin=FSDPConfig().build_plugin()),
         scaler=None,  # these contracts are fp32; a real Accelerator exposes the attribute
     )
+
+
+@pytest.mark.gpu
+def test_sharded_optimizer_resumes_before_first_bias_gradient(tmp_path: Path, accelerate_state) -> None:
+    accelerator = sharded_passthrough_accelerator()
+    model = torch.nn.Linear(4, 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    model.weight.sum().backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    save_sharded_optimizer(accelerator, optimizer, model, tmp_path)
+    assert model.bias not in optimizer.state
+
+    resumed = torch.nn.Linear(4, 2)
+    resumed.load_state_dict(model.state_dict())
+    resumed_optimizer = torch.optim.AdamW(resumed.parameters())
+    load_sharded_optimizer(accelerator, resumed_optimizer, resumed, tmp_path)
+    assert resumed.bias not in resumed_optimizer.state
+
+    for layer, opt in ((model, optimizer), (resumed, resumed_optimizer)):
+        layer(torch.ones(1, 4)).sum().backward()
+        opt.step()
+    for expected, actual in zip(model.parameters(), resumed.parameters(), strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        torch.testing.assert_close(resumed_optimizer.state[actual], optimizer.state[expected], rtol=0, atol=0)
+
+
+@pytest.mark.gpu
+def test_sharded_optimizer_rejects_parameters_absent_from_saved_groups(
+    tmp_path: Path, accelerate_state
+) -> None:
+    accelerator = sharded_passthrough_accelerator()
+    model = torch.nn.Linear(4, 2)
+    optimizer = torch.optim.AdamW(model.parameters())
+    model(torch.ones(1, 4)).sum().backward()
+    optimizer.step()
+    save_sharded_optimizer(accelerator, optimizer, model, tmp_path)
+
+    renamed = torch.nn.Sequential(torch.nn.Linear(4, 2))
+    with pytest.raises((KeyError, RuntimeError), match=r"0\.weight"):
+        load_sharded_optimizer(accelerator, torch.optim.AdamW(renamed.parameters()), renamed, tmp_path)
+
+
+@pytest.mark.gpu
+def test_sharded_optimizer_restores_empty_group_without_saved_state(tmp_path: Path, accelerate_state) -> None:
+    accelerator = sharded_passthrough_accelerator()
+    model = torch.nn.Linear(4, 2)
+    optimizer = torch.optim.SGD([{"params": [], "lr": 0.1}, {"params": list(model.parameters()), "lr": 0.01}])
+    model(torch.ones(1, 4)).sum().backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    save_sharded_optimizer(accelerator, optimizer, model, tmp_path)
+
+    restored = torch.optim.SGD([{"params": [], "lr": 0.5}, {"params": list(model.parameters()), "lr": 0.5}])
+    load_sharded_optimizer(accelerator, restored, model, tmp_path)
+    hyperparameters = [{k: v for k, v in group.items() if k != "params"} for group in restored.param_groups]
+    assert hyperparameters == [
+        {k: v for k, v in group.items() if k != "params"} for group in optimizer.param_groups
+    ]
 
 
 class TestV060HardBreak:
