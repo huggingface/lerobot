@@ -168,8 +168,12 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
-# The batch keys that are a transition's own fields, not complementary data.
-_TRANSITION_BATCH_KEYS = frozenset({ACTION, REWARD, DONE, TRUNCATED, INFO, PREDICTION})
+# The batch keys that are a transition's own fields, not complementary data. The field names
+# themselves are reserved too, so a transition read as a batch does not nest into itself.
+_TRANSITION_BATCH_KEYS = frozenset(
+    {ACTION, REWARD, DONE, TRUNCATED, INFO, PREDICTION}
+    | {value for name, value in vars(TransitionKey).items() if name.isupper()}
+)
 
 
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
