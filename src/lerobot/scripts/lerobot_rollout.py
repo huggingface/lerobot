@@ -208,6 +208,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_rebot_102_leader,
     bi_so_leader,
     composite,
+    gamepad,
     homunculus,
     keyboard,
     koch_leader,
