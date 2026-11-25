@@ -204,6 +204,7 @@ unitree_g1 = [
     "meshcat>=0.3.0,<0.4.0",
     "lerobot[matplotlib-dep]",
     "lerobot[pygame-dep]",
+    "lerobot[placo-dep]",
 ]
 # reachy2-sdk caps grpcio<=1.73.1 and protobuf<=6.32.0; quarantined here so downstream users aren't held back. reachy2-sdk is unlikely to release new versions.
 reachy2 = [

@@ -45,6 +45,10 @@ Explicit gain overrides must be finite, nonnegative, and use the same sparse lay
 Default gains are shared by joint name across both variants, so identical physical joints
 use identical gains while absent G1-23 slots remain zero.
 
+With `--robot.gravity_compensation=true`, every arm command, including those of the
+controller, carries the torque that holds the measured arm and waist pose against gravity. The
+model matches `--robot.end_effector`, which must be `dex1` or `dex3`.
+
 Native G1-23 MuJoCo simulation is not supported yet. Selecting the G1-23 embodiment with
 simulation enabled fails before transport initialization. A native G1-23 MuJoCo model is
 planned for a future version.
@@ -70,15 +74,15 @@ cd ..
 
 ```bash
 conda install ffmpeg -c conda-forge
-conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e '.[unitree_g1]'
 ```
 
 <Tip>
-  For now, pinocchio must be installed from conda-forge (not pip) to include the
-  CasADi bindings needed for arm IK.
+  The arm IK and gravity compensation use
+  [Placo](https://github.com/Rhoban/placo), installed with
+  `lerobot[unitree_g1]`. A pinocchio from conda-forge is no longer needed.
 </Tip>
 
 ### Test the Installation (Simulation)
@@ -182,14 +186,8 @@ cd ..
 ```bash
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
-conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
 python -m pip install -e '.[unitree_g1]'
 ```
-
-<Tip>
-  For now, pinocchio must be installed from conda-forge (not pip) to include the
-  CasADi bindings needed for arm IK.
-</Tip>
 
 ### (Optional) Enable WiFi on the Robot
 

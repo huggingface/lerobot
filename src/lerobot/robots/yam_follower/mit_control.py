@@ -226,10 +226,6 @@ class MitArmParams:
             Maximum joint speed in radians per second.
         max_tracking_error (`float`):
             Maximum difference between the measured and commanded positions, in radians.
-        gravity_factors (`np.ndarray`):
-            Per-joint multipliers of the model's gravity torques.
-        max_gravity_torque (`float`):
-            Cap on each joint's gravity torque, in newton-metres.
         float_kd (`np.ndarray`):
             Damping gains in float mode, where the joints have no stiffness.
         coulomb_friction (`np.ndarray`):
@@ -249,8 +245,6 @@ class MitArmParams:
     kd: np.ndarray
     max_joint_speed: float
     max_tracking_error: float
-    gravity_factors: np.ndarray
-    max_gravity_torque: float
     float_kd: np.ndarray
     coulomb_friction: np.ndarray
     control_frequency: float
@@ -393,14 +387,13 @@ def _track_step(
     command[n] = np.clip(command[n], 0.0, 1.0)
 
     goal = _joint_to_motor(command, gripper_params)
-    torque = _gravity_feedforward(params, gravity)
     return command, tuple(
         MitCommand(
             position=float(goal[i]),
             velocity=0.0,
             kp=float(params.kp[i]),
             kd=float(params.kd[i]),
-            torque=float(torque[i]),
+            torque=float(gravity[i]),
         )
         for i in range(n)
     )
@@ -423,7 +416,7 @@ def _float_step(
     command = state.position.copy()
     goal = _joint_to_motor(state.position, gripper_params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n])
-    torque = _gravity_feedforward(params, gravity) + friction
+    torque = gravity + friction
     arm = tuple(
         MitCommand(
             position=float(goal[i]),
@@ -438,12 +431,6 @@ def _float_step(
         position=float(goal[n]), velocity=0.0, kp=0.0, kd=gripper_params.float_kd, torque=0.0
     )
     return command, (*arm, gripper)
-
-
-def _gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
-    """Scale the model's gravity torques by `gravity_factors`, and cap them."""
-    torque = gravity * params.gravity_factors
-    return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
 
 class MitController:
@@ -467,7 +454,8 @@ class MitController:
         params (`MitArmParams`):
             Settings of the arm joints and the loop.
         gravity (`Callable[[np.ndarray], np.ndarray]`):
-            Returns the arm-joint gravity torques for the measured positions.
+            Returns the arm-joint gravity torques to apply for the measured positions, already scaled and
+            capped.
         fault_event (`threading.Event`):
             Fault signal, shared by both controllers of a bimanual robot so a fault on one stops both.
         gripper_params (`MitGripperParams`, *optional*):

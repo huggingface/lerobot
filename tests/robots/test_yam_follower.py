@@ -96,8 +96,6 @@ def test_arm_params_come_from_the_config_and_i2rt(robot, friction_compensation):
     arm = params(robot)
     np.testing.assert_allclose(arm.kp, [80, 80, 80, 10, 10, 10])
     np.testing.assert_allclose(arm.kd, [5, 5, 5, 1.5, 1.5, 1.5])
-    np.testing.assert_allclose(arm.gravity_factors, [1.0, 1.1, 1.1, 1.2, 1.0, 1.0])
-    assert arm.max_gravity_torque == 25.0
     assert (arm.max_joint_speed, arm.max_tracking_error) == pytest.approx((0.3, 0.15))  # from degrees
     np.testing.assert_allclose(arm.float_kd, [0.1, 0.1, 0.1, 0.3, 0.05, 0.05])
     expected = [0.3, 0.3, 0.3, 0.06, 0.06, 0.06] if friction_compensation else [0.0] * 6
@@ -241,8 +239,13 @@ def test_gravity_model_loads_from_the_hub_before_torque(robot, monkeypatch):
     robot.disconnect()
     assert events == ["model", "enable"]
     download.assert_called_once_with("lerobot/robot-urdfs", "yam/v1/linear_4310.urdf", repo_type="dataset")
+    # I2RT's per-joint gravity factors, and a 25 Nm cap on gravity torque.
     gravity_model.assert_called_once_with(
-        model_path, tuple(f"joint{i}" for i in range(1, 7)), base_frame="base"
+        model_path,
+        tuple(f"joint{i}" for i in range(1, 7)),
+        base_frame="base",
+        scale=[1.0, 1.1, 1.1, 1.2, 1.0, 1.0],
+        max_torque=25.0,
     )
 
 

@@ -14,274 +14,146 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Arm IK and gravity compensation of the G1-29, built on `lerobot.model`."""
+
 import logging
-import os
 from collections import deque
+from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
+from huggingface_hub import snapshot_download
+
+from lerobot.envs.configs import G1EndEffector
+from lerobot.model import GravityCompensation, RobotKinematics
 
 logger = logging.getLogger(__name__)
 
+G1_MODEL_REPO_ID = "lerobot/unitree-g1-mujoco"
+_ARM_JOINT_PARTS = (
+    "shoulder_pitch",
+    "shoulder_roll",
+    "shoulder_yaw",
+    "elbow",
+    "wrist_roll",
+    "wrist_pitch",
+    "wrist_yaw",
+)
+# URDF names of the arm joints, in G1_29_JointArmIndex order.
+G1_29_ARM_JOINTS = tuple(f"{side}_{part}_joint" for side in ("left", "right") for part in _ARM_JOINT_PARTS)
+# URDF names of the waist joints, in G1_29_JointIndex order.
+G1_29_WAIST_JOINTS = ("waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint")
+# Models of the G1 carrying each end effector; there is none with bare wrists.
+_URDF_BY_END_EFFECTOR = {
+    G1EndEffector.DEX1: "g1_29dof_with_dex1_1.urdf",
+    G1EndEffector.DEX3: "g1_body29_hand14.urdf",
+}
+_IK_URDF = _URDF_BY_END_EFFECTOR[G1EndEffector.DEX3]
+_WRIST_FRAMES = ("left_wrist_yaw_link", "right_wrist_yaw_link")
+# The IK's end effector sits 5 cm along each wrist yaw link's x axis.
+_WRIST_TO_EE = np.eye(4)
+_WRIST_TO_EE[0, 3] = 0.05
+_EE_TO_WRIST = np.linalg.inv(_WRIST_TO_EE)
+# Orientation and posture weights relative to position, as in the earlier IPOPT solver's costs (translation
+# 50, rotation 1, distance of the joints from zero 0.02).
+_IK_ORIENTATION_WEIGHT = 0.02
+_IK_POSTURE_WEIGHT = 0.0004
+# Weights of the last solutions, newest first, that smooth the IK output.
+_IK_SMOOTHING_WEIGHTS = (0.4, 0.3, 0.2, 0.1)
+
+
+def g1_assets_dir() -> Path:
+    """Download the G1 models, if needed, and return their directory."""
+    return Path(snapshot_download(G1_MODEL_REPO_ID)) / "assets"
+
+
+def make_g1_gravity_compensation(end_effector: G1EndEffector) -> GravityCompensation:
+    """Build the gravity model of the G1-29's arms carrying `end_effector`, with the pelvis fixed.
+
+    Its torques follow `G1_29_ARM_JOINTS`; pass the measured `G1_29_WAIST_JOINTS` as extra joints.
+
+    Raises:
+        ValueError: If there is no model of the G1 with this end effector.
+    """
+    urdf = _URDF_BY_END_EFFECTOR.get(G1EndEffector(end_effector))
+    if urdf is None:
+        raise ValueError(
+            f"Gravity compensation has no G1 model with end_effector={end_effector}; "
+            f"use one of {[str(effector) for effector in _URDF_BY_END_EFFECTOR]}"
+        )
+    return GravityCompensation(g1_assets_dir() / urdf, G1_29_ARM_JOINTS, base_frame="pelvis")
+
 
 class WeightedMovingFilter:
-    def __init__(self, weights, data_size=14):
-        self._window_size = len(weights)
-        self._weights = np.array(weights)
+    """Weighted average of the last `len(weights)` samples, newest first; repeated samples are skipped."""
+
+    def __init__(self, weights: Sequence[float], data_size: int) -> None:
+        self._weights = np.asarray(weights, dtype=float)
         self._data_size = data_size
-        self._filtered_data = np.zeros(self._data_size)
-        self._data_queue = deque(maxlen=self._window_size)
+        self._filtered_data = np.zeros(data_size)
+        self._data_queue: deque[np.ndarray] = deque(maxlen=len(weights))
 
-    def _apply_filter(self):
-        if len(self._data_queue) < self._window_size:
-            return self._data_queue[-1]
-
-        data_array = np.array(self._data_queue)
-        return data_array.T @ self._weights
-
-    def add_data(self, new_data):
-        assert len(new_data) == self._data_size
-
-        if len(self._data_queue) > 0 and np.array_equal(
-            new_data, self._data_queue[-1]
-        ):  # skip duplicate data
+    def add_data(self, new_data: np.ndarray) -> None:
+        if len(new_data) != self._data_size:
+            raise ValueError(f"Expected {self._data_size} values; got {len(new_data)}")
+        if self._data_queue and np.array_equal(new_data, self._data_queue[0]):
             return
-
-        self._data_queue.append(new_data)
-        self._filtered_data = self._apply_filter()
+        self._data_queue.appendleft(np.asarray(new_data, dtype=float))
+        if len(self._data_queue) < len(self._weights):
+            self._filtered_data = self._data_queue[0]
+        else:
+            self._filtered_data = np.asarray(self._data_queue).T @ self._weights
 
     @property
-    def filtered_data(self):
+    def filtered_data(self) -> np.ndarray:
         return self._filtered_data
 
 
-class G1_29_ArmIK:  # noqa: N801
-    def __init__(self, unit_test=False):
-        import casadi
-        import pinocchio as pin
-        from huggingface_hub import snapshot_download
-        from pinocchio import casadi as cpin
+class G1ArmKinematics:
+    """Two-arm IK of the G1-29: poses of both end effectors to the 14 arm joints.
 
-        self._pin = pin
-        self.unit_test = unit_test
+    Joint positions are in radians and `G1_29_ARM_JOINTS` order. Each solve starts from the previous one,
+    and its output is smoothed over the last four solves, for teleoperation.
 
-        self.repo_path = snapshot_download("lerobot/unitree-g1-mujoco")
-        urdf_path = os.path.join(self.repo_path, "assets", "g1_body29_hand14.urdf")
-        mesh_dir = os.path.join(self.repo_path, "assets")
+    Args:
+        frozen_joints (`Sequence[str]`, *optional*):
+            Arm joints, by URDF name, that the IK keeps at zero.
+    """
 
-        self.robot = self._pin.RobotWrapper.BuildFromURDF(urdf_path, mesh_dir)
-
-        self.mixed_jointsToLockIDs = [
-            "left_hip_pitch_joint",
-            "left_hip_roll_joint",
-            "left_hip_yaw_joint",
-            "left_knee_joint",
-            "left_ankle_pitch_joint",
-            "left_ankle_roll_joint",
-            "right_hip_pitch_joint",
-            "right_hip_roll_joint",
-            "right_hip_yaw_joint",
-            "right_knee_joint",
-            "right_ankle_pitch_joint",
-            "right_ankle_roll_joint",
-            "waist_yaw_joint",
-            "waist_roll_joint",
-            "waist_pitch_joint",
-            "left_hand_thumb_0_joint",
-            "left_hand_thumb_1_joint",
-            "left_hand_thumb_2_joint",
-            "left_hand_middle_0_joint",
-            "left_hand_middle_1_joint",
-            "left_hand_index_0_joint",
-            "left_hand_index_1_joint",
-            "right_hand_thumb_0_joint",
-            "right_hand_thumb_1_joint",
-            "right_hand_thumb_2_joint",
-            "right_hand_index_0_joint",
-            "right_hand_index_1_joint",
-            "right_hand_middle_0_joint",
-            "right_hand_middle_1_joint",
-        ]
-
-        self.reduced_robot = self.robot.buildReducedRobot(
-            list_of_joints_to_lock=self.mixed_jointsToLockIDs,
-            reference_configuration=np.array([0.0] * self.robot.model.nq),
+    def __init__(self, frozen_joints: Sequence[str] = ()) -> None:
+        unknown = set(frozen_joints) - set(G1_29_ARM_JOINTS)
+        if unknown:
+            logger.warning(f"Ignoring frozen joints that are not G1 arm joints: {sorted(unknown)}")
+        self.urdf_path = g1_assets_dir() / _IK_URDF
+        self._moving = np.asarray([name not in frozen_joints for name in G1_29_ARM_JOINTS])
+        self.kinematics = RobotKinematics(
+            self.urdf_path,
+            _WRIST_FRAMES,
+            [name for name in G1_29_ARM_JOINTS if name not in frozen_joints],
+            posture_weight=_IK_POSTURE_WEIGHT,
         )
+        self.q = np.zeros(len(G1_29_ARM_JOINTS))
+        self._filter = WeightedMovingFilter(_IK_SMOOTHING_WEIGHTS, len(G1_29_ARM_JOINTS))
 
-        # Arm joint names in G1 motor order (G1_29_JointArmIndex)
-        self._arm_joint_names_g1 = [
-            "left_shoulder_pitch_joint",
-            "left_shoulder_roll_joint",
-            "left_shoulder_yaw_joint",
-            "left_elbow_joint",
-            "left_wrist_roll_joint",
-            "left_wrist_pitch_joint",
-            "left_wrist_yaw_joint",
-            "right_shoulder_pitch_joint",
-            "right_shoulder_roll_joint",
-            "right_shoulder_yaw_joint",
-            "right_elbow_joint",
-            "right_wrist_roll_joint",
-            "right_wrist_pitch_joint",
-            "right_wrist_yaw_joint",
-        ]
-        # Pinocchio uses its own joint order in q; build index mapping.
-        self._arm_joint_names_pin = sorted(
-            self._arm_joint_names_g1,
-            key=lambda name: self.reduced_robot.model.idx_qs[self.reduced_robot.model.getJointId(name)],
+    def forward_kinematics(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return the left and right end-effector poses, as 4x4 matrices, for arm joint positions `q`."""
+        joint_pos_deg = np.rad2deg(np.asarray(q, dtype=float)[self._moving])
+        left, right = (
+            self.kinematics.forward_kinematics(joint_pos_deg, frame) @ _WRIST_TO_EE for frame in _WRIST_FRAMES
         )
-        logger.info(f"Pinocchio arm joint order: {self._arm_joint_names_pin}")
-        self._arm_reorder_g1_to_pin = [
-            self._arm_joint_names_g1.index(name) for name in self._arm_joint_names_pin
-        ]
-        # Inverse mapping to return tau in G1 motor order.
-        self._arm_reorder_pin_to_g1 = np.argsort(self._arm_reorder_g1_to_pin)
+        return left, right
 
-        self.reduced_robot.model.addFrame(
-            self._pin.Frame(
-                "L_ee",
-                self.reduced_robot.model.getJointId("left_wrist_yaw_joint"),
-                self._pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
-                self._pin.FrameType.OP_FRAME,
-            )
-        )
-
-        self.reduced_robot.model.addFrame(
-            self._pin.Frame(
-                "R_ee",
-                self.reduced_robot.model.getJointId("right_wrist_yaw_joint"),
-                self._pin.SE3(np.eye(3), np.array([0.05, 0, 0]).T),
-                self._pin.FrameType.OP_FRAME,
-            )
-        )
-
-        # Creating Casadi models and data for symbolic computing
-        self.cmodel = cpin.Model(self.reduced_robot.model)
-        self.cdata = self.cmodel.createData()
-
-        # Creating symbolic variables
-        self.cq = casadi.SX.sym("q", self.reduced_robot.model.nq, 1)
-        self.cTf_l = casadi.SX.sym("tf_l", 4, 4)
-        self.cTf_r = casadi.SX.sym("tf_r", 4, 4)
-        cpin.framesForwardKinematics(self.cmodel, self.cdata, self.cq)
-
-        # Get the hand joint ID and define the error function
-        self.L_hand_id = self.reduced_robot.model.getFrameId("L_ee")
-        self.R_hand_id = self.reduced_robot.model.getFrameId("R_ee")
-
-        self.translational_error = casadi.Function(
-            "translational_error",
-            [self.cq, self.cTf_l, self.cTf_r],
-            [
-                casadi.vertcat(
-                    self.cdata.oMf[self.L_hand_id].translation - self.cTf_l[:3, 3],
-                    self.cdata.oMf[self.R_hand_id].translation - self.cTf_r[:3, 3],
-                )
-            ],
-        )
-        self.rotational_error = casadi.Function(
-            "rotational_error",
-            [self.cq, self.cTf_l, self.cTf_r],
-            [
-                casadi.vertcat(
-                    cpin.log3(self.cdata.oMf[self.L_hand_id].rotation @ self.cTf_l[:3, :3].T),
-                    cpin.log3(self.cdata.oMf[self.R_hand_id].rotation @ self.cTf_r[:3, :3].T),
-                )
-            ],
-        )
-
-        # Defining the optimization problem
-        self.opti = casadi.Opti()
-        self.var_q = self.opti.variable(self.reduced_robot.model.nq)
-        self.var_q_last = self.opti.parameter(self.reduced_robot.model.nq)  # for smooth
-        self.param_tf_l = self.opti.parameter(4, 4)
-        self.param_tf_r = self.opti.parameter(4, 4)
-        self.translational_cost = casadi.sumsqr(
-            self.translational_error(self.var_q, self.param_tf_l, self.param_tf_r)
-        )
-        self.rotation_cost = casadi.sumsqr(
-            self.rotational_error(self.var_q, self.param_tf_l, self.param_tf_r)
-        )
-        self.regularization_cost = casadi.sumsqr(self.var_q)
-        self.smooth_cost = casadi.sumsqr(self.var_q - self.var_q_last)
-
-        # Setting optimization constraints and goals
-        self.opti.subject_to(
-            self.opti.bounded(
-                self.reduced_robot.model.lowerPositionLimit,
-                self.var_q,
-                self.reduced_robot.model.upperPositionLimit,
-            )
-        )
-        self.opti.minimize(
-            50 * self.translational_cost
-            + self.rotation_cost
-            + 0.02 * self.regularization_cost
-            + 0.1 * self.smooth_cost
-        )
-
-        opts = {
-            "ipopt": {"print_level": 0, "max_iter": 50, "tol": 1e-6},
-            "print_time": False,  # print or not
-            "calc_lam_p": False,  # https://github.com/casadi/casadi/wiki/FAQ:-Why-am-I-getting-%22NaN-detected%22in-my-optimization%3F
+    def solve_ik(self, left_ee: np.ndarray, right_ee: np.ndarray) -> np.ndarray:
+        """Return arm joint positions that reach both end-effector poses, given as 4x4 matrices."""
+        targets = {
+            frame: np.asarray(pose) @ _EE_TO_WRIST
+            for frame, pose in zip(_WRIST_FRAMES, (left_ee, right_ee), strict=True)
         }
-        self.opti.solver("ipopt", opts)
-
-        self.init_data = np.zeros(self.reduced_robot.model.nq)
-        self.smooth_filter = WeightedMovingFilter(np.array([0.4, 0.3, 0.2, 0.1]), 14)
-
-    def solve_ik(self, left_wrist, right_wrist, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
-        if current_lr_arm_motor_q is not None:
-            self.init_data = current_lr_arm_motor_q
-        self.opti.set_initial(self.var_q, self.init_data)
-
-        self.opti.set_value(self.param_tf_l, left_wrist)
-        self.opti.set_value(self.param_tf_r, right_wrist)
-        self.opti.set_value(self.var_q_last, self.init_data)  # for smooth
-
-        converged = True
-        try:
-            self.opti.solve()
-            sol_q = self.opti.value(self.var_q)
-        except Exception as e:
-            converged = False
-            logger.error(f"IK convergence error: {e}")
-            sol_q = self.opti.debug.value(self.var_q)
-
-        self.smooth_filter.add_data(sol_q)
-        sol_q = self.smooth_filter.filtered_data
-        self.init_data = sol_q
-
-        if not converged:
-            logger.error(
-                f"sol_q:{sol_q} \nmotorstate: \n{current_lr_arm_motor_q} \nleft_pose: \n{left_wrist} \nright_pose: \n{right_wrist}"
-            )
-            return current_lr_arm_motor_q, np.zeros(self.reduced_robot.model.nv)
-
-        sol_tauff = self._pin.rnea(
-            self.reduced_robot.model,
-            self.reduced_robot.data,
-            sol_q,
-            np.zeros(self.reduced_robot.model.nv),
-            np.zeros(self.reduced_robot.model.nv),
+        solution_deg = self.kinematics.inverse_kinematics(
+            np.rad2deg(self.q[self._moving]), targets, orientation_weight=_IK_ORIENTATION_WEIGHT
         )
-
-        return sol_q, sol_tauff
-
-    def solve_tau(self, current_lr_arm_motor_q=None, current_lr_arm_motor_dq=None):
-        try:
-            q_g1 = np.array(current_lr_arm_motor_q, dtype=float)
-            if q_g1.shape[0] != len(self._arm_joint_names_g1):
-                raise ValueError(f"Expected {len(self._arm_joint_names_g1)} arm joints, got {q_g1.shape[0]}")
-            q_pin = q_g1[self._arm_reorder_g1_to_pin]
-            sol_tauff = self._pin.rnea(
-                self.reduced_robot.model,
-                self.reduced_robot.data,
-                q_pin,
-                np.zeros(self.reduced_robot.model.nv),
-                np.zeros(self.reduced_robot.model.nv),
-            )
-            return sol_tauff[self._arm_reorder_pin_to_g1]
-
-        except Exception as e:
-            logger.error(f"ERROR in convergence, plotting debug info.{e}")
-            return np.zeros(self.reduced_robot.model.nv)
+        q = np.zeros(len(G1_29_ARM_JOINTS))
+        q[self._moving] = np.deg2rad(solution_deg)
+        self._filter.add_data(q)
+        self.q = self._filter.filtered_data.copy()
+        return self.q.copy()

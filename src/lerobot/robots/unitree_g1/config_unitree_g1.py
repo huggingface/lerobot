@@ -62,7 +62,8 @@ class UnitreeG1Config(RobotConfig):
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
-    # Compensates for gravity on the unitree's arms using the arm ik solver
+    # Adds the torque that holds the measured arm pose against gravity, using the model of the G1 with
+    # `end_effector` (dex1 or dex3)
     gravity_compensation: bool = False
 
     # Controller class name, e.g. GrootLocomotionController / HolosomaLocomotionController /
@@ -78,6 +79,8 @@ class UnitreeG1Config(RobotConfig):
             raise ValueError(f"{self.controller} is not supported for {self.embodiment}")
         if self.gravity_compensation and not spec.supports_gravity_compensation:
             raise ValueError(f"Gravity compensation is not implemented for {self.embodiment}")
+        if self.gravity_compensation and G1EndEffector(self.end_effector) == G1EndEffector.DUMMY:
+            raise ValueError("Gravity compensation needs a G1 model of the end effector; use dex1 or dex3")
         default_kp, default_kd = spec.default_gains()
         self.kp = list(default_kp if self.kp is None else self.kp)
         self.kd = list(default_kd if self.kd is None else self.kd)

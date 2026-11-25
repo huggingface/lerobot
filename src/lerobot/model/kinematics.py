@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import threading
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,66 +42,79 @@ def _raise_if_placo_unusable() -> None:
         ) from _placo_runtime_error
 
 
+def _load_robot(urdf_path: str | Path) -> placo.RobotWrapper:
+    require_package("placo", extra="placo-dep")
+    _raise_if_placo_unusable()
+    # Kinematics and gravity don't need collision geometry, whose loading also logs every colliding pair.
+    return placo.RobotWrapper(str(urdf_path), placo.Flags.ignore_collisions)
+
+
 class RobotKinematics:
-    """Robot kinematics using placo library for forward and inverse kinematics."""
+    """Forward and inverse kinematics of one or several end-effector frames, computed with Placo."""
 
     def __init__(
         self,
-        urdf_path: str,
-        target_frame_name: str = "gripper_frame_link",
-        joint_names: list[str] | None = None,
+        urdf_path: str | Path,
+        target_frame_name: str | Sequence[str] = "gripper_frame_link",
+        joint_names: Sequence[str] | None = None,
+        posture_weight: float = 0.0,
     ):
         """
         Initialize placo-based kinematics solver.
 
         Args:
-            urdf_path (str): Path to the robot URDF file
-            target_frame_name (str): Name of the end-effector frame in the URDF
-            joint_names (list[str] | None): List of joint names to use for the kinematics solver
+            urdf_path (`str | Path`):
+                Path to the robot URDF file.
+            target_frame_name (`str | Sequence[str]`, *optional*, defaults to `"gripper_frame_link"`):
+                End-effector frame, or several frames solved together, e.g. both hands of a humanoid. The
+                first one is the default frame of `forward_kinematics`.
+            joint_names (`Sequence[str]`, *optional*):
+                Joints that the IK moves, in the order of joint positions; other joints keep their position.
+                Defaults to every joint of the model.
+            posture_weight (`float`, *optional*, defaults to 0.0):
+                Weight, relative to the position targets, of a pull of the joints toward zero. It picks the
+                posture closest to zero among the solutions of a redundant arm; 0.0 disables it.
         """
-        require_package("placo", extra="placo-dep")
-        _raise_if_placo_unusable()
-
-        self.robot = placo.RobotWrapper(urdf_path)
+        self.robot = _load_robot(urdf_path)
         self.solver = placo.KinematicsSolver(self.robot)
         self.solver.mask_fbase(True)  # Fix the base
 
-        self.target_frame_name = target_frame_name
+        self.joint_names = list(self.robot.joint_names()) if joint_names is None else list(joint_names)
+        for joint_name in self.robot.joint_names():
+            if joint_name not in self.joint_names:
+                self.solver.mask_dof(joint_name)
 
-        # Set joint names
-        self.joint_names = list(self.robot.joint_names()) if joint_names is None else joint_names
+        frames = [target_frame_name] if isinstance(target_frame_name, str) else list(target_frame_name)
+        self.target_frame_name = frames[0]
+        self.frame_tasks = {frame: self.solver.add_frame_task(frame, np.eye(4)) for frame in frames}
+        self.tip_frame = self.frame_tasks[self.target_frame_name]
 
-        # Initialize frame task for IK
-        self.tip_frame = self.solver.add_frame_task(self.target_frame_name, np.eye(4))
+        if posture_weight > 0:
+            posture = self.solver.add_joints_task()
+            posture.set_joints(dict.fromkeys(self.joint_names, 0.0))
+            posture.configure("posture", "soft", posture_weight)
 
-    def forward_kinematics(self, joint_pos_deg: np.ndarray) -> np.ndarray:
+    def forward_kinematics(self, joint_pos_deg: np.ndarray, frame_name: str | None = None) -> np.ndarray:
         """
-        Compute forward kinematics for given joint configuration given the target frame name in the constructor.
+        Compute the pose of an end-effector frame for a joint configuration.
 
         Args:
-            joint_pos_deg: Joint positions in degrees (numpy array)
+            joint_pos_deg (`np.ndarray`):
+                Positions of `joint_names` in degrees; extra trailing values, such as a gripper, are ignored.
+            frame_name (`str`, *optional*):
+                Frame to return; defaults to the first target frame.
 
         Returns:
-            4x4 transformation matrix of the end-effector pose
+            `np.ndarray`: 4x4 transformation matrix of the frame in the world.
         """
-
-        # Convert degrees to radians
-        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
-
-        # Update joint positions in placo robot
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, joint_pos_rad[i])
-
-        # Update kinematics
+        self._set_joints(joint_pos_deg)
         self.robot.update_kinematics()
-
-        # Get the transformation matrix
-        return self.robot.get_T_world_frame(self.target_frame_name)
+        return self.robot.get_T_world_frame(frame_name or self.target_frame_name)
 
     def inverse_kinematics(
         self,
         current_joint_pos: np.ndarray,
-        desired_ee_pose: np.ndarray,
+        desired_ee_pose: np.ndarray | Mapping[str, np.ndarray],
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
         max_iters: int = 8,
@@ -109,28 +123,37 @@ class RobotKinematics:
         Compute inverse kinematics using placo solver.
 
         Args:
-            current_joint_pos: Current joint positions in degrees (used as initial guess)
-            desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
-            position_weight: Weight for position constraint in IK
-            orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
-            max_iters: Number of placo Newton steps to run.
+            current_joint_pos (`np.ndarray`):
+                Current joint positions in degrees, used as the initial guess.
+            desired_ee_pose (`np.ndarray | Mapping[str, np.ndarray]`):
+                Target pose of the end-effector frame as a 4x4 transformation matrix, or one target pose per
+                frame when several frames are solved together.
+            position_weight (`float`, *optional*, defaults to 1.0):
+                Weight of the position targets.
+            orientation_weight (`float`, *optional*, defaults to 0.01):
+                Weight of the orientation targets; 0.0 constrains only the positions.
+            max_iters (`int`, *optional*, defaults to 8):
+                Number of placo Newton steps to run.
 
         Returns:
-            Joint positions in degrees that achieve the desired end-effector pose
+            `np.ndarray`: Joint positions in degrees that reach the target poses.
+
+        Raises:
+            ValueError: If the target poses don't match the target frames.
         """
+        targets = (
+            desired_ee_pose
+            if isinstance(desired_ee_pose, Mapping)
+            else {self.target_frame_name: desired_ee_pose}
+        )
+        if set(targets) != set(self.frame_tasks):
+            raise ValueError(f"Expected target poses for {list(self.frame_tasks)}; got {list(targets)}")
 
-        # Convert current joint positions to radians for initial guess
-        current_joint_rad = np.deg2rad(current_joint_pos[: len(self.joint_names)])
-
-        # Set current joint positions as initial guess
-        for i, joint_name in enumerate(self.joint_names):
-            self.robot.set_joint(joint_name, current_joint_rad[i])
-
-        # Update the target pose for the frame task
-        self.tip_frame.T_world_frame = desired_ee_pose
-
-        # Configure the task based on position_only flag
-        self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
+        self._set_joints(current_joint_pos)
+        for frame, pose in targets.items():
+            task = self.frame_tasks[frame]
+            task.T_world_frame = pose
+            task.configure(frame, "soft", position_weight, orientation_weight)
 
         # Solve IK.
         for _ in range(max_iters):
@@ -155,15 +178,25 @@ class RobotKinematics:
         else:
             return joint_pos_deg
 
+    def _set_joints(self, joint_pos_deg: np.ndarray) -> None:
+        joint_pos_rad = np.deg2rad(joint_pos_deg[: len(self.joint_names)])
+        for joint_name, position in zip(self.joint_names, joint_pos_rad, strict=True):
+            self.robot.set_joint(joint_name, float(position))
+
 
 class GravityCompensation:
-    """Joint torques that hold a fixed-base URDF model against gravity, computed with Placo."""
+    """Joint torques that hold a fixed-base URDF model against gravity, computed with Placo.
+
+    Safe to call from several threads.
+    """
 
     def __init__(
         self,
         urdf_path: str | Path,
         joint_names: Sequence[str],
         base_frame: str,
+        scale: Sequence[float] | None = None,
+        max_torque: float | None = None,
     ) -> None:
         """
         Load a robot model for gravity compensation.
@@ -175,13 +208,19 @@ class GravityCompensation:
                 Model joints to compensate, in the order torques are returned.
             base_frame (`str`):
                 Name of the fixed base frame in the model.
+            scale (`Sequence[float]`, *optional*):
+                Per-joint multipliers of the model's torques, to correct for payloads or model errors.
+            max_torque (`float`, *optional*):
+                Cap on each joint's torque, in Nm, applied after `scale`.
         """
-        require_package("placo", extra="placo-dep")
-        _raise_if_placo_unusable()
-
-        self.robot = placo.RobotWrapper(str(urdf_path))
+        self.robot = _load_robot(urdf_path)
         self.joint_names = list(joint_names)
         self.base_frame = base_frame
+        self.scale = None if scale is None else np.asarray(scale, dtype=float)
+        if self.scale is not None and self.scale.shape != (len(self.joint_names),):
+            raise ValueError(f"scale must have one value per joint; got {self.scale.shape}")
+        self.max_torque = max_torque
+        self._lock = threading.Lock()
 
     def torques(
         self, joint_pos_rad: np.ndarray, extra_joint_pos: dict[str, float] | None = None
@@ -197,12 +236,18 @@ class GravityCompensation:
                 fingers), in model units.
 
         Returns:
-            `np.ndarray`: Torques in Nm for each joint in `joint_names`.
+            `np.ndarray`: Torques in Nm for each joint in `joint_names`, scaled and capped.
         """
-        for joint_name, position in zip(self.joint_names, joint_pos_rad, strict=True):
-            self.robot.set_joint(joint_name, float(position))
-        for joint_name, position in (extra_joint_pos or {}).items():
-            self.robot.set_joint(joint_name, float(position))
-        self.robot.update_kinematics()
-        torques = self.robot.static_gravity_compensation_torques_dict(self.base_frame)
-        return np.asarray([torques[joint_name] for joint_name in self.joint_names])
+        with self._lock:
+            for joint_name, position in zip(self.joint_names, joint_pos_rad, strict=True):
+                self.robot.set_joint(joint_name, float(position))
+            for joint_name, position in (extra_joint_pos or {}).items():
+                self.robot.set_joint(joint_name, float(position))
+            self.robot.update_kinematics()
+            torques_by_joint = self.robot.static_gravity_compensation_torques_dict(self.base_frame)
+        torques = np.asarray([torques_by_joint[joint_name] for joint_name in self.joint_names])
+        if self.scale is not None:
+            torques = torques * self.scale
+        if self.max_torque is not None:
+            torques = np.clip(torques, -self.max_torque, self.max_torque)
+        return torques

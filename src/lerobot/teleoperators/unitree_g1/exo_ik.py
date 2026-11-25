@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ArmIK
+from lerobot.robots.unitree_g1.g1_kinematics import G1_29_ARM_JOINTS, G1ArmKinematics
 from lerobot.robots.unitree_g1.g1_utils import G1_29_JointArmIndex
 
 from .exo_calib import JOINTS
@@ -52,7 +52,6 @@ class ArmCfg:
     side: str  # "left" | "right"
     urdf: str  # exo_left.urdf / exo_right.urdf
     root: str  # "exo_left" / "exo_right"
-    g1_ee: str  # "l_ee" / "r_ee"
     offset: np.ndarray  # world offset for viz + target
     marker_prefix: str  # "left" / "right"
 
@@ -96,39 +95,38 @@ class Markers:
 
 class ExoskeletonIKHelper:
     """
-    - Loads G1 robot and exoskeleton URDF models via Pinocchio
+    - Loads the exoskeleton URDF models via Pinocchio
     - Computes forward kinematics on exoskeleton to get end-effector poses
-    - Solves inverse kinematics on G1 to match those poses
+    - Solves inverse kinematics on G1 to match those poses, with `G1ArmKinematics`
     - Provides meshcat visualization showing both robots and targets
 
     Args:
-        frozen_joints: List of G1 joint names to exclude from IK (kept at neutral).
+        frozen_joints: List of G1 arm joint names to exclude from IK (kept at zero).
     """
 
     def __init__(self, frozen_joints: list[str] | None = None):
         try:
             import pinocchio as pin
         except ImportError as e:
-            raise ImportError("ik mode needs pinocchio: pip install pin") from e
+            raise ImportError(
+                "ik mode needs pinocchio, installed with placo: pip install 'lerobot[unitree_g1]'"
+            ) from e
 
         self.pin = pin
         self.frozen_joints = frozen_joints or []
+        for name in self.frozen_joints:
+            logger.info(f"freezing joint: {name}")
 
-        self.g1_ik = G1_29_ArmIK()
-        self.robot_g1 = self.g1_ik.reduced_robot
-        self.robot_g1.data = self.robot_g1.model.createData()
-        self.q_g1 = pin.neutral(self.robot_g1.model)
+        self.g1_ik = G1ArmKinematics(self.frozen_joints)
+        self.q_g1 = np.zeros(len(G1_29_ARM_JOINTS))
 
-        assets_dir = os.path.join(self.g1_ik.repo_path, "assets")
-
-        self.frozen_idx = self._frozen_joint_indices()
+        assets_dir = str(self.g1_ik.urdf_path.parent)
 
         self.arms = [
             ArmCfg(
                 side="left",
                 urdf=os.path.join(assets_dir, "exo_left.urdf"),
                 root="exo_left",
-                g1_ee="L_ee",
                 offset=np.array([0.6, 0.3, 0.0]),
                 marker_prefix="left",
             ),
@@ -136,7 +134,6 @@ class ExoskeletonIKHelper:
                 side="right",
                 urdf=os.path.join(assets_dir, "exo_right.urdf"),
                 root="exo_right",
-                g1_ee="R_ee",
                 offset=np.array([0.6, -0.3, 0.0]),
                 marker_prefix="right",
             ),
@@ -146,26 +143,14 @@ class ExoskeletonIKHelper:
         self.q_exo: dict[str, np.ndarray] = {}  # side -> q
         self.ee_id_exo: dict[str, int] = {}  # side -> frame id
         self.qmap: dict[str, dict[str, int]] = {}  # side -> {joint_name: q_idx}
-        self.ee_id_g1: dict[str, int | None] = {}  # side -> frame id
 
         self._load_exo_models(assets_dir)
-        for a in self.arms:
-            self.ee_id_g1[a.side] = _frame_id(self.robot_g1.model, a.g1_ee)
 
         self.viewer: meshcat.Visualizer | None = None
         self.markers: Markers | None = None
+        self.robot_g1: RobotWrapper | None = None  # display model, built with the visualization
         self.viz_g1: MeshcatVisualizer | None = None
         self.viz_exo: dict[str, MeshcatVisualizer] = {}  # side -> viz
-
-    def _frozen_joint_indices(self) -> dict[str, int]:
-        out = {}
-        m = self.robot_g1.model
-        for name in self.frozen_joints:
-            if name in m.names:
-                jid = m.getJointId(name)
-                out[name] = m.idx_qs[jid]
-                logger.info(f"freezing joint: {name} (q_idx={out[name]})")
-        return out
 
     def _find_exo_ee(self, model, ee_name: str = "ee") -> int:
         ee = _frame_id(model, ee_name)
@@ -204,13 +189,20 @@ class ExoskeletonIKHelper:
             logger.warning(f"meshcat viz unavailable: {e}")
             return
 
-        # g1
+        # g1, with everything but the arms locked at zero
+        pin = self.pin
+        urdf = self.g1_ik.urdf_path
+        full = pin.RobotWrapper.BuildFromURDF(str(urdf), str(urdf.parent))
+        locked = [name for name in full.model.names[1:] if name not in G1_29_ARM_JOINTS]
+        self.robot_g1 = full.buildReducedRobot(
+            list_of_joints_to_lock=locked, reference_configuration=pin.neutral(full.model)
+        )
         self.viz_g1 = MeshcatVisualizer(
             self.robot_g1.model, self.robot_g1.collision_model, self.robot_g1.visual_model
         )
         self.viz_g1.initViewer(open=True)
         self.viz_g1.loadViewerModel("g1")
-        self.viz_g1.display(self.q_g1)
+        self.viz_g1.display(self._g1_display_q())
 
         self.viewer = self.viz_g1.viewer
         self.markers = Markers(self.viewer)
@@ -276,15 +268,8 @@ class ExoskeletonIKHelper:
 
         # g1
         if self.viz_g1 is not None:
-            self.viz_g1.display(self.q_g1)
-            pin.forwardKinematics(self.robot_g1.model, self.robot_g1.data, self.q_g1)
-            pin.updateFramePlacements(self.robot_g1.model, self.robot_g1.data)
-
-            for a in self.arms:
-                fid = self.ee_id_g1.get(a.side)
-                if fid is None:
-                    continue
-                ee_tf = self.robot_g1.data.oMf[fid].homogeneous
+            self.viz_g1.display(self._g1_display_q())
+            for a, ee_tf in zip(self.arms, self.g1_ik.forward_kinematics(self.q_g1), strict=True):
                 p = a.marker_prefix
                 self.markers.tf(f"markers/{p}_g1_ee", ee_tf)
                 self.markers.tf(f"markers/{p}_g1_axes", ee_tf)
@@ -321,39 +306,23 @@ class ExoskeletonIKHelper:
         Performs FK on exoskeleton to get end-effector poses in world frame,
         after which it solves IK on G1 to return joint angles matching those poses in G1 motor order.
         """
-        pin = self.pin
+        left = self._fk_target_world("left", left_angles)
+        right = self._fk_target_world("right", right_angles)
+        if left is None or right is None:
+            # An arm without a target holds its current end-effector pose.
+            current_left, current_right = self.g1_ik.forward_kinematics(self.q_g1)
+            left = current_left if left is None else left
+            right = current_right if right is None else right
 
-        targets = {
-            "left": self._fk_target_world("left", left_angles),
-            "right": self._fk_target_world("right", right_angles),
-        }
+        self.q_g1 = self.g1_ik.solve_ik(left, right)
+        return {f"{j.name}.q": float(self.q_g1[i]) for i, j in enumerate(G1_29_JointArmIndex)}
 
-        # fallback to current g1 ee pose if missing target
-        pin.forwardKinematics(self.robot_g1.model, self.robot_g1.data, self.q_g1)
-        pin.updateFramePlacements(self.robot_g1.model, self.robot_g1.data)
-
-        for a in self.arms:
-            if targets[a.side] is not None:
-                continue
-            fid = self.ee_id_g1.get(a.side)
-            if fid is not None:
-                targets[a.side] = self.robot_g1.data.oMf[fid].homogeneous
-
-        if targets["left"] is None or targets["right"] is None:
-            logger.warning("missing ik targets, returning current pose")
-            return {}
-
-        frozen_vals = {n: self.q_g1[i] for n, i in self.frozen_idx.items()}
-
-        self.q_g1, _ = self.g1_ik.solve_ik(
-            targets["left"], targets["right"], current_lr_arm_motor_q=self.q_g1
-        )
-
-        for n, i in self.frozen_idx.items():
-            self.q_g1[i] = frozen_vals[n]
-
-        return {
-            f"{j.name}.q": float(self.q_g1[i])
-            for i, j in enumerate(G1_29_JointArmIndex)
-            if i < len(self.q_g1)
-        }
+    def _g1_display_q(self) -> np.ndarray:
+        """Arm joint positions in the display model's configuration order."""
+        if self.robot_g1 is None:
+            raise RuntimeError("Call init_visualization() before displaying the G1")
+        model = self.robot_g1.model
+        q = self.pin.neutral(model)
+        for name, value in zip(G1_29_ARM_JOINTS, self.q_g1, strict=True):
+            q[model.idx_qs[model.getJointId(name)]] = value
+        return q

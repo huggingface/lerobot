@@ -3588,11 +3588,14 @@ transformers-dep = [
     { name = "transformers" },
 ]
 unitree-g1 = [
+    { name = "cmeel-tinyxml2" },
+    { name = "cmeel-urdfdom" },
     { name = "contourpy" },
     { name = "matplotlib" },
     { name = "meshcat" },
     { name = "onnx" },
     { name = "onnxruntime" },
+    { name = "placo" },
     { name = "pygame" },
     { name = "pyserial" },
     { name = "pyzmq" },
@@ -3753,6 +3756,7 @@ requires-dist = [
     { name = "lerobot", extras = ["pi"], marker = "extra == 'fineart-vla'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'kinematics'" },
+    { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["placo-dep"], marker = "extra == 'yam'" },
     { name = "lerobot", extras = ["praxis"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["pusht"], marker = "extra == 'all'" },

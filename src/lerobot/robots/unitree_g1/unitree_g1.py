@@ -33,12 +33,18 @@ from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
 from .g1_embodiments import get_g1_embodiment
-from .g1_kinematics import G1_29_ArmIK
+from .g1_kinematics import G1_29_WAIST_JOINTS, make_g1_gravity_compensation
 from .g1_utils import (
     NUM_MOTORS,
     REMOTE_KEYS,
+    G1_29_JointIndex,
     default_remote_input,
 )
+
+if TYPE_CHECKING:
+    from lerobot.model import GravityCompensation
+
+_WAIST_SLOTS = (G1_29_JointIndex.kWaistYaw, G1_29_JointIndex.kWaistRoll, G1_29_JointIndex.kWaistPitch)
 
 if TYPE_CHECKING or _unitree_sdk_available:
     from unitree_sdk2py.core.channel import (
@@ -201,7 +207,9 @@ class UnitreeG1(Robot):
         self._shutdown_event = threading.Event()
         self.subscribe_thread: threading.Thread | None = None
 
-        self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
+        self.gravity_model: GravityCompensation | None = (
+            make_g1_gravity_compensation(config.end_effector) if config.gravity_compensation else None
+        )
 
         # Controller loaded dynamically
         self.controller: RobotController | None = make_robot_controller(config.controller)
@@ -267,6 +275,8 @@ class UnitreeG1(Robot):
         kd: np.ndarray | list[float] | None = None,
         tau: np.ndarray | list[float] | None = None,
     ) -> None:  # writes robot command whenever requested
+        if tau is None:
+            tau = self._gravity_torques()
         with self._lowcmd_lock:
             for motor in self.joint_index:
                 key = f"{motor.name}.q"
@@ -599,23 +609,30 @@ class UnitreeG1(Robot):
                 return action
 
         action_to_publish = self._ease_in(action_to_publish)
-
-        tau: np.ndarray | None = None
-        if self.config.gravity_compensation and self.arm_ik is not None:
-            tau = np.zeros(NUM_MOTORS, dtype=np.float32)
-            action_np = np.array(
-                [
-                    action_to_publish.get(f"{joint.name}.q", self.msg.motor_cmd[joint.value].q)
-                    for joint in self.arm_index
-                ],
-                dtype=np.float32,
-            )
-            arm_tau = self.arm_ik.solve_tau(action_np)
-            for local_idx, joint in enumerate(self.arm_index):
-                tau[joint.value] = arm_tau[local_idx]
-
-        self.publish_lowcmd(action_to_publish, tau=tau)
+        self.publish_lowcmd(action_to_publish)
         return {**action, **action_to_publish}
+
+    def _gravity_torques(self) -> np.ndarray | None:
+        """Arm torques that hold the measured arm and waist pose against gravity, by DDS slot.
+
+        `None` without gravity compensation or before the first lowstate.
+        """
+        if self.gravity_model is None:
+            return None
+        with self._lowstate_lock:
+            lowstate = self._lowstate
+        if lowstate is None:
+            return None
+        motors = lowstate.motor_state
+        waist = {
+            name: motors[slot.value].q for name, slot in zip(G1_29_WAIST_JOINTS, _WAIST_SLOTS, strict=True)
+        }
+        arm_tau = self.gravity_model.torques(
+            np.array([motors[joint.value].q for joint in self.arm_index]), waist
+        )
+        tau = np.zeros(NUM_MOTORS)
+        tau[[joint.value for joint in self.arm_index]] = arm_tau
+        return tau
 
     def _update_controller_action(self, action: RobotAction) -> None:
         """Forward incoming teleop action values into ``controller_input``; each controller
