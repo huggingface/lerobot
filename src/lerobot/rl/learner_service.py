@@ -74,7 +74,7 @@ class LearnerService(_ServicerBase):
 
         last_push_time = 0
 
-        while not self.shutdown_event.is_set():
+        while not self.shutdown_event.is_set() and context.is_active():
             time_since_last_push = time.time() - last_push_time
             if time_since_last_push < self.seconds_between_pushes:
                 self.shutdown_event.wait(self.seconds_between_pushes - time_since_last_push)
