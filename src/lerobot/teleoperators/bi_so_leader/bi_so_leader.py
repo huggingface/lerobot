@@ -46,6 +46,7 @@ class BiSOLeader(BimanualMixin, Teleoperator):
             port=config.left_arm_config.port,
             use_degrees=config.left_arm_config.use_degrees,
             num_read_retries=config.left_arm_config.num_read_retries,
+            mirror=config.left_arm_config.mirror,
         )
 
         right_arm_config = SOLeaderTeleopConfig(
@@ -54,6 +55,7 @@ class BiSOLeader(BimanualMixin, Teleoperator):
             port=config.right_arm_config.port,
             use_degrees=config.right_arm_config.use_degrees,
             num_read_retries=config.right_arm_config.num_read_retries,
+            mirror=config.right_arm_config.mirror,
         )
 
         self.left_arm = SOLeader(left_arm_config)
