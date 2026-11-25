@@ -491,23 +491,29 @@ def handle_filter_episodes(cfg: EditDatasetConfig) -> None:
     repo_id = _require_repo_id(cfg)
     dataset = LeRobotDataset(repo_id, root=cfg.root)
 
+    # Validate filter arguments and ensure at least one episode matches before get_output_path()
+    # moves the source directory for in-place edits.
+    predicate = _build_episode_filter_predicate(
+        fps=dataset.meta.fps,
+        tasks=cfg.operation.tasks,
+        exclude_tasks=cfg.operation.exclude_tasks,
+        min_frames=cfg.operation.min_frames,
+        max_frames=cfg.operation.max_frames,
+        min_duration_s=cfg.operation.min_duration_s,
+        max_duration_s=cfg.operation.max_duration_s,
+    )
+    matched = dataset.meta.filter_episodes(predicate)
+
     if cfg.operation.dry_run:
-        predicate = _build_episode_filter_predicate(
-            fps=dataset.meta.fps,
-            tasks=cfg.operation.tasks,
-            exclude_tasks=cfg.operation.exclude_tasks,
-            min_frames=cfg.operation.min_frames,
-            max_frames=cfg.operation.max_frames,
-            min_duration_s=cfg.operation.min_duration_s,
-            max_duration_s=cfg.operation.max_duration_s,
-        )
-        matched = dataset.meta.filter_episodes(predicate)
         dropped = dataset.meta.total_episodes - len(matched)
         logging.info(
             f"[dry_run] Matched {len(matched)} / {dataset.meta.total_episodes} episodes "
             f"(would drop {dropped}): {matched}"
         )
         return
+
+    if not matched:
+        raise ValueError("No episodes matched the filter criteria")
 
     output_repo_id, output_dir, backup_path = get_output_path(
         repo_id,

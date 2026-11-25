@@ -275,3 +275,24 @@ def test_cli_handle_filter_episodes_writes_new_dataset(multi_length_dataset, tmp
     loaded = LeRobotDataset("local/filter_test_cli", root=output_dir)
     assert loaded.meta.total_episodes == 2  # ep 2 (15) and ep 3 (20)
     assert loaded.meta.total_frames == 35
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        FilterEpisodesConfig(min_frames=-1),
+        FilterEpisodesConfig(tasks=[]),
+        FilterEpisodesConfig(min_frames=999),
+    ],
+)
+def test_cli_invalid_in_place_filter_preserves_source(multi_length_dataset, operation):
+    root = multi_length_dataset.root
+    before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    cfg = EditDatasetConfig(
+        repo_id="local/filter_test", root=str(root), new_root=str(root), operation=operation
+    )
+    with pytest.raises(ValueError):
+        handle_filter_episodes(cfg)
+    assert root.exists()
+    assert not root.with_name(root.name + "_old").exists()
+    assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
