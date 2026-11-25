@@ -430,6 +430,178 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
     assert len(parquet_files) > 0
 
 
+@pytest.mark.parametrize("metadata_buffer_size", [1, 2, 10])
+@pytest.mark.parametrize("missing_first", [False, True])
+def test_metadata_buffer_preserves_missing_camera_stats(tmp_path, metadata_buffer_size, missing_first):
+    from lerobot.datasets.io_utils import load_nested_dataset
+
+    key = "observation.images.laptop"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/optional_stats",
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "optional_stats",
+        metadata_buffer_size=metadata_buffer_size,
+    )
+    meta.save_episode_tasks(["Task 1"])
+    missing = [missing_first, not missing_first, missing_first, not missing_first]
+    try:
+        for index, omit_camera in enumerate(missing):
+            stats = _make_dummy_stats(meta.features)
+            if omit_camera:
+                stats.pop(key)
+            meta.save_episode(index, 5, ["Task 1"], stats, {})
+        meta.finalize()
+    finally:
+        # Do not retry a failed flush during interpreter shutdown.
+        meta._finalized = True
+        if meta._pq_writer is not None:
+            meta._pq_writer.close()
+
+    episodes = load_nested_dataset(meta.root / "meta/episodes")
+    assert list(episodes[f"stats/{key}/count"]) == [None if omit else [5] for omit in missing]
+    assert list(episodes[f"stats/{key}/mean"]) == [
+        None if omit else [[[0.5]], [[0.5]], [[0.5]]] for omit in missing
+    ]
+    for episode in episodes:
+        path = meta.root / (
+            f"meta/episodes/chunk-{episode['meta/episodes/chunk_index']:03d}/"
+            f"file-{episode['meta/episodes/file_index']:03d}.parquet"
+        )
+        assert path.exists()
+    reloaded = LeRobotDatasetMetadata("test/optional_stats", root=meta.root)
+    np.testing.assert_array_equal(reloaded.stats[key]["count"], [10])
+    np.testing.assert_array_equal(reloaded.stats["action"]["count"], [20])
+
+
+@pytest.mark.parametrize("missing_episode", [0, 1, None], ids=["null-first", "null-last", "absent-column"])
+@pytest.mark.parametrize("missing_quantiles", [("q50",), ("q01", "q10", "q50", "q90", "q99")])
+def test_legacy_image_stats_keep_unreconstructable_quantiles(tmp_path, missing_episode, missing_quantiles):
+    """Loading legacy counts must not discard stored quantiles absent from episode summaries."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    key = "observation.images.laptop"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/legacy_quantiles",
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "legacy_quantiles",
+    )
+    meta.save_episode_tasks(["Task 1"])
+    for index, length in enumerate([2, 4]):
+        stats = _make_dummy_stats(meta.features)
+        camera_stats = stats[key]
+        for name in ("min", "max", "mean"):
+            camera_stats[name] = np.full((3, 1, 1), index, dtype=np.float32)
+        camera_stats["std"] = np.zeros((3, 1, 1), dtype=np.float32)
+        camera_stats["count"] = np.array([100_000])
+        for name in ("q01", "q10", "q50", "q90", "q99"):
+            camera_stats[name] = np.full((3, 1, 1), index, dtype=np.float32)
+        meta.save_episode(index, length, ["Task 1"], stats, {})
+    meta.finalize()
+    stored_quantiles = {name: meta.stats[key][name].copy() for name in missing_quantiles}
+
+    for path in (meta.root / "meta/episodes").rglob("*.parquet"):
+        table = pq.read_table(path)
+        for name in missing_quantiles:
+            column = f"stats/{key}/{name}"
+            if missing_episode is None:
+                table = table.drop_columns([column])
+                continue
+            index = table.schema.get_field_index(column)
+            values = table[column].to_pylist()
+            for row, episode_index in enumerate(table["episode_index"].to_pylist()):
+                if episode_index == missing_episode:
+                    values[row] = None
+            field = table.schema.field(index)
+            table = table.set_column(index, field, pa.array(values, type=field.type))
+        pq.write_table(table, path)
+    metadata_bytes = {path: path.read_bytes() for path in (meta.root / "meta").rglob("*") if path.is_file()}
+
+    reloaded = LeRobotDatasetMetadata("test/legacy_quantiles", root=meta.root)
+
+    np.testing.assert_array_equal(reloaded.stats[key]["count"], [6])
+    np.testing.assert_allclose(reloaded.stats[key]["mean"], 2 / 3)
+    np.testing.assert_allclose(reloaded.stats[key]["std"], np.sqrt(2 / 9))
+    for name, expected in stored_quantiles.items():
+        np.testing.assert_array_equal(reloaded.stats[key][name], expected)
+    for path, expected in metadata_bytes.items():
+        assert path.read_bytes() == expected
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_metadata_load_reads_episode_stats_once(tmp_path, monkeypatch, legacy):
+    from lerobot.datasets import dataset_metadata, io_utils
+
+    key = "observation.images.laptop"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/single_load",
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "single_load",
+        metadata_buffer_size=1,
+    )
+    meta.save_episode_tasks(["Task 1"])
+    for index, count in enumerate([None, 4, 100_000 if legacy else 5]):
+        stats = _make_dummy_stats(meta.features)
+        if count is None:
+            stats.pop(key)
+        else:
+            stats[key]["count"] = np.array([count])
+        meta.save_episode(index, 5, ["Task 1"], stats, {})
+    meta.finalize()
+
+    loads = []
+    original_load = io_utils.load_nested_dataset
+
+    def counted_load(*args, **kwargs):
+        loads.append(args[0])
+        return original_load(*args, **kwargs)
+
+    monkeypatch.setattr(io_utils, "load_nested_dataset", counted_load)
+    if hasattr(dataset_metadata, "load_nested_dataset"):
+        monkeypatch.setattr(dataset_metadata, "load_nested_dataset", counted_load)
+
+    reloaded = LeRobotDatasetMetadata("test/single_load", root=meta.root)
+
+    assert loads == [meta.root / "meta/episodes"]
+    np.testing.assert_array_equal(reloaded.stats[key]["count"], [9])
+    assert not any(name.startswith("stats/") for name in reloaded.episodes.column_names)
+    assert not any(name.startswith("stats/") for name in io_utils.load_episodes(meta.root).column_names)
+    assert f"stats/{key}/count" in io_utils.load_episodes(meta.root, include_stats=True).column_names
+
+
+@pytest.mark.parametrize("null_type", [False, True], ids=["nullable-list", "null-only-column"])
+def test_metadata_load_keeps_global_stats_when_episode_counts_are_null(tmp_path, null_type):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    key = "observation.images.laptop"
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/null_counts",
+        fps=DEFAULT_FPS,
+        features=VIDEO_FEATURES,
+        root=tmp_path / "null_counts",
+    )
+    meta.save_episode_tasks(["Task 1"])
+    stats = _make_dummy_stats(meta.features)
+    meta.save_episode(0, 5, ["Task 1"], stats, {})
+    meta.finalize()
+    for path in (meta.root / "meta/episodes").rglob("*.parquet"):
+        table = pq.read_table(path)
+        column = f"stats/{key}/count"
+        index = table.schema.get_field_index(column)
+        dtype = None if null_type else table.schema.field(index).type
+        table = table.set_column(index, column, pa.nulls(table.num_rows, type=dtype))
+        pq.write_table(table, path)
+
+    reloaded = LeRobotDatasetMetadata("test/null_counts", root=meta.root)
+
+    for name, expected in stats[key].items():
+        np.testing.assert_array_equal(reloaded.stats[key][name], expected)
+
+
 # ── Tools accessor ───────────────────────────────────────────────────
 
 

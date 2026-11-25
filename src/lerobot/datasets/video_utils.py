@@ -914,9 +914,13 @@ class _CameraEncoderThread(threading.Thread):
 
             av.logging.restore_default_callback()
 
-            # Get stats and put on result queue
+            # Get stats and put on result queue.
+            # RunningQuantileStats counts pixels (one sample per downsampled pixel).
+            # Episode aggregation weights by `count`, and the non-streaming path stores
+            # the frame count (`compute_episode_stats`). Keep that same weight here.
             if frame_count >= 2:
                 stats = stats_tracker.get_statistics()
+                stats["count"] = np.array([frame_count])
                 self.result_queue.put(("ok", stats))
             else:
                 self.result_queue.put(("ok", None))

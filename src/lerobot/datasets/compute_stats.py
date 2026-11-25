@@ -651,6 +651,11 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, np.ndarray]]) -> dict[
     return aggregated
 
 
+def cap_legacy_image_count(count: np.ndarray, episode_length: int) -> np.ndarray:
+    """Cap historical pixel counts at episode length and preserve smaller encoded-frame counts."""
+    return np.minimum(count, episode_length)
+
+
 def aggregate_stats(stats_list: list[dict[str, dict[str, np.ndarray]]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
 

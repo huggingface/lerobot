@@ -28,7 +28,7 @@ import tqdm
 
 from lerobot.configs import VIDEO_ENCODER_INFO_KEYS
 
-from .compute_stats import aggregate_stats
+from .compute_stats import aggregate_stats, cap_legacy_image_count
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import canonicalize_depth_marker, features_equal_for_merge, get_hf_features_from_features
 from .io_utils import (
@@ -208,6 +208,14 @@ def update_meta_data(
     Returns:
         pd.DataFrame: Updated DataFrame with adjusted indices and timestamps.
     """
+
+    for key in dst_meta.camera_keys:
+        count_column = f"stats/{key}/count"
+        if count_column in df:
+            df[count_column] = [
+                None if count is None else cap_legacy_image_count(count, length)
+                for count, length in zip(df[count_column], df["length"], strict=True)
+            ]
 
     df["meta/episodes/chunk_index"] = df["meta/episodes/chunk_index"] + meta_idx["chunk"]
     df["meta/episodes/file_index"] = df["meta/episodes/file_index"] + meta_idx["file"]

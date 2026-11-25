@@ -77,6 +77,12 @@ def load_nested_dataset(
     if len(paths) == 0:
         raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
 
+    if features is None and pq_dir.name == Path(EPISODES_DIR).name:
+        # A short streaming episode can omit camera stats even in the first shard.
+        # Infer their nullable columns from all metadata shards, not just the first.
+        schema = pa.unify_schemas([pq.read_schema(path) for path in paths], promote_options="permissive")
+        features = datasets.Features.from_arrow_schema(schema)
+
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
@@ -210,12 +216,20 @@ def write_episodes(episodes: Dataset, local_dir: Path) -> None:
     episodes.to_parquet(fpath)
 
 
-def load_episodes(local_dir: Path) -> datasets.Dataset:
+def load_episodes(local_dir: Path, *, include_stats: bool = False) -> datasets.Dataset:
+    """Load episode metadata, optionally retaining statistics for compatibility checks.
+
+    Args:
+        local_dir: Root directory of the dataset.
+        include_stats: Keep per-episode statistics in the returned dataset. By default,
+            only references to episode data and videos are retained for faster access.
+
+    Returns:
+        Episode metadata with or without statistics columns.
+    """
     episodes = load_nested_dataset(local_dir / EPISODES_DIR)
-    # Select episode features/columns containing references to episode data and videos
-    # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
-    # This is to speedup access to these data, instead of having to load episode stats.
-    episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
+    if not include_stats:
+        episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
     return episodes
 
 

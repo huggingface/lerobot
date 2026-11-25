@@ -24,6 +24,7 @@ import numpy as np
 import packaging.version
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
@@ -34,7 +35,7 @@ from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBO
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
 
-from .compute_stats import aggregate_stats
+from .compute_stats import aggregate_stats, cap_legacy_image_count
 from .depth_utils import MM_PER_METRE
 from .feature_utils import canonicalize_depth_marker, create_empty_dataset_info
 from .io_utils import (
@@ -156,11 +157,14 @@ class LeRobotDatasetMetadata:
         if not hasattr(self, "_metadata_buffer") or len(self._metadata_buffer) == 0:
             return
 
-        combined_dict: dict[str, list] = {}
+        combined_dict: dict[str, list] = {key: [] for episode in self._metadata_buffer for key in episode}
+        if self._pq_writer is not None:
+            for key in self._pq_writer.schema.names:
+                combined_dict.setdefault(key, [])
         for episode_dict in self._metadata_buffer:
-            for key, value in episode_dict.items():
-                if key not in combined_dict:
-                    combined_dict[key] = []
+            for key in combined_dict:
+                # Missing camera statistics stay null, including in an entirely missing batch.
+                value = episode_dict.get(key)
                 # Extract value and serialize numpy arrays
                 # because PyArrow's from_pydict function doesn't support numpy arrays
                 val = value[0] if isinstance(value, list) else value
@@ -183,7 +187,8 @@ class LeRobotDatasetMetadata:
             # order, which can differ between batches (e.g. episodes originally stored in
             # different parquet shards with different column orders). Realign to the
             # writer's established schema so `write_table` doesn't reject a reordered match.
-            table = table.select(self._pq_writer.schema.names)
+            # Preserve the established types when a batch contains only null camera statistics.
+            table = table.select(self._pq_writer.schema.names).cast(self._pq_writer.schema)
 
         self._pq_writer.write_table(table)
 
@@ -219,8 +224,52 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root) if self.total_tasks > 0 else None
-        self.episodes = load_episodes(self.root) if self.total_episodes > 0 else None
+        self.episodes = load_episodes(self.root, include_stats=True) if self.total_episodes > 0 else None
         self.stats = load_stats(self.root)
+        self._normalize_legacy_image_stats()
+        if self.episodes is not None:
+            # Keep the public episode index lightweight after checking its statistics.
+            self.episodes = self.episodes.select_columns(
+                [key for key in self.episodes.column_names if not key.startswith("stats/")]
+            )
+
+    def _normalize_legacy_image_stats(self) -> None:
+        """Reweight legacy streaming image statistics by episode length, without rewriting source files."""
+        if self.episodes is None or self.stats is None or not self.camera_keys:
+            return
+        episodes = self.episodes
+        lengths = episodes.data.column("length")
+        for key in self.camera_keys:
+            prefix = f"stats/{key}/"
+            count_column = f"{prefix}count"
+            if key not in self.stats or count_column not in episodes.column_names:
+                continue
+            counts_column = episodes.data.column(count_column)
+            if pa.types.is_null(counts_column.type):
+                continue
+            # Counts have shape (1,); Arrow preserves null rows for omitted camera stats.
+            # Avoid materializing every count as a Python/numpy object for current datasets.
+            counts = pc.list_element(counts_column, 0)
+            if not pc.any(pc.greater(counts, lengths)).as_py():
+                continue
+            # Rebuild the aggregate, not just its count: old episodes may have different pixel weights.
+            columns = [column for column in episodes.column_names if column.startswith(prefix)]
+            stats = []
+            for episode in episodes.select_columns(["length", *columns]):
+                # Episodes with fewer than two encoded frames have no camera statistics.
+                if episode[count_column] is None:
+                    continue
+                # Optional statistics (e.g. quantiles) can be null in older episode rows.
+                feature_stats = {
+                    column[len(prefix) :]: np.asarray(episode[column])
+                    for column in columns
+                    if episode[column] is not None
+                }
+                feature_stats["count"] = cap_legacy_image_count(feature_stats["count"], episode["length"])
+                stats.append({key: feature_stats})
+            rebuilt = aggregate_stats(stats)[key]
+            # Keep stored statistics that incomplete legacy episode summaries cannot reconstruct.
+            self.stats[key] = {**self.stats[key], **rebuilt}
 
     def ensure_readable(self) -> None:
         """Guarantee metadata is fully loaded for read operations.
@@ -621,8 +670,15 @@ class LeRobotDatasetMetadata:
 
                 av_size_per_frame = latest_size_in_mb / latest_num_frames if latest_num_frames > 0 else 0.0
 
-                if latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb:
-                    # Size limit is reached, flush buffer and prepare new parquet file
+                new_columns = self._pq_writer is not None and not set(episode_dict).issubset(
+                    self._pq_writer.schema.names
+                )
+                if (
+                    new_columns
+                    or latest_size_in_mb + av_size_per_frame * num_frames >= self.data_files_size_in_mb
+                ):
+                    # A later episode may introduce camera stats omitted by the first batch.
+                    # Start a new shard rather than silently dropping the new columns.
                     self._flush_metadata_buffer()
                     chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, self.chunks_size)
                     self._close_writer()
