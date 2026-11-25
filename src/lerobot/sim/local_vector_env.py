@@ -280,7 +280,9 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.use_async_envs = use_async_envs
         self.tasks: dict[str, list[int]] = {group: list(tasks) for group, tasks in factories.items()}
         self.task_group = task_group or next(iter(factories))
-        task_factories = factories.get(self.task_group, {})
+        if self.task_group not in factories:
+            raise ValueError(f"Unknown task {self.task_group!r}; this environment has {sorted(self.tasks)}")
+        task_factories = factories[self.task_group]
         # Default to the suite's first task id, not 0: a suite can be filtered (e.g. LIBERO's task_ids).
         self.task_id: int = next(iter(task_factories), 0) if task_id is None else task_id
         if self.task_id not in task_factories:
