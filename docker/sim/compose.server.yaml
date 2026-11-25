@@ -7,6 +7,7 @@ services:
       dockerfile: docker/Dockerfile.sim
       args:
         SIM: ${SIM}
+        ENVHUB_IMAGE: ${ENVHUB_IMAGE:-}
       # The EnvHub stage's repository files; unused by the other stages.
       additional_contexts:
         envhub: ${ENVHUB_DIR:-.}

@@ -169,13 +169,39 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     assert env["SIM_TAG"] == f"local-{tmp_path.name.lower()}"
     hub_path = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]["kwargs"]["hub_path"]
     assert hub_path == f"{lerobot_env_server.ENVHUB_IMAGE_DIR}:custom.py"
+    assert "ENVHUB_IMAGE" not in env
+
+
+def test_docker_launch_builds_the_repository_image_first(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
+    )
+    monkeypatch.delenv("ENVHUB_IMAGE", raising=False)
+    (tmp_path / "env.py").write_text("")
+    (tmp_path / "envhub.Dockerfile").write_text("FROM python:3.12-slim\n")
+    argv = [
+        "lerobot-env-server",
+        f"--envhub={tmp_path}",
+        "--trust_remote_code=true",
+        "--docker=true",
+        "--build=true",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    lerobot_env_server.main()
+    build, compose = calls[-2][0], calls[-1]
+    image = f"lerobot-envhub-simulator:local-{tmp_path.name.lower()}"
+    assert build == ["docker", "build", "-f", str(tmp_path / "envhub.Dockerfile"), "-t", image, str(tmp_path)]
+    # The server's image builds on top of it.
+    assert compose[0][-5:] == ["up", "-d", "--wait", "--build", "sim"]
+    assert compose[1]["env"]["ENVHUB_IMAGE"] == image
 
 
 def test_serving_an_envhub_repository_needs_explicit_consent(tmp_path):
     with pytest.raises(ValueError, match="pin the commit you read.*--trust_remote_code=true"):
         EnvServerLaunchConfig(envhub="user/repo")
     # A local folder needs the same consent, but has no commit to pin.
-    with pytest.raises(ValueError, match="packages.txt, then pass --trust_remote_code=true"):
+    with pytest.raises(ValueError, match="envhub.Dockerfile, then pass --trust_remote_code=true"):
         EnvServerLaunchConfig(envhub=str(tmp_path))
     assert EnvServerLaunchConfig(envhub="user/repo", trust_remote_code=True).sim.kwargs["trust_remote_code"]
     # Stopping the server runs nothing.
