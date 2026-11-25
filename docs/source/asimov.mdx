@@ -2,7 +2,7 @@
 
 [Asimov 1](https://github.com/menloresearch/menlo-sdk) is Menlo Research's humanoid robot. This integration uses `menlo-sdk` 0.1.x for UDP locomotion control, with balancing provided by the robot's onboard policy.
 
-It supports keyboard teleoperation, dataset recording, and replay through the standard LeRobot commands. It follows the mobile-base action convention from [PR #4941](https://github.com/huggingface/lerobot/pull/4941), and the Unitree G1 integration's fixed proprioception schema and configurable cameras. It uses the standard keyboard and mobile action pipeline from that PR; no device composite is needed for keyboard-only control.
+It supports keyboard and gamepad teleoperation, dataset recording, and replay through the standard LeRobot commands. It follows the [mobile robot action convention](./integrate_mobile_robot) and uses a composite teleoperator to map the base input to velocities.
 
 ## Install and connect
 
@@ -40,6 +40,21 @@ Linear presets default to `(0.1, 0.2, 0.3)` m/s; angular presets default to `(30
 
 Robot limits can be lowered with `--robot.max_linear_velocity`, `--robot.max_lateral_velocity`, and `--robot.max_angular_velocity`. Values above the firmware caps (0.4 m/s, 0.4 m/s, and 0.8 rad/s ≈ 45.84 deg/s) are rejected.
 
+## Gamepad teleoperation
+
+Install the `gamepad` extra and replace the keyboard teleoperator arguments with:
+
+```bash
+  --teleop.type=composite \
+  --teleop.base.type=gamepad \
+  --teleop.base.use_gripper=false \
+  --teleop.mapping.type=gamepad \
+  --teleop.mapping.linear_speed=0.3 \
+  --teleop.mapping.angular_speed=30
+```
+
+The left stick controls translation; the right stick's horizontal axis controls rotation. These speeds are reached at full stick deflection, subject to the robot limits. `angular_speed` and `max_angular_velocity` are both in **degrees per second**. To request a higher yaw rate, change both values, staying within the firmware cap. The onboard walking controller determines the measured response; a 30 deg/s command does not guarantee a 30 deg/s turn. Compare recorded `theta.vel` with `imu.gyro.z` (rad/s) when diagnosing it.
+
 ## Record and replay
 
 ```bash
@@ -70,13 +85,25 @@ Replay executes walking commands on the physical robot. Prepare MOVE mode and cl
 
 ## Cameras and features
 
-Configure standard LeRobot cameras, for example a USB camera connected to the LeRobot computer:
+For the onboard RGB stream, save a matching robot profile with `menlo setup` and configure its Manager credentials there. Select that profile by name; its Manager address must point to the same robot as `robot.host`.
+
+```bash
+  --robot.sdk_robot=my_asimov \
+  --robot.cameras='{front: {type: asimov, width: 640, height: 480, fps: 30}}' \
+  --dataset.video=true
+```
+
+Add these options to `lerobot-record` above. The adapter uses one hybrid SDK connection: UDP for locomotion and state, LiveKit for video. Credentials stay in the SDK profile or environment. Frames are decoded as RGB and resized to the configured dataset dimensions; `fps` declares the intended rate, but does not change the robot's stream rate. A missing or stalled stream raises an error rather than recording blank images. Audio is not recorded.
+
+`dataset.video=true` alone does not enable cameras. After recording, check for `observation.images.front` in the dataset features and MP4 files under `videos/`. For software H.264 encoding, use `--dataset.rgb_encoder.vcodec=h264`.
+
+Standard LeRobot cameras also work, for example a USB camera connected to the LeRobot computer:
 
 ```bash
   --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}'
 ```
 
-ZMQ cameras and depth-capable camera backends are also supported. This adapter uses UDP, which carries no onboard video; Menlo's native LiveKit camera/audio streams are not connected by this integration.
+ZMQ cameras and depth-capable camera backends are also supported. Without an onboard camera configured, the SDK connection uses UDP only and requires no Manager profile.
 
 | Feature                    | Units and meaning                                                        |
 | -------------------------- | ------------------------------------------------------------------------ |
@@ -107,6 +134,6 @@ uv run --locked --extra test pytest \
   tests/teleoperators/test_keyboard_base.py -q
 ```
 
-These tests use mocked hardware and run without the optional SDK. Physical walking, firmware timing, camera streams, and recorded-policy performance still require validation on an Asimov 1.
+These tests use mocked hardware and run without the optional SDK. Keyboard and gamepad recordings have also been uploaded from a physical Asimov 1 running Robot OS 0.2.4, and the onboard RGB stream has been read at 640×480. Those checks do not establish locomotion tracking accuracy or recorded-policy performance.
 
 With `--extra asimov`, also run `tests/robots/test_asimov_sdk.py` to exercise the real SDK's command clamping, timed expiry, and close behavior over an in-memory transport.

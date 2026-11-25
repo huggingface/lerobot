@@ -18,6 +18,7 @@ from math import degrees, isfinite
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
+from .camera_asimov import AsimovCameraConfig  # noqa: F401
 
 
 @RobotConfig.register_subclass("asimov")
@@ -26,6 +27,8 @@ class AsimovConfig(RobotConfig):
     """Asimov 1 locomotion over the Menlo SDK's UDP transport."""
 
     host: str
+    # Saved Menlo SDK profile for onboard video; credentials stay in the SDK store/environment.
+    sdk_robot: str | None = None
     command_port: int = 8850
     # Receive LAN telemetry on all local interfaces; the SDK filters by robot source IP.
     state_host: str = "0.0.0.0"  # nosec B104
@@ -40,7 +43,7 @@ class AsimovConfig(RobotConfig):
     max_linear_velocity: float = 0.3
     max_lateral_velocity: float = 0.2
     max_angular_velocity: float = 30.0
-    # Cameras use the standard LeRobot backends; UDP does not carry onboard video.
+    # An `asimov` camera enables SDK hybrid mode for onboard video.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

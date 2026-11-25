@@ -26,6 +26,7 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _menlo_sdk_available, require_package
 
 from ..robot import Robot
+from .camera_asimov import AsimovCamera
 from .config_asimov import AsimovConfig
 
 if TYPE_CHECKING or _menlo_sdk_available:
@@ -128,6 +129,12 @@ class Asimov(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        onboard_video = any(isinstance(camera, AsimovCamera) for camera in self.cameras.values())
+        livekit = None
+        if onboard_video:
+            livekit = menlo.ConnectionConfig.from_environment(robot=self.config.sdk_robot).livekit
+            if livekit is None:
+                raise ValueError("Onboard video requires a Menlo SDK profile with Manager credentials.")
         connection = menlo.ConnectionConfig(
             udp=menlo.UdpConfig(
                 host=self.config.host,
@@ -136,7 +143,8 @@ class Asimov(Robot):
                 state_source=self.config.host,
                 version_port=self.config.version_port,
                 version_timeout=self.config.connect_timeout_s,
-            )
+            ),
+            livekit=livekit,
         )
         self._client = menlo.Robot(
             connection,
@@ -147,12 +155,17 @@ class Asimov(Robot):
             ),
         )
         try:
-            self._client.connect("udp", timeout=self.config.connect_timeout_s, persist=False)
+            self._client.connect(
+                "hybrid" if onboard_video else "udp", timeout=self.config.connect_timeout_s, persist=False
+            )
             if tuple(self._client.info.joint_names or ()) != ASIMOV_JOINTS:
                 raise ValueError("Expected the Asimov 1 25-joint body reported by menlo-sdk 0.1.x.")
             self._observation_from_state(self._get_state())
             for camera in self.cameras.values():
-                camera.connect()
+                if isinstance(camera, AsimovCamera):
+                    camera.connect(stream=self._client.camera)
+                else:
+                    camera.connect()
         except BaseException:
             try:
                 self.disconnect()

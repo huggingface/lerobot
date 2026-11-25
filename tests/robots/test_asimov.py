@@ -28,6 +28,7 @@ from lerobot.processor import make_default_teleop_action_processor
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.robots.asimov import Asimov, AsimovConfig, asimov as module
 from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS
+from lerobot.robots.asimov.camera_asimov import AsimovCamera, AsimovCameraConfig
 from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
@@ -92,8 +93,61 @@ def setup_robot(monkeypatch, tmp_path):
         # Tests explicitly exercise failures; remove those before fixture teardown.
         client.close.side_effect = None
         for camera in cameras.values():
-            camera.disconnect.side_effect = None
+            if isinstance(camera, Mock):
+                camera.disconnect.side_effect = None
         robot.disconnect()
+
+
+def test_onboard_camera_shares_connection_and_cleans_up(setup_robot):
+    env = setup_robot
+    config = draccus.decode(
+        AsimovConfig,
+        {"host": "192.0.2.10", "cameras": {"front": {"type": "asimov", "width": 4, "height": 2}}},
+    ).cameras["front"]
+    camera = AsimovCamera(config)
+    env.cameras["front"] = camera
+    pixels = np.full((4, 8, 3), [200, 50, 10], dtype=np.uint8)
+    frame = SimpleNamespace(encoding="rgb8", width=8, height=4, age_s=0.01, to_numpy=lambda: pixels)
+    env.client.camera.photo.return_value = frame
+    env.client.camera.latest.return_value = frame
+    livekit = object()
+    env.sdk.ConnectionConfig.from_environment.return_value = SimpleNamespace(livekit=livekit)
+    robot = env.make(sdk_robot="test_robot", cameras={"front": config})
+    assert robot.observation_features["front"] == (2, 4, 3)
+    robot.connect()
+    env.client.connect.assert_called_once_with("hybrid", timeout=5.0, persist=False)
+    env.sdk.ConnectionConfig.from_environment.assert_called_once_with(robot="test_robot")
+    assert env.sdk.Robot.call_args.args[0].livekit is livekit
+    np.testing.assert_array_equal(robot.get_observation()["front"], np.full((2, 4, 3), [200, 50, 10]))
+    np.testing.assert_array_equal(camera.read_latest(), robot.get_observation()["front"])
+    frame.age_s = 1.0
+    with pytest.raises(TimeoutError, match="recent frame"):
+        camera.read_latest()
+    robot.disconnect()
+    assert not camera.is_connected
+    env.client.close.assert_called_once()
+    env.client.set_velocity.assert_not_called()
+
+    env.client.camera.photo.side_effect = TimeoutError("no video")
+    with pytest.raises(TimeoutError, match="no video"):
+        robot.connect()
+    assert not robot.is_connected
+    assert not camera.is_connected
+
+
+@pytest.mark.parametrize(
+    "encoding,dtype,shape",
+    [("bgr8", np.uint8, (2, 4, 3)), ("rgb8", float, (2, 4, 3)), ("rgb8", np.uint8, (2, 4))],
+)
+def test_onboard_camera_rejects_invalid_pixels(encoding, dtype, shape):
+    camera = AsimovCamera(AsimovCameraConfig(width=4, height=2))
+    stream = Mock()
+    stream.photo.return_value = SimpleNamespace(
+        encoding=encoding, width=4, height=2, to_numpy=lambda: np.zeros(shape, dtype=dtype)
+    )
+    with pytest.raises(ValueError, match="RGB"):
+        camera.connect(stream=stream)
+    assert not camera.is_connected
 
 
 def test_features_and_factory_before_connection(setup_robot):
