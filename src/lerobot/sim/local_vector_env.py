@@ -38,8 +38,6 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 logger = logging.getLogger(__name__)
 
-# Env attributes copied from a worker process after it builds the env and after each reset.
-_ENV_ATTRS = ("task_description", "task", "num_envs")
 # Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
 # Gymnasium 0.29, which some simulators pin (RoboMME's ManiSkill), has no AutoresetMode; there a vector env always
@@ -65,14 +63,37 @@ class _LastStep:
         return self.terminated or self.truncated
 
 
+def _wrapper_attr(env: Any, name: str) -> Any:
+    """Read metadata through scalar lookup APIs or a vector wrapper's immediate layers."""
+    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
+    if get_wrapper_attr is not None:
+        return get_wrapper_attr(name)
+    try:
+        return getattr(env, name)
+    except AttributeError:
+        if not isinstance(env, gym.vector.VectorWrapper):
+            raise
+    return _wrapper_attr(env.env, name)
+
+
 def _max_episode_steps(env: Any) -> int | None:
     """Return the env's episode limit, looked up through Gymnasium wrappers, or None if it has none."""
-    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
     try:
-        limit = get_wrapper_attr("_max_episode_steps") if get_wrapper_attr else env._max_episode_steps
+        limit = _wrapper_attr(env, "_max_episode_steps")
     except AttributeError:
         return None
     return None if limit is None else int(limit)
+
+
+def _task_attribute(env: Any) -> tuple[str, Any] | None:
+    """Find the preferred task attribute through wrappers, distinguishing missing from falsey values."""
+    for name in ("task_description", "task"):
+        try:
+            value = _wrapper_attr(env, name)
+        except AttributeError:
+            continue
+        return name, value
+    return None
 
 
 def _spaces(env: Any) -> tuple[spaces.Space, spaces.Space]:
@@ -127,7 +148,12 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                 elif command == "spaces":
                     result = _spaces(env)
                 else:  # "attrs"
-                    result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
+                    result = {}
+                    task_attribute = _task_attribute(env)
+                    if task_attribute is not None:
+                        result[task_attribute[0]] = task_attribute[1]
+                    if hasattr(env, "num_envs"):
+                        result["num_envs"] = env.num_envs
                     result["_max_episode_steps"] = _max_episode_steps(env)
                 pipe.send((True, result))
             except Exception:
@@ -183,7 +209,11 @@ class _ProcessEnv:
         return self._receive()
 
     def _refresh(self) -> None:
-        for name, value in self._call("attrs").items():
+        attrs = self._call("attrs")
+        for name in ("task_description", "task"):
+            if name not in attrs:
+                self.__dict__.pop(name, None)
+        for name, value in attrs.items():
             setattr(self, name, value)
 
     def send(self, command: str, argument: Any = None) -> None:
@@ -519,7 +549,8 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         # A metric an env has not reported in this episode reads as zero.
         names = dict.fromkeys(name for last in self._last for name in last.metrics)
         task = tuple(
-            str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
+            str(attribute[1] if (attribute := _task_attribute(env)) is not None else self.task_group)
+            for env in self._envs
         )
         self._latest = StepResult(
             obs=obs,
