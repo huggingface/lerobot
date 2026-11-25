@@ -28,6 +28,7 @@ def test_damiao_motor():
     try:
         print("Connecting...")
         bus.connect()
+        bus.configure_motors()
         print("✓ Connected")
 
         print("Enabling torque...")
