@@ -348,6 +348,20 @@ def test_envhub_runs_a_batched_repository_one_task_at_a_time(hub_repo, monkeypat
             env.close()
 
 
+def test_envhub_batched_repository_receives_the_requested_task(hub_repo, monkeypatch):
+    # A repo whose suites are expensive to list builds only the one asked for, as served with --sim.task.
+    hub_repo(
+        _BATCHED_ENV
+        + '\n\ndef vector_env_fns(task, n_envs, spacing=1.0):\n    return {task or "reach_batch": {0: partial(ReachBatch, n_envs, 0.0)}}\n'
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="push"), 2)
+    try:
+        assert list(envs) == ["push"]
+    finally:
+        envs["push"][0].close()
+
+
 def test_envhub_batched_repository_must_not_autoreset(hub_repo, monkeypatch):
     hub_repo(_BATCHED_ENV.replace("AutoresetMode.DISABLED", "AutoresetMode.NEXT_STEP"))
     monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)

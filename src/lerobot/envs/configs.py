@@ -133,10 +133,11 @@ class HubEnvConfig(EnvConfig):
             raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # The repo defines the suites; --env.task picks among them.
+        # The repo defines the suites; --env.task picks among them, and reaches the repo's vector_env_fns as a
+        # server's --sim.task does, for a repo that builds only the tasks it is asked for.
         return {
             "type": "envhub",
-            "task": "",
+            "task": self.task or "",
             "kwargs": {
                 "hub_path": self.hub_path,
                 "trust_remote_code": self.trust_remote_code,
