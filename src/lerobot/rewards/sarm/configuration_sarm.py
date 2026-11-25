@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
@@ -216,7 +217,7 @@ class SARMConfig(RewardModelConfig):
         return self.num_frames
 
     @property
-    def training_deltas(self) -> Deltas:
+    def frame_offsets(self) -> list[int]:
         """Bidirectional frame sampling centered on target frame, then rewind placeholders.
 
         Example with n_obs_steps=8, gap=30:
@@ -233,8 +234,15 @@ class SARMConfig(RewardModelConfig):
 
         # Rewind placeholders
         rewind_deltas = [-self.frame_gap * (i + 1) for i in range(self.max_rewind_steps)]
+        return obs_deltas + rewind_deltas
 
-        frames = obs_deltas + rewind_deltas
-        return Deltas(
-            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), frames)
+    @property
+    def training_sampler(self) -> TrainingSampler:
+        """Every observation at :attr:`frame_offsets` around each frame."""
+        frames = self.frame_offsets
+        return FrameSampler(
+            Deltas(
+                observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), frames)
+            ),
+            drop_last=self.drop_n_last_frames,
         )

@@ -116,7 +116,7 @@ def test_parallel_decode_queue_preserves_planner_order(
             active += 1
             max_active = max(max_active, active)
         try:
-            frame_index = int(args[2])
+            frame_index = args[1].sample
             time.sleep(0.005 if frame_index % 3 == 0 else 0.001)
             return original_make_item(*args, **kwargs)
         finally:

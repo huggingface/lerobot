@@ -29,6 +29,7 @@ import torch
 from draccus.utils import DecodingError
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import WarmupStableDecaySchedulerConfig
@@ -548,10 +549,13 @@ class Cosmos3Config(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # Future frames are video targets.
-        return Deltas(
-            observation={FeatureType.VISUAL: range(self.chunk_size + 1)}, action=range(self.chunk_size)
+        return FrameSampler(
+            Deltas(
+                observation={FeatureType.VISUAL: range(self.chunk_size + 1)}, action=range(self.chunk_size)
+            ),
+            drop_last=self.drop_n_last_frames,
         )
 
     @property

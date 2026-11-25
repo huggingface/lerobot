@@ -18,6 +18,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import (
     AdamWConfig,
@@ -346,10 +347,10 @@ class LingbotVLAV2Config(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # ``align_params`` supervises the frame at the end of the chunk.
         images = {FeatureType.VISUAL: [0, self.chunk_size - 1]} if self.align_params else {}
-        return Deltas(observation=images, action=range(self.chunk_size))
+        return FrameSampler(Deltas(observation=images, action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

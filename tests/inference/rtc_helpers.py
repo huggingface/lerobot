@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import torch
 
+from lerobot.configs.sampling import FrameSampler
 from lerobot.configs.types import Deltas, FeatureType, PolicyFeature
 from lerobot.inference import RTCInferenceEngine
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -51,7 +52,7 @@ class ControlledPolicy:
             n_obs_steps=1,
             chunk_size=20,
             n_action_steps=20,
-            training_deltas=Deltas(action=range(20)),
+            training_sampler=FrameSampler(Deltas(action=range(20))),
             rtc_training_max_delay=4,
             action_feature=PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
         )

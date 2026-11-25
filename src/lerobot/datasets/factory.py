@@ -20,14 +20,10 @@ from typing import Literal, cast
 
 import torch
 
-from lerobot.configs import PreTrainedConfig
-from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
-from lerobot.configs.types import FeatureType
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_ACTION, OBS_ENV_STATE, OBS_IMAGE, OBS_STR
+from lerobot.utils.constants import IMAGENET_STATS
 
-from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
@@ -37,84 +33,16 @@ from .utils import resolve_episode_indices
 logger = logging.getLogger(__name__)
 
 
-def _observation_type(policy_key: str, feature: dict) -> FeatureType | None:
-    """The type a dataset feature has as the policy's observation ``policy_key``."""
-    if feature.get("dtype") in ("image", "video") or policy_key.startswith(OBS_IMAGE):
-        return FeatureType.VISUAL
-    if policy_key == OBS_ENV_STATE:
-        return FeatureType.ENV
-    if policy_key.startswith(OBS_STR + "."):
-        return FeatureType.STATE
-    return None
-
-
-def resolve_delta_timestamps(
-    cfg: PreTrainedConfig | RewardModelConfig,
-    ds_meta: LeRobotDatasetMetadata,
-    rename_map: dict[str, str] | None = None,
-) -> dict[str, list[float]] | None:
-    """Resolves delta_timestamps from the config's ``training_deltas``.
-
-    Each dataset feature gets the offsets its type declares (see
-    :class:`~lerobot.configs.types.Deltas`); ``observation.action`` is read from the
-    ``action`` column at its own offsets.
-
-    Args:
-        cfg (PreTrainedConfig | RewardModelConfig): The config whose ``training_deltas`` to load.
-        ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
-            delta_timestamps against.
-        rename_map: Dataset keys renamed to the policy's.
-
-    Returns:
-        dict[str, list[float]] | None: A dictionary of delta_timestamps, e.g.:
-            {
-                "observation.state": [-0.04, -0.02, 0]
-                "action": [0, 0.02, 0.04]
-            }
-            returns `None` if the resulting dict is empty.
-    """
-    deltas = cfg.training_deltas
-    types = {}
-    for key, feature in ds_meta.features.items():
-        policy_key = (rename_map or {}).get(key, key)
-        types[key] = _observation_type(policy_key, feature)
-    delta_timestamps: dict[str, list[float]] = {}
-    for key in ds_meta.features:
-        policy_key = (rename_map or {}).get(key, key)
-        offsets = deltas.of(policy_key, types[key])
-        if offsets is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in offsets]
-    if (offsets := deltas.of(OBS_ACTION)) is not None:
-        if ACTION not in ds_meta.features:
-            raise ValueError(f"{type(cfg).__name__} reads observation.action but the dataset has no action.")
-        delta_timestamps[OBS_ACTION] = [i / ds_meta.fps for i in offsets]
-
-    # A policy asking for an image history that no dataset key can supply would train
-    # on single frames without any error, so fail instead of degrading silently.
-    image_offsets = deltas.observation.get(FeatureType.VISUAL, ())
-    if len(image_offsets) > 1 and FeatureType.VISUAL not in types.values():
-        raise ValueError(
-            f"{type(cfg).__name__} requests {len(image_offsets)} frames per camera, but no "
-            f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
-            "Image keys must be named `observation.image*` after applying `--rename_map`."
-        )
-    # A window declared for one feature that the dataset lacks would be dropped silently too.
-    policy_keys = {(rename_map or {}).get(key, key) for key in ds_meta.features}
-    keys = [key for key in deltas.observation if not isinstance(key, FeatureType)]
-    if missing := sorted(key for key in keys if key not in policy_keys):
-        raise ValueError(
-            f"{type(cfg).__name__} declares frames of {missing}, which no dataset feature maps to. "
-            f"Dataset features: {sorted(ds_meta.features)}; rename them with `--rename_map`."
-        )
-
-    if len(delta_timestamps) == 0:
-        return None
-
-    return delta_timestamps
+def resolve_delta_timestamps(*args, **kwargs):
+    """Removed: datasets read a policy's training sampler directly."""
+    raise TypeError(
+        "resolve_delta_timestamps was removed: pass the policy's sampler to the dataset instead, "
+        "LeRobotDataset(repo_id, sampler=policy_cfg.training_sampler, rename_map=rename_map)."
+    )
 
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
-    """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
+    """Creates the training dataset, reading the policy's training sampler and setting up image transforms.
 
     Args:
         cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
@@ -149,7 +77,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             repo_type=repo_type,
             storage_options=cfg.dataset.storage_options,
         )
-        delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
+        sampler = cfg.trainable_config.training_sampler
         episodes = resolve_episode_indices(
             cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
         )
@@ -170,7 +98,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 episodes=episodes,
-                delta_timestamps=delta_timestamps,
+                sampler=sampler,
+                rename_map=cfg.rename_map,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
@@ -186,7 +115,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 cfg.dataset.repo_id,
                 root=root,
                 episodes=episodes,
-                delta_timestamps=delta_timestamps,
+                sampler=sampler,
+                rename_map=cfg.rename_map,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 seed=cfg.seed if cfg.seed is not None else DEFAULT_STREAMING_SEED,
@@ -272,7 +202,7 @@ def make_train_eval_datasets(
         f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
     )
 
-    delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, full_dataset.meta, cfg.rename_map)
+    sampler = cfg.trainable_config.training_sampler
 
     # On the "gpu" backend the workers only decode; lerobot-train augments each batch on the policy device.
     image_transforms_cfg = cfg.dataset.image_transforms
@@ -286,7 +216,8 @@ def make_train_eval_datasets(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=train_episodes,
-        delta_timestamps=delta_timestamps,
+        sampler=sampler,
+        rename_map=cfg.rename_map,
         image_transforms=train_image_transforms,
         depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,
@@ -302,7 +233,8 @@ def make_train_eval_datasets(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=eval_episodes,
-        delta_timestamps=delta_timestamps,
+        sampler=sampler,
+        rename_map=cfg.rename_map,
         image_transforms=None,
         depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,

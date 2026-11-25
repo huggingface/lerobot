@@ -20,6 +20,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 import datasets
 import pyarrow.parquet as pq
 
+from lerobot.configs.sampling import SampleKey
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
@@ -50,10 +51,10 @@ def test_prepared_numeric_rows_are_independent(
     # Metadata reads are separate from per-frame numeric-column formatting.
     stream.meta.episodes = stream.meta.episodes.to_list()
     monkeypatch.setattr(datasets.Dataset, "__getitem__", numeric_reads_are_prepared)
-    item = stream._make_episode_item(data, 0, 0, video_cache=None)
+    item = stream._make_episode_item(data, SampleKey(0, 0), video_cache=None)
     item["action"].fill_(-100)
     assert torch.equal(torch.from_numpy(data.numeric["action"][0]), expected)
-    again = stream._make_episode_item(data, 0, 0, video_cache=None)
+    again = stream._make_episode_item(data, SampleKey(0, 0), video_cache=None)
     assert torch.equal(again["action"][0] if window else again["action"], expected)
     if window:
         assert again["action_is_pad"].tolist() == [True, False, False]
@@ -76,7 +77,6 @@ def test_numeric_dtype_matches_existing_formatter(tmp_path: Path, dtype: str, ve
         episodes=datasets.Dataset.from_list([{"dataset_from_index": 0, "dataset_to_index": 2}]),
     )
     stream._hf_features = features
-    stream.delta_indices = None
     data = stream._load_episode_dataset(EpisodeParquetReader(tmp_path, columns=tuple(features)), 0)
     reference.set_transform(hf_transform_to_torch)
     assert "value" in data.numeric
@@ -116,7 +116,6 @@ def test_nonnumeric_and_nullable_columns_keep_feature_path(tmp_path: Path) -> No
         episodes=datasets.Dataset.from_list([{"dataset_from_index": 0, "dataset_to_index": 2}]),
     )
     stream._hf_features = features
-    stream.delta_indices = None
     data = stream._load_episode_dataset(EpisodeParquetReader(tmp_path, columns=tuple(features)), 0)
     assert set(data.numeric) == {"episode_index"}
     assert set(data.other.column_names) == {"nullable", "nested_null", "ragged", "text"}

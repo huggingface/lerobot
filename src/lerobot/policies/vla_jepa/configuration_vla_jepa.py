@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -256,7 +257,7 @@ class VLAJEPAConfig(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # With the world model, future frames are video targets.
         if not self.enable_world_model:
             video = [0]
@@ -266,7 +267,7 @@ class VLAJEPAConfig(PreTrainedConfig):
             stride = (self.chunk_size - 1) // (self.num_video_frames - 1)
             video = [i * stride for i in range(self.num_video_frames)]
         observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
-        return Deltas(observation=observation, action=range(self.chunk_size))
+        return FrameSampler(Deltas(observation=observation, action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

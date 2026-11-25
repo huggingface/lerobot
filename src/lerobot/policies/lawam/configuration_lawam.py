@@ -25,6 +25,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
@@ -260,7 +261,7 @@ class LaWAMConfig(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # Future images are the LAM teacher's targets, spread evenly over the action horizon.
         if self.num_video_frames == 1:
             images = [0]
@@ -271,7 +272,7 @@ class LaWAMConfig(PreTrainedConfig):
                 for frame_idx in range(self.num_video_frames)
             ]
         observation = {FeatureType.VISUAL: images, FeatureType.STATE: [0], FeatureType.ENV: [0]}
-        return Deltas(observation=observation, action=range(self.action_horizon))
+        return FrameSampler(Deltas(observation=observation, action=range(self.action_horizon)))
 
     @property
     def inference_deltas(self) -> Deltas:

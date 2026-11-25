@@ -17,6 +17,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType
 from lerobot.optim import AdamConfig
 
@@ -196,12 +197,14 @@ class TDMPCConfig(PreTrainedConfig):
                 raise ValueError(f"Only square images are handled now. Got image shape {image_ft.shape}.")
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # The model is trained on rollouts over the planning horizon.
         observation = {
             kind: range(self.horizon + 1) for kind in (FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV)
         }
-        return Deltas(observation=observation, action=range(self.horizon), reward=range(self.horizon))
+        return FrameSampler(
+            Deltas(observation=observation, action=range(self.horizon), reward=range(self.horizon))
+        )
 
     @property
     def inference_deltas(self) -> Deltas:

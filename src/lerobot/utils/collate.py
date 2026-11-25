@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 from torch.utils.data._utils.collate import default_collate
 
 from lerobot.datasets.language import LANGUAGE_COLUMNS
@@ -26,16 +27,38 @@ from lerobot.utils.constants import MESSAGES_RENDERED
 _PYTHON_LIST_KEYS = {MESSAGES_RENDERED, "message_streams", "target_message_indices", *LANGUAGE_COLUMNS}
 
 
-def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | None:
-    """Collate function that preserves Python-list and language fields as lists.
+def _pad_windows(samples: list[dict[str, Any]]) -> None:
+    """Pad every window to the longest of the batch, in place.
 
-    Drops ``None`` samples (e.g. recipes that yielded no target message), keeps
-    rendered-message and language fields as plain Python lists, and delegates
-    every other key to PyTorch's ``default_collate``.
+    A window (a key with ``{key}_is_pad``) shorter than the others repeats its last row, and the
+    added rows are flagged in ``{key}_is_pad``: the same rule as the rows a window reads outside its
+    episode. Windows of equal lengths, e.g. every sample of a frame sampler, are left unchanged.
+    """
+    for pad_key in [key for key in samples[0] if key.endswith("_is_pad")]:
+        key = pad_key.removesuffix("_is_pad")
+        lengths = [len(sample[pad_key]) for sample in samples]
+        longest = max(lengths)
+        if min(lengths) == longest:
+            continue
+        for sample, length in zip(samples, lengths, strict=True):
+            if length < longest:
+                value = sample[key]
+                sample[key] = torch.cat([value, value[-1:].expand(longest - length, *value.shape[1:])])
+                sample[pad_key] = torch.cat([sample[pad_key], torch.ones(longest - length, dtype=torch.bool)])
+
+
+def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """Collate function for training batches.
+
+    Drops ``None`` samples (e.g. recipes that yielded no target message), pads windows
+    of different lengths to the longest of the batch (see :func:`_pad_windows`), keeps
+    rendered-message and language fields as plain Python lists, and delegates every
+    other key to PyTorch's ``default_collate``.
     """
     samples = [sample for sample in batch if sample is not None]
     if not samples:
         return None
+    _pad_windows(samples)
 
     # All-or-nothing per key: a partial-presence batch (e.g. half the samples
     # carry `messages_rendered` and half don't) is a real bug in the upstream

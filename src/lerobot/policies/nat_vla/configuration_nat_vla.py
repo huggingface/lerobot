@@ -20,6 +20,7 @@ import torch
 from huggingface_hub import snapshot_download
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -104,8 +105,8 @@ class NATVLAConfig(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
-        return Deltas(action=range(self.chunk_size))
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

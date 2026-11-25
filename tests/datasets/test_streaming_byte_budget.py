@@ -12,6 +12,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs.sampling import SampleKey
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_pool import ExactCoveragePool
@@ -177,7 +178,7 @@ def test_rotation_keeps_bytes_until_last_decode(
     ds._streaming_io_token = None
     ds._projected_columns = ("episode_index",)
     monkeypatch.setattr(ds, "_rank_episodes", lambda: ([0, 1, 2], 0, 1))
-    monkeypatch.setattr(ds, "_episode_frame_count", lambda ep: 1)
+    monkeypatch.setattr(ds, "_episode_sample_count", lambda ep: 1)
     monkeypatch.setattr(ds, "_make_video_cache", lambda *args: cache)
     monkeypatch.setattr(ds, "_load_episode_dataset", lambda *args: None)
     monkeypatch.setattr(ds, "_apply_image_transforms", lambda item: None)
@@ -200,7 +201,8 @@ def test_rotation_keeps_bytes_until_last_decode(
     monkeypatch.setattr(cache, "retain_episode", retain_with_rotation_gate)
     attempted: list[int] = []
 
-    def decode(_: object, episode: int, frame_index: int, **kwargs: Any) -> dict[str, torch.Tensor]:
+    def decode(_: object, key: SampleKey, **kwargs: Any) -> dict[str, torch.Tensor]:
+        episode = key.episode
         attempted.append(episode)
         data = cache.get_bytes(episode, "camera")
         if len(attempted) == 1:

@@ -784,7 +784,7 @@ class PraxisPolicy(PreTrainedPolicy):
 
         Each sample of the batch is one praxis training window: `window_frames` (93) consecutive
         frames of both cameras, the observed flange pose and the commanded pose of every frame,
-        and the task string. `training_deltas` makes
+        and the task string. `training_sampler` makes
         `LeRobotDataset` deliver them (`(batch, 93, ...)`), and `drop_n_last_frames` keeps the
         windows inside the episodes.
 
@@ -941,7 +941,7 @@ class PraxisPolicy(PreTrainedPolicy):
             if value.ndim != ndim or value.shape[1] != frames_t:
                 raise ValueError(
                     f"{key}: expected (batch, {frames_t}, ...) for a training window, got {tuple(value.shape)}. "
-                    "The dataset must deliver the training_deltas window."
+                    "The dataset must deliver the training_sampler window."
                 )
             pad = batch.get(f"{key}_is_pad")
             if pad is not None and bool(torch.as_tensor(pad).any()):

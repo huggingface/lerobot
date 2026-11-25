@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
 
@@ -93,10 +94,15 @@ class LongWAMConfig(PreTrainedConfig):
         return self.action_horizon if self.inference_action_horizon is None else self.inference_action_horizon
 
     @property
-    def training_deltas(self) -> Deltas:
-        video = range(-self.past_obs_steps, self.future_video_steps + 1, self.video_stride)
+    def training_video_offsets(self) -> range:
+        """The strided past, current and future frames of a training window."""
+        return range(-self.past_obs_steps, self.future_video_steps + 1, self.video_stride)
+
+    @property
+    def training_sampler(self) -> TrainingSampler:
+        video = self.training_video_offsets
         observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
-        return Deltas(observation=observation, action=range(self.action_horizon))
+        return FrameSampler(Deltas(observation=observation, action=range(self.action_horizon)))
 
     @property
     def inference_deltas(self) -> Deltas:

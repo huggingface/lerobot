@@ -79,7 +79,7 @@ class MetricsTracker:
     Args:
         batch_size (int): Per-process batch size (samples per micro-batch on each
             data-parallel worker).
-        num_frames (int): Total number of frames in the training dataset.
+        num_frames (int): Samples in one epoch of the training dataset (one per frame by default).
         num_episodes (int): Total number of episodes in the training dataset.
         metrics (dict[str, AverageMeter]): The meters to track, keyed by metric name.
         initial_step (int): Step counter to start from (non-zero when resuming a run).

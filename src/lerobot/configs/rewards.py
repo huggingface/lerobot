@@ -32,7 +32,8 @@ from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
-from .types import Deltas, PolicyFeature, reject_removed_delta_properties
+from .sampling import FrameSampler, TrainingSampler
+from .types import PolicyFeature, reject_removed_delta_properties
 
 T = TypeVar("T", bound="RewardModelConfig")
 logger = logging.getLogger(__name__)
@@ -86,9 +87,9 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         reject_removed_delta_properties(cls)
 
     @property
-    def training_deltas(self) -> Deltas:
-        """The frames each training batch holds (see :class:`~lerobot.configs.types.Deltas`)."""
-        return Deltas()
+    def training_sampler(self) -> TrainingSampler:
+        """What each training sample holds (see :mod:`lerobot.configs.sampling`)."""
+        return FrameSampler()
 
     def get_optimizer_preset(self) -> OptimizerConfig | None:
         """Default optimizer for this reward model, or ``None`` for zero-shot models."""

@@ -15,6 +15,7 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
@@ -152,10 +153,10 @@ class SmolVLAConfig(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # Trained on one-frame observation windows ([B, 1, ...]); served the current frame.
         current = {kind: [0] for kind in (FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV)}
-        return Deltas(observation=current, action=range(self.chunk_size))
+        return FrameSampler(Deltas(observation=current, action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

@@ -23,6 +23,7 @@ import torch
 from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import (
     LRSchedulerConfig,
@@ -477,8 +478,8 @@ class MolmoAct2Config(PreTrainedConfig):
         PreTrainedConfig._save_pretrained(config_for_save, save_directory)
 
     @property
-    def training_deltas(self) -> Deltas:
-        return Deltas(action=range(self.chunk_size))
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

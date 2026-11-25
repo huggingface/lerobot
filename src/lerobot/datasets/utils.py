@@ -28,7 +28,6 @@ import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 
-from lerobot.utils.constants import ACTION, OBS_ACTION
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
@@ -159,63 +158,6 @@ def delta_window(
     positions = anchor + np.asarray(deltas, dtype=np.int64)
     padding = (positions < start) | (positions >= end)
     return np.clip(positions, start, end - 1).tolist(), torch.from_numpy(padding)
-
-
-# Keys a batch can request that are read from another column at their own offsets.
-DELTA_ALIASES = {OBS_ACTION: ACTION}
-
-
-@dataclass(frozen=True)
-class DeltaSplit:
-    """Where an aliased window and its column's own window sit in the column's merged window."""
-
-    source: str
-    alias_positions: list[int]
-    source_positions: list[int]
-    source_windowed: bool
-
-
-def merge_delta_aliases(
-    delta_timestamps: dict[str, list[float]] | None,
-) -> tuple[dict[str, list[float]] | None, dict[str, DeltaSplit]]:
-    """Read each aliased key (see :data:`DELTA_ALIASES`) through its column.
-
-    The column is loaded once over the union of both windows; :func:`split_delta_aliases`
-    splits every assembled item back into the requested keys.
-    """
-    if not delta_timestamps or not DELTA_ALIASES.keys() & delta_timestamps.keys():
-        return delta_timestamps, {}
-    merged = dict(delta_timestamps)
-    splits: dict[str, DeltaSplit] = {}
-    for alias, source in DELTA_ALIASES.items():
-        if alias not in merged:
-            continue
-        alias_ts = merged.pop(alias)
-        windowed = source in merged
-        # Without a window of its own, the column keeps its current value.
-        source_ts = merged[source] if windowed else [0.0]
-        union = sorted(set(alias_ts) | set(source_ts))
-        merged[source] = union
-        splits[alias] = DeltaSplit(
-            source,
-            [union.index(t) for t in alias_ts],
-            [union.index(t) for t in source_ts],
-            windowed,
-        )
-    return merged, splits
-
-
-def split_delta_aliases(item: dict, splits: dict[str, DeltaSplit]) -> dict:
-    """Split the merged column windows of an assembled item into the requested keys."""
-    for alias, split in splits.items():
-        values, padding = item[split.source], item.pop(f"{split.source}_is_pad")
-        item[alias], item[f"{alias}_is_pad"] = values[split.alias_positions], padding[split.alias_positions]
-        if split.source_windowed:
-            item[split.source] = values[split.source_positions]
-            item[f"{split.source}_is_pad"] = padding[split.source_positions]
-        else:
-            item[split.source] = values[split.source_positions[0]]
-    return item
 
 
 def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:

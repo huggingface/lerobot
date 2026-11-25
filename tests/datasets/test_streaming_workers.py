@@ -187,8 +187,8 @@ def test_workers_need_one_episode_each(root: Path, monkeypatch) -> None:
     with pytest.raises(ValueError, match="fewer than its 3 DataLoader workers"):
         dataset._worker_share([0, 1])
     with pytest.raises(ValueError, match="fewer than its 9 DataLoader workers"):
-        dataset.num_frames_for_rank(0, 1, 9)
-    assert dataset.num_frames_for_rank(0, 1, 8) == sum(LENGTHS)
+        dataset.num_samples_for_rank(0, 1, 9)
+    assert dataset.num_samples_for_rank(0, 1, 8) == sum(LENGTHS)
     assert dataset.num_episodes_for_rank(0, 2) == len(LENGTHS) // 2
 
 

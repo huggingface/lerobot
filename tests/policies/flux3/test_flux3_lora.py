@@ -106,9 +106,9 @@ def test_history_config_and_indices(rich):
     cfg = rich_task_config() if rich else task_config()
     history = 8 if rich else 1
     assert cfg.window_frames == 32 + history
-    assert list(cfg.training_deltas.observation[FeatureType.VISUAL]) == list(range(1 - history, 33))
-    assert list(cfg.training_deltas.observation[FeatureType.STATE]) == list(range(1 - history, 1))
-    assert list(cfg.training_deltas.action) == list(range(-history, 32))
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(1 - history, 33))
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.STATE]) == list(range(1 - history, 1))
+    assert list(cfg.training_sampler.deltas.action) == list(range(-history, 32))
     policy = Flux3Policy(cfg)
     assert policy.dit.in_channels["action_cond"] == (12 if rich else 6)
     pre, _ = make_flux3_pre_post_processors(cfg)

@@ -21,6 +21,7 @@ from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import Deltas
 
@@ -32,8 +33,8 @@ class _DummyBackfillConfig(PreTrainedConfig):
 
     # abstract members of PreTrainedConfig (not exercised by this test)
     @property
-    def training_deltas(self) -> Deltas:
-        return Deltas()
+    def training_sampler(self) -> FrameSampler:
+        return FrameSampler()
 
     @property
     def inference_deltas(self) -> Deltas:

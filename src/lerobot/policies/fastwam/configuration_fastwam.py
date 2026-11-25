@@ -27,6 +27,7 @@ from lerobot.configs import (
     PolicyFeature,
     PreTrainedConfig,
 )
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -505,11 +506,11 @@ class FastWAMConfig(PreTrainedConfig):
         return (self.num_video_frames - 1) // self.action_video_freq_ratio + 1
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         # The current frame, then future video targets every ``action_video_freq_ratio`` actions.
         video = range(0, self.num_video_frames, self.action_video_freq_ratio)
         observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
-        return Deltas(observation=observation, action=range(self.action_horizon))
+        return FrameSampler(Deltas(observation=observation, action=range(self.action_horizon)))
 
     @property
     def inference_deltas(self) -> Deltas:

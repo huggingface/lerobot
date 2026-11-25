@@ -11,13 +11,6 @@ from lerobot.policies.act import ACTConfig, ACTPolicy
 from lerobot.utils.feature_utils import dataset_to_policy_features
 
 
-def make_delta_timestamps(delta_indices: list[int] | None, fps: int) -> list[float]:
-    if delta_indices is None:
-        return [0]
-
-    return [i / fps for i in delta_indices]
-
-
 def main():
     output_directory = Path("outputs/robot_learning_tutorial/act")
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -41,21 +34,8 @@ def main():
     policy.train()
     policy.to(device)
 
-    # To perform action chunking, ACT expects a given number of actions as targets
-    delta_timestamps = {
-        "action": make_delta_timestamps(cfg.training_deltas.action, dataset_metadata.fps),
-    }
-
-    # add image features if they are present
-    delta_timestamps |= {
-        k: make_delta_timestamps(
-            cfg.training_deltas.observation.get(FeatureType.VISUAL), dataset_metadata.fps
-        )
-        for k in cfg.image_features
-    }
-
-    # Instantiate the dataset
-    dataset = LeRobotDataset(dataset_id, delta_timestamps=delta_timestamps)
+    # The policy declares what a training sample holds: ACT predicts `chunk_size` future actions.
+    dataset = LeRobotDataset(dataset_id, sampler=cfg.training_sampler)
 
     # Create the optimizer and dataloader for offline training
     optimizer = cfg.get_optimizer_preset().build(policy.parameters())

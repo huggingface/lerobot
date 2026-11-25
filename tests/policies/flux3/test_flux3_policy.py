@@ -219,10 +219,10 @@ def test_config_droid_reference_settings():
     assert math.isclose(cfg.action_loss_weight, 50.0) and cfg.action_scale == 2.0
     assert (cfg.num_inference_steps, cfg.guidance_scale, cfg.sampler_shift) == (4, 4.0, 5.0)
     assert cfg.guidance_scale_action == 1.0
-    assert list(cfg.training_deltas.observation[FeatureType.VISUAL]) == list(range(33))
-    assert list(cfg.training_deltas.observation[FeatureType.STATE]) == [0]
-    assert list(cfg.training_deltas.action) == list(range(32))
-    assert cfg.training_deltas.reward is None
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(33))
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.STATE]) == [0]
+    assert list(cfg.training_sampler.deltas.action) == list(range(32))
+    assert cfg.training_sampler.deltas.reward is None
     opt = cfg.get_optimizer_preset()
     assert math.isclose(opt.lr, 1.92e-4) and opt.betas == (0.9, 0.99) and opt.weight_decay == 0.05
     sched = cfg.get_scheduler_preset()

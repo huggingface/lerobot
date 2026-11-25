@@ -101,7 +101,7 @@ def stats(cfg):
 
 
 def batch(cfg, temporal=False, value=0.25, task="pick"):
-    shape = (1, len(cfg.training_deltas.observation[FeatureType.VISUAL])) if temporal else (1,)
+    shape = (1, len(cfg.training_sampler.deltas.observation[FeatureType.VISUAL])) if temporal else (1,)
     result = {
         **{key: torch.full((*shape, 3, 16, 16), value) for key in cfg.camera_keys},
         "observation.state": torch.full((*shape, cfg.proprio_dim), value),
@@ -289,7 +289,7 @@ def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointin
     pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
     assert any(type(step) is NormalizerProcessorStep for step in pre.steps)
     assert any(type(step) is TokenizerProcessorStep for step in pre.steps)
-    assert list(config.training_deltas.observation[FeatureType.VISUAL]) == list(range(-16, 17, 4))
+    assert list(config.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(-16, 17, 4))
     frozen = {n: p.clone() for n, p in policy.named_parameters() if not p.requires_grad}
     trainable = {n: p.clone() for n, p in policy.named_parameters() if p.requires_grad}
     optimizer = config.get_optimizer_preset().build(policy.get_optim_params())

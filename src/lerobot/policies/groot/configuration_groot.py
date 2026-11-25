@@ -23,6 +23,7 @@ from pathlib import Path
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, DiffuserSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -526,17 +527,14 @@ class GrootConfig(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         model_action_horizon = (
             infer_groot_n1_7_action_horizon(self.base_model_path, self.embodiment_tag) or 40
         )
-        return Deltas(action=range(min(self.chunk_size, model_action_horizon)))
+        horizon = min(self.chunk_size, model_action_horizon)
+        # Episode tails that cannot supply a complete N1.7 action chunk anchor no sample.
+        return FrameSampler(Deltas(action=range(horizon)), drop_last=horizon - 1)
 
     @property
     def inference_deltas(self) -> Deltas:
         return Deltas()
-
-    @property
-    def drop_n_last_frames(self) -> int:
-        """Exclude episode tails that cannot supply a complete N1.7 action chunk."""
-        return max(0, len(self.training_deltas.action or ()) - 1)

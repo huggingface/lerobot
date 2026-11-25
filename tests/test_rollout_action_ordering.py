@@ -33,6 +33,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.configs.sampling import FrameSampler  # noqa: E402
 from lerobot.configs.types import Deltas  # noqa: E402
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
@@ -118,7 +119,7 @@ class _StubRelativePolicy:
             use_amp=False,
             chunk_size=30,
             n_action_steps=30,
-            training_deltas=Deltas(action=range(30)),
+            training_sampler=FrameSampler(Deltas(action=range(30))),
         )
         self.observed_states: list[list[float]] = []
 

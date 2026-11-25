@@ -43,9 +43,9 @@ def test_chunk_size_and_action_steps() -> None:
     cfg = make_config(frame_chunk_size=4, action_per_frame=4)
     assert cfg.chunk_size == 16
     assert cfg.n_action_steps == 16
-    assert list(cfg.training_deltas.action) == list(range(16))
-    assert list(cfg.training_deltas.observation[FeatureType.VISUAL]) == list(range(16))
-    assert cfg.training_deltas.reward is None
+    assert list(cfg.training_sampler.deltas.action) == list(range(16))
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(16))
+    assert cfg.training_sampler.deltas.reward is None
 
 
 def test_optimizer_and_scheduler_presets() -> None:

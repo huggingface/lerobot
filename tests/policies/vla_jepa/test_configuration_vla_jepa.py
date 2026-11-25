@@ -26,8 +26,10 @@ from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 def test_delta_indices() -> None:
     config = make_config()
-    assert list(config.training_deltas.observation[FeatureType.VISUAL]) == list(range(NUM_VIDEO_FRAMES))
-    assert list(config.training_deltas.action) == list(range(ACTION_HORIZON))
+    assert list(config.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(
+        range(NUM_VIDEO_FRAMES)
+    )
+    assert list(config.training_sampler.deltas.action) == list(range(ACTION_HORIZON))
 
 
 def test_n_action_steps_exceeds_chunk_size_raises() -> None:

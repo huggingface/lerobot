@@ -61,6 +61,7 @@ from lerobot.common.train_utils import (
 )
 from lerobot.configs import EvalConfig, JobConfig, parser
 from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs.sampling import SampleKey
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
@@ -348,7 +349,6 @@ def make_dataloaders(
         tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader | None]: The train
         dataloader and the eval dataloader (None when no eval split exists).
     """
-    active_cfg = cfg.trainable_config
     if not cfg.dataset.streaming:
         if isinstance(dataset, StreamingLeRobotDataset):
             raise TypeError(
@@ -360,15 +360,10 @@ def make_dataloaders(
         # BatchSamplerShard without needing a `generator` attribute to synchronize an RNG, and
         # resume is sample-exact.
         shuffle = False
+        # The policy's training sampler (given to the dataset) decides what each sample holds and
+        # how many samples each episode gives; this sampler only orders them.
         sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_first_frames=getattr(active_cfg, "drop_n_first_frames", 0),
-            drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-            shuffle=True,
-            seed=cfg.seed if cfg.seed is not None else 0,
-            absolute_to_relative_idx=dataset.absolute_to_relative_idx,
+            dataset.sample_counts, shuffle=True, seed=cfg.seed if cfg.seed is not None else 0
         )
         if cfg.resume and step > 0:
             if cfg.checkpoint_path is None:
@@ -418,7 +413,9 @@ def make_dataloaders(
             )
         dataset.set_data_parallel_shard(parallel_dims.dp_rank, parallel_dims.dp_world_size)  # not RANK env
         if (
-            dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
+            dataset.num_samples_for_rank(
+                parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers
+            )
             == 0
         ):
             raise ValueError("This rank owns no streaming episodes. Reduce the data-parallel world size.")
@@ -446,10 +443,6 @@ def make_dataloaders(
                 logging.info("Resuming streaming data order at local sample %d", stream_offset)
 
     device_type = parallel_dims.device_type
-    # Only swap in the language-aware collate when the dataset actually
-    # declares language columns; otherwise stay on PyTorch's default
-    # collate so non-language training runs are unaffected.
-    collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
@@ -461,7 +454,7 @@ def make_dataloaders(
         generator=torch.Generator().manual_seed(cfg.seed) if cfg.seed is not None else None,
         pin_memory=device_type == "cuda",
         drop_last=False,
-        collate_fn=collate_fn,
+        collate_fn=lerobot_collate_fn,
         prefetch_factor=(
             cfg.prefetch_factor
             if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
@@ -480,44 +473,27 @@ def make_dataloaders(
     # Build eval dataloader if a held-out split exists
     eval_dataloader = None
     if eval_dataset is not None:
-        eval_ds = eval_dataset
-        valid_frames = None
-        drop_n_first_frames = getattr(active_cfg, "drop_n_first_frames", 0)
-        drop_n_last_frames = getattr(active_cfg, "drop_n_last_frames", 0)
-        if not cfg.dataset.streaming and (drop_n_first_frames or drop_n_last_frames):
-            valid_frames = list(
-                EpisodeAwareSampler(
-                    eval_dataset.meta.episodes["dataset_from_index"],
-                    eval_dataset.meta.episodes["dataset_to_index"],
-                    episode_indices_to_use=eval_dataset.episodes,
-                    drop_n_first_frames=getattr(active_cfg, "drop_n_first_frames", 0),
-                    drop_n_last_frames=getattr(active_cfg, "drop_n_last_frames", 0),
-                    absolute_to_relative_idx=eval_dataset.absolute_to_relative_idx,
-                )
-            )
-            eval_ds = torch.utils.data.Subset(eval_dataset, valid_frames)
-        if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
-            task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
-            if valid_frames is not None:
-                task_arr = task_arr[valid_frames]
-            unique_tasks = sorted(set(task_arr.tolist()))
-            per_task = max(1, cfg.max_eval_samples // len(unique_tasks))
-            selected: list[int] = []
-            for t in unique_tasks:
-                frames = (task_arr == t).nonzero()[0][:per_task]
-                selected.extend(frames.tolist())
-            eval_ds = torch.utils.data.Subset(eval_ds, selected)
+        # Every sample of the held-out split, in order (the training sampler decides what they are).
+        eval_keys = list(EpisodeAwareSampler(eval_dataset.sample_counts))
+        if cfg.max_eval_samples > 0:
+            # The first samples of each task, a task being its episode's first task (as in the split).
+            episode_tasks = eval_dataset.meta.episodes["tasks"]
+            by_task: dict[str, list[SampleKey]] = {}
+            for key in eval_keys:
+                tasks = episode_tasks[key.episode]
+                by_task.setdefault(tasks[0] if tasks else "", []).append(key)
+            per_task = max(1, cfg.max_eval_samples // len(by_task))
+            eval_keys = [key for keys in by_task.values() for key in keys[:per_task]]
 
-        eval_collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
         eval_dataloader = torch.utils.data.DataLoader(
-            eval_ds,
+            eval_dataset,
             batch_size=cfg.batch_size,
-            shuffle=False,
+            sampler=eval_keys,
             num_workers=cfg.num_workers,
             generator=torch.Generator().manual_seed(cfg.seed) if cfg.seed is not None else None,
             pin_memory=device_type == "cuda",
             drop_last=False,
-            collate_fn=eval_collate_fn,
+            collate_fn=lerobot_collate_fn,
             prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
             persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
             multiprocessing_context=cfg.dataloader_multiprocessing_context if cfg.num_workers > 0 else None,
@@ -795,6 +771,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
+        logging.info(f"{dataset.num_samples=} ({format_big_number(dataset.num_samples)})")
         logging.info(f"{dataset.num_episodes=}")
         logging.info(
             f"Effective batch size: {cfg.batch_size} x {parallel_dims.dp_world_size} dp workers "
@@ -834,7 +811,7 @@ def train(cfg: TrainPipelineConfig) -> None:
 
     train_tracker = MetricsTracker(
         cfg.batch_size,
-        dataset.num_frames,
+        dataset.num_samples,
         dataset.num_episodes,
         train_metrics,
         initial_step=step,
@@ -1010,7 +987,7 @@ def train(cfg: TrainPipelineConfig) -> None:
                 }
                 eval_tracker = MetricsTracker(
                     cfg.batch_size,
-                    dataset.num_frames,
+                    dataset.num_samples,
                     dataset.num_episodes,
                     eval_metrics,
                     initial_step=step,

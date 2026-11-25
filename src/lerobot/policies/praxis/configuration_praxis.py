@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import PraxisAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig, LRSchedulerConfig
@@ -364,12 +365,15 @@ class PraxisConfig(PreTrainedConfig):
         return self.window_frames
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         """The training window: `window_frames` consecutive frames from the sampled one."""
         window = range(self.window_frames)
-        return Deltas(
-            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window),
-            action=window,
+        return FrameSampler(
+            Deltas(
+                observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window),
+                action=window,
+            ),
+            drop_last=self.drop_n_last_frames,
         )
 
     @property

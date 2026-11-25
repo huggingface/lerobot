@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 import torch
 
+from lerobot.configs.sampling import EpisodeTable, SampleKey
 from lerobot.configs.types import FeatureType
 from lerobot.optim.optimizers import PraxisAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -119,23 +120,16 @@ def test_window_recipe_constants() -> None:
     policy = make_tiny_policy(seed=0)
     cfg = policy.config
     assert cfg.window_frames == 93 and cfg.drop_n_last_frames == 93
-    deltas = cfg.training_deltas
+    sampler = cfg.training_sampler
+    deltas = sampler.deltas
     assert deltas.observation[FeatureType.VISUAL] == tuple(range(93)) and deltas.action == tuple(range(93))
     assert window_fits(102, 93, 15.0) and not window_fits(93, 93, 15.0)
     # The recipe's last window of a 200-frame episode starts at frame 106 (ends one frame before the
     # last); the episode-aware sampler draws the same starts with `drop_n_last_frames` dropped.
     anchors = {draw_anchor(200, 93, 15.0, np.random.default_rng(i)) for i in range(3000)}
     assert (min(anchors), max(anchors)) == (0, 200 - 94)
-    from lerobot.datasets.sampler import EpisodeAwareSampler
-
-    sampler = EpisodeAwareSampler(
-        np.array([0]),
-        np.array([200]),
-        drop_n_first_frames=0,
-        drop_n_last_frames=cfg.drop_n_last_frames,
-        shuffle=False,
-    )
-    starts = list(iter(sampler))
+    episodes = EpisodeTable(indices=np.array([0]), lengths=np.array([200]))
+    starts = [sampler.sample(episodes, SampleKey(0, k)).anchor for k in range(sampler.count(episodes, 0))]
     assert (min(starts), max(starts)) == (min(anchors), max(anchors))
 
 

@@ -56,7 +56,7 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # A temporally stacked observation (a policy whose ``training_deltas`` window spans several
+    # A temporally stacked observation (a policy whose ``training_sampler`` window spans several
     # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
     # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
@@ -85,7 +85,7 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # A temporally stacked observation (a policy whose ``training_deltas`` window spans several
+    # A temporally stacked observation (a policy whose ``training_sampler`` window spans several
     # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
     # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
     # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.

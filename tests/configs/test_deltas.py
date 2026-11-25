@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from types import SimpleNamespace
-
 import pytest
 
 from lerobot.configs.types import Deltas, FeatureType
@@ -59,43 +57,10 @@ def test_deltas_reject_invalid_declarations(kwargs):
         Deltas(**kwargs)
 
 
-def test_resolve_delta_timestamps_reads_observation_action_from_the_action_column():
-    datasets = pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
-    del datasets
-    from lerobot.datasets.factory import resolve_delta_timestamps
-
-    cfg = SimpleNamespace(training_deltas=Deltas(observation={FeatureType.ACTION: (-2, -1)}, action=range(2)))
-    features = {
-        ACTION: {"dtype": "float32", "shape": (2,), "names": None},
-        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": None},
-    }
-    timestamps = resolve_delta_timestamps(cfg, SimpleNamespace(features=features, fps=10))
-    assert timestamps == {ACTION: [0.0, 0.1], OBS_ACTION: [-0.2, -0.1]}
-
-    with pytest.raises(ValueError, match="no action"):
-        resolve_delta_timestamps(cfg, SimpleNamespace(features={OBS_STATE: features[OBS_STATE]}, fps=10))
-
-
-def test_resolve_delta_timestamps_gives_a_named_camera_its_own_window():
-    pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
-    from lerobot.datasets.factory import resolve_delta_timestamps
-
-    image = {"dtype": "video", "shape": (8, 8, 3), "names": ["height", "width", "channels"]}
-    features = {"observation.images.high": image, "observation.images.wrist": image}
-    cfg = SimpleNamespace(training_deltas=Deltas(observation={"observation.images.top": [-2, 0]}))
-    meta = SimpleNamespace(features=features, fps=10)
-    timestamps = resolve_delta_timestamps(
-        cfg, meta, rename_map={"observation.images.high": "observation.images.top"}
-    )
-    assert timestamps == {"observation.images.high": [-0.2, 0.0]}
-    with pytest.raises(ValueError, match="no dataset feature maps to"):
-        resolve_delta_timestamps(cfg, meta)
-
-
 def test_configs_declaring_removed_delta_indices_fail_at_definition():
     from lerobot.configs.policies import PreTrainedConfig
 
-    with pytest.raises(TypeError, match="training_deltas"):
+    with pytest.raises(TypeError, match="training_sampler"):
 
         class _LegacyConfig(PreTrainedConfig):
             @property

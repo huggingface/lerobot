@@ -38,16 +38,23 @@ def test_pi05_memory_delta_indices_are_modality_specific():
         memory_frames=6,
         memory_stride=10,
     )
-    assert FeatureType.VISUAL not in baseline.training_deltas.observation
-    assert FeatureType.STATE not in baseline.training_deltas.observation
-    assert list(memory.training_deltas.observation[FeatureType.VISUAL]) == [-50, -40, -30, -20, -10, 0]
-    assert list(memory.training_deltas.observation[FeatureType.STATE]) == [-50, -40, -30, -20, -10, 0]
+    assert FeatureType.VISUAL not in baseline.training_sampler.deltas.observation
+    assert FeatureType.STATE not in baseline.training_sampler.deltas.observation
+    assert list(memory.training_sampler.deltas.observation[FeatureType.VISUAL]) == [
+        -50,
+        -40,
+        -30,
+        -20,
+        -10,
+        0,
+    ]
+    assert list(memory.training_sampler.deltas.observation[FeatureType.STATE]) == [-50, -40, -30, -20, -10, 0]
 
 
 @pytest.mark.dataset
 def test_delta_timestamps_respect_raw_robomme_rename_map():
     pytest.importorskip("datasets")
-    from lerobot.datasets.factory import resolve_delta_timestamps
+    from lerobot.datasets.sample_windows import resolve_windows
 
     metadata = SimpleNamespace(
         fps=10,
@@ -65,11 +72,11 @@ def test_delta_timestamps_respect_raw_robomme_rename_map():
         "state": "observation.state",
         "actions": "action",
     }
-    deltas = resolve_delta_timestamps(config, metadata, rename_map)
-    assert deltas["image"] == [-1.0, -0.5, 0.0]
-    assert deltas["wrist_image"] == [-1.0, -0.5, 0.0]
-    assert deltas["state"] == [-1.0, -0.5, 0.0]
-    assert deltas["actions"] == [index / 10 for index in range(50)]
+    windows = resolve_windows(config.training_sampler.deltas, metadata.features, rename_map)
+    assert windows["image"] == (-10, -5, 0)
+    assert windows["wrist_image"] == (-10, -5, 0)
+    assert windows["state"] == (-10, -5, 0)
+    assert windows["actions"] == tuple(range(50))
 
 
 @pytest.mark.parametrize(
@@ -104,18 +111,21 @@ def test_inference_history_rejects_a_too_short_queue():
 @pytest.mark.dataset
 def test_visual_memory_requires_a_matching_image_key():
     pytest.importorskip("datasets")
-    from lerobot.datasets.factory import resolve_delta_timestamps
+    from lerobot.datasets.sample_windows import resolve_windows
 
     config = PI05Config(use_visual_memory=True, memory_frames=3, memory_stride=5)
+    deltas = config.training_sampler.deltas
 
     # Singular `observation.image` is a valid LeRobot convention and must get history.
-    singular = SimpleNamespace(fps=10, features={"observation.image": {}, "action": {}})
-    assert resolve_delta_timestamps(config, singular)["observation.image"] == [-1.0, -0.5, 0.0]
+    assert resolve_windows(deltas, {"observation.image": {}, "action": {}})["observation.image"] == (
+        -10,
+        -5,
+        0,
+    )
 
     # A dataset with no image key at all must fail instead of training single-frame.
-    stateless = SimpleNamespace(fps=10, features={"observation.state": {}, "action": {}})
     with pytest.raises(ValueError, match="no dataset feature maps to an image key"):
-        resolve_delta_timestamps(config, stateless)
+        resolve_windows(deltas, {"observation.state": {}, "action": {}})
 
 
 def test_proprioceptive_memory_removes_the_state_from_the_prompt():

@@ -422,7 +422,7 @@ class Flux3Policy(PreTrainedPolicy):
         b, _, t = cams.shape[:3]
         if t != cfg.window_frames:
             raise ValueError(
-                f"training needs {cfg.window_frames} frames per camera (from training_deltas), got {t}"
+                f"training needs {cfg.window_frames} frames per camera (from training_sampler), got {t}"
             )
         device = cams.device
         state, past_actions = self._conditioning_inputs(batch)

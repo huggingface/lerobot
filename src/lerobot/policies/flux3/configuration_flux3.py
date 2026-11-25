@@ -28,6 +28,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import FrozenWarmupConstantSchedulerConfig
@@ -374,23 +375,31 @@ class Flux3Config(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         if self.conditioning != "history":
             # Future frames of the window are video targets.
             images = range(self.window_frames)
-            return Deltas(
-                observation={FeatureType.VISUAL: images, FeatureType.STATE: [0], FeatureType.ENV: images},
-                action=range(self.chunk_size),
+            return FrameSampler(
+                Deltas(
+                    observation={FeatureType.VISUAL: images, FeatureType.STATE: [0], FeatureType.ENV: images},
+                    action=range(self.chunk_size),
+                ),
+                drop_first=self.drop_n_first_frames,
+                drop_last=self.drop_n_last_frames,
             )
         images = range(1 - self.n_obs_steps, self.chunk_size + 1)  # past inputs, then future video targets
-        return Deltas(
-            observation={
-                FeatureType.VISUAL: images,
-                FeatureType.STATE: range(1 - self.n_obs_steps, 1),
-                FeatureType.ENV: images,
-            },
-            # The commands before the current frame are history inputs; the first anchors the deltas.
-            action=range(-self.n_obs_steps, self.chunk_size),
+        return FrameSampler(
+            Deltas(
+                observation={
+                    FeatureType.VISUAL: images,
+                    FeatureType.STATE: range(1 - self.n_obs_steps, 1),
+                    FeatureType.ENV: images,
+                },
+                # The commands before the current frame are history inputs; the first anchors the deltas.
+                action=range(-self.n_obs_steps, self.chunk_size),
+            ),
+            drop_first=self.drop_n_first_frames,
+            drop_last=self.drop_n_last_frames,
         )
 
     @property

@@ -117,9 +117,9 @@ def reject_removed_delta_properties(cls: type) -> None:
     """Fail at class definition for configs still declaring the removed ``*_delta_indices``."""
     if removed := [name for name in REMOVED_DELTA_PROPERTIES if name in vars(cls)]:
         raise TypeError(
-            f"{cls.__name__} defines {', '.join(removed)}, which were removed: declare the frames "
-            "a batch holds with the `training_deltas` and `inference_deltas` properties "
-            "(lerobot.configs.types.Deltas)."
+            f"{cls.__name__} defines {', '.join(removed)}, which were removed: declare what a training "
+            "sample holds with the `training_sampler` property (lerobot.configs.sampling) and what "
+            "inference receives with `inference_deltas` (lerobot.configs.types.Deltas)."
         )
 
 

@@ -58,7 +58,6 @@ import pyarrow.parquet as pq
 import torch
 from tqdm import tqdm
 
-from lerobot.configs.types import FeatureType
 from lerobot.datasets import LeRobotDataset
 from lerobot.processor import PolicyProcessorPipeline
 
@@ -98,7 +97,7 @@ def load_sarm_resources(
 
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
-    delta_indices = reward_model.config.training_deltas.observation[FeatureType.VISUAL]
+    delta_indices = reward_model.config.frame_offsets
 
     logging.info(f"Loading dataset: {dataset_repo_id}")
     temp_dataset = LeRobotDataset(dataset_repo_id, download_videos=True)

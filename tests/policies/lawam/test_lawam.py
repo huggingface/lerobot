@@ -28,7 +28,7 @@ pytest.importorskip("transformers", reason="lawam requires the `lawam` extra (tr
 pytest.importorskip("diffusers", reason="lawam requires the `lawam` extra (diffusers)")
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.datasets.sample_windows import resolve_windows
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.lawam.configuration_lawam import (
     LaWAMConfig,
@@ -608,7 +608,7 @@ def test_action_horizon_is_independent_of_control_frequency() -> None:
     cfg.chunk_size = 50
     cfg.action_horizon = 8
 
-    assert list(cfg.training_deltas.action) == list(range(8))
+    assert list(cfg.training_sampler.deltas.action) == list(range(8))
     policy_cfg = _build_native_policy_config(cfg)
     assert policy_cfg.action_horizon == 50
     assert policy_cfg.effective_action_horizon == 8
@@ -662,17 +662,10 @@ def test_dataset_sampling_uses_the_configured_action_horizon() -> None:
     cfg = make_config()
     cfg.chunk_size = 50
     cfg.action_horizon = 10
-    dataset_meta = SimpleNamespace(
-        fps=25,
-        features={ACTION: {}, "observation.images.front": {}},
-    )
+    windows = resolve_windows(cfg.training_sampler.deltas, {ACTION: {}, "observation.images.front": {}})
 
-    delta_timestamps = resolve_delta_timestamps(cfg, dataset_meta)
-
-    assert delta_timestamps is not None
-    assert len(delta_timestamps[ACTION]) == 10
-    assert delta_timestamps[ACTION][-1] == pytest.approx(9 / 25)
-    assert delta_timestamps["observation.images.front"] == pytest.approx([0.0, 9 / 25])
+    assert windows[ACTION] == tuple(range(10))
+    assert windows["observation.images.front"] == (0, 9)
 
 
 def test_flow_uses_padded_horizon_and_returns_only_effective_actions(monkeypatch) -> None:

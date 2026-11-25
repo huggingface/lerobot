@@ -593,15 +593,6 @@ def _resolve_visual_modality_keys_from_dataset_meta(dataset_meta: Any | None) ->
     return keys or None
 
 
-def _as_int(value: Any) -> int:
-    if isinstance(value, torch.Tensor):
-        return int(value.item())
-    item = getattr(value, "item", None)
-    if callable(item):
-        return int(item())
-    return int(value)
-
-
 def _to_float_tensor(value: Any, *, key: str) -> torch.Tensor:
     if value is None:
         raise ValueError(f"Cannot compute relative action statistics: sample is missing '{key}'.")
@@ -697,18 +688,15 @@ def _iter_action_state_training_samples(dataset: Any):
     if callable(ensure_reader) and hasattr(reader := ensure_reader(), "hf_dataset"):
         if reader.hf_dataset is None:
             reader.load_and_activate()
-        delta_indices = getattr(reader, "delta_indices", None)
         for idx in range(len(dataset)):
-            item = reader.hf_dataset[idx]
+            row, windows, padding = reader.samples.rows(reader.samples.key_at(idx))
+            item = reader.hf_dataset[reader._to_relative([row])[0]]
             action = item.get(ACTION)
             state = item.get(OBS_STATE)
             pad_mask = None
-            if delta_indices is not None and ACTION in delta_indices:
-                ep_idx = _as_int(item["episode_index"])
-                abs_idx = _as_int(item["index"])
-                query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
-                action = reader._query_hf_dataset([{ACTION: query_indices[ACTION]}])[0][ACTION]
-                pad_mask = padding.get(f"{ACTION}_is_pad")
+            if ACTION in windows:
+                action = reader._query_hf_dataset([{ACTION: windows[ACTION]}])[0][ACTION]
+                pad_mask = padding[f"{ACTION}_is_pad"]
             yield action, state, pad_mask
         return
 

@@ -22,6 +22,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -264,8 +265,8 @@ class DM05Config(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
-        return Deltas(action=range(self.chunk_size))
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(action=range(self.chunk_size)), drop_last=self.drop_n_last_frames)
 
     @property
     def inference_deltas(self) -> Deltas:

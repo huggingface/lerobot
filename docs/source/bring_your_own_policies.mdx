@@ -26,6 +26,7 @@ Inherit from [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/ma
 from dataclasses import dataclass, field
 import torch
 from lerobot.configs import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
@@ -75,17 +76,18 @@ class MyPolicyConfig(PreTrainedConfig):
         return None
 
     @property
-    def training_deltas(self) -> Deltas:
-        """The frames each training batch holds, as offsets from the current frame.
+    def training_sampler(self) -> TrainingSampler:
+        """What one training sample holds: here, windows around every frame of every episode.
 
-        `observation` maps a feature type to its offsets: `VISUAL` (every camera), `STATE`,
-        `ENV` and `ACTION` (`observation.action`, the commands executed at those frames).
-        A declared feature arrives as `[B, T, ...]` with `{key}_is_pad`; an undeclared one as
-        the current frame. An observation key (`"observation.images.top"`) declares that feature
-        alone, overriding its type. `action` lists the targets, e.g. `range(-20, 11, 10)` for
-        VISUAL gives 2 past frames at stride 10, the current one and 1 future frame.
+        `Deltas` lists the frames as offsets from the current one. `observation` maps a feature
+        type to its offsets: `VISUAL` (every camera), `STATE`, `ENV` and `ACTION`
+        (`observation.action`, the commands executed at those frames). A declared feature arrives
+        as `[B, T, ...]` with `{key}_is_pad`; an undeclared one as the current frame. An observation
+        key (`"observation.images.top"`) declares that feature alone, overriding its type. `action`
+        lists the targets, e.g. `range(-20, 11, 10)` for VISUAL gives 2 past frames at stride 10,
+        the current one and 1 future frame.
         """
-        return Deltas(action=range(self.horizon))
+        return FrameSampler(Deltas(action=range(self.horizon)))
 
     @property
     def inference_deltas(self) -> Deltas:
@@ -93,14 +95,22 @@ class MyPolicyConfig(PreTrainedConfig):
         return Deltas()
 ```
 
-`training_deltas` and `inference_deltas` replace `observation_delta_indices`, `action_delta_indices` and `reward_delta_indices` (and the per-modality `image_observation_delta_indices` / `state_observation_delta_indices`). For example `observation_delta_indices = [-1, 0]` with `action_delta_indices = list(range(16))` becomes:
+`training_sampler` and `inference_deltas` replace `observation_delta_indices`, `action_delta_indices` and `reward_delta_indices` (and the per-modality `image_observation_delta_indices` / `state_observation_delta_indices`). For example `observation_delta_indices = [-1, 0]` with `action_delta_indices = list(range(16))` becomes:
 
 ```python
-Deltas(
-    observation={FeatureType.VISUAL: [-1, 0], FeatureType.STATE: [-1, 0], FeatureType.ENV: [-1, 0]},
-    action=range(16),
+FrameSampler(
+    Deltas(
+        observation={FeatureType.VISUAL: [-1, 0], FeatureType.STATE: [-1, 0], FeatureType.ENV: [-1, 0]},
+        action=range(16),
+    )
 )
 ```
+
+The samplers live in `lerobot.configs.sampling`:
+
+- `FrameSampler(deltas, drop_first=0, drop_last=0)` gives one sample per frame. `drop_first` and `drop_last` keep the first and last frames of each episode from anchoring a sample, e.g. so that every action window ends inside its episode.
+- `EpisodeSampler(observation={FeatureType.VISUAL: 4}, action=1, starts=(0,))` gives one sample per start: every `stride`-th frame from the start to the end of the episode, for a policy trained over whole episodes. A start before frame 0 shifts the sample, and its positions before the episode repeat the first frame and are flagged in `{key}_is_pad`. Samples of different lengths are padded to the longest of the batch, flagged the same way.
+- To build samples another way, subclass `TrainingSampler` and implement `count(episodes, episode)` (how many samples an episode gives per epoch) and `sample(episodes, key)` (the anchor frame and the `Deltas` around it). Both read metadata only. The training loop shuffles, shards and resumes the samples of any sampler, on every dataset reader.
 
 The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise. `PreTrainedConfig` already declares `dtype: torch.dtype | None`; to give your policy a default precision, redeclare it with a `torch.dtype` value (e.g. `dtype: torch.dtype | None = torch.bfloat16`).
 

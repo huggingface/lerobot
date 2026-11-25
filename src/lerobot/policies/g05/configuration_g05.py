@@ -12,6 +12,7 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
@@ -560,10 +561,10 @@ class G05Config(PreTrainedConfig):
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
-    def training_deltas(self) -> Deltas:
+    def training_sampler(self) -> TrainingSampler:
         window = range(1 - self.n_obs_steps, 1)
         observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
-        return Deltas(observation=observation, action=range(self.chunk_size))
+        return FrameSampler(Deltas(observation=observation, action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

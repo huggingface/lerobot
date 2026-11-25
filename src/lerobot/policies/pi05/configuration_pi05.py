@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -201,8 +202,8 @@ class PI05Config(PreTrainedConfig):
         )
 
     @property
-    def training_deltas(self) -> Deltas:
-        return Deltas(observation=self._memory_windows(), action=range(self.chunk_size))
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(observation=self._memory_windows(), action=range(self.chunk_size)))
 
     @property
     def inference_deltas(self) -> Deltas:

@@ -381,7 +381,7 @@ sequence-balance term and the routing-bias update after each optimizer step. Giv
 and random draws, `PraxisPolicy.forward` is bitwise equal to the praxis trainer's objective on the
 released checkpoint. A window is 93 consecutive frames (chunks of 21, 24, 24, 24) of both cameras
 with the observed and the commanded flange pose of every frame and the instruction; the policy
-declares it through `training_deltas` (93 frames) and keeps the
+declares it through `training_sampler` (93 frames) and keeps the
 windows inside the episodes with `drop_n_last_frames` (93, so the sampler draws the recipe's window
 starts). The camera tiles follow the canvas rule of the checkpoint (`video.antialias`), as in the
 praxis data module. `forward` and the backward of its loss (the activation-checkpoint recompute

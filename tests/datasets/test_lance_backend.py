@@ -819,7 +819,7 @@ def test_storage_options_remote_reads(dataset_roots, tmp_path, monkeypatch, entr
         datasets = list(make_train_eval_datasets(cfg))
 
     storage_options["aws_region"] = "changed-after-construction"
-    reference = LeRobotDataset(DUMMY_REPO_ID, root=src_root, delta_timestamps=datasets[0].delta_timestamps)
+    reference = LeRobotDataset(DUMMY_REPO_ID, root=src_root, sampler=datasets[0].sampler)
     for dataset in datasets:
         sample = dataset[0]
         assert_items_equal(sample, reference[int(sample["index"])])
