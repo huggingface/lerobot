@@ -4,7 +4,7 @@
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/policy/attention/causal_softmax.py. Import paths are rewritten to the LeRobot package;
-# the teacher-forcing sequence is attended with one scaled_dot_product_attention call per group instead of FlashAttention over variable-length groups, and the packed row of several windows is not vendored.
+# the teacher-forcing sequence is attended with one scaled_dot_product_attention call per group instead of FlashAttention over variable-length groups, a packed row window by window.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
@@ -95,9 +95,14 @@ class CausalSoftmaxAttention(GatedSoftmaxAttention):
         observation_prefill: bool = False,
         window_chunks: int = 1,
         sink_phases=None,
+        windows=None,
     ):
         (q, k, v) = self.project(x)
         dtype = v.dtype
+        if windows is not None:
+            (q, k) = (rotate(q, rotary_emb), rotate(k, rotary_emb))
+            out = self._packed_row_attention(q, k, v, windows, window_chunks, tuple(observation_spans))
+            return self.gate_and_project(out, x, dtype)
         if kv_cache is None:
             (q, k) = (rotate(q, rotary_emb), rotate(k, rotary_emb))
             bounds = [int(bound) for bound in chunk_bounds]
@@ -129,6 +134,21 @@ class CausalSoftmaxAttention(GatedSoftmaxAttention):
                 q.transpose(1, 2), keys.transpose(1, 2), values.transpose(1, 2), attn_mask=valid
             ).transpose(1, 2)
         return self.gate_and_project(out, x, dtype)
+
+    def _packed_row_attention(self, q, k, v, windows, window, observation_spans):
+        """Attend a packed row of teacher-forcing windows, every window on its own tokens."""
+        outputs = [
+            self._teacher_forcing_attention(
+                *(tensor[:, row.start : row.end] for tensor in (q, k, v)),
+                list(row.bounds),
+                row.num_chunks,
+                window,
+                row.sink_phases,
+                observation_spans,
+            )
+            for row in windows
+        ]
+        return torch.cat(outputs, dim=1)
 
     def _teacher_forcing_attention(
         self, q, k, v, bounds, clean_segments, window, sink_phases, observation_spans

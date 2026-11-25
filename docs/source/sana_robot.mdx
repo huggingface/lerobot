@@ -23,8 +23,9 @@ SANA-Robot-AR, the policy with memory: inference and evaluation of its released 
 
 The model code is vendored in `lerobot/policies/sana_robot/sana_robot_core` from the
 [SANA-Robot code release](https://github.com/NVlabs/Sana/tree/robot); the file headers name the upstream commit
-and paths. LeRobot runs the plain PyTorch path: the kernels of the original training and deployment, its CUDA
-graphs and its asynchronous execution are not part of this integration. They are in the SANA-Robot repository.
+and paths. Inference runs in plain PyTorch: the kernels of the original deployment, its CUDA graphs and its
+asynchronous execution are not part of this integration. They are in the SANA-Robot repository. Training uses
+the Triton kernels of the original trainer for the Gated DeltaNet layers where Triton is installed.
 
 ## Install
 
@@ -145,8 +146,9 @@ the policy one episode per sample:
   of the dataset. A longer episode is trained on the part within this reach of the sampled frame, which then
   starts after the first frame of the episode, so the memory is trained on a shorter past than it has at
   inference.
-- `--batch_size` is the number of episodes per GPU. The loss is the mean over the episodes of each episode's
-  mean over its chunks.
+- `--batch_size` is the number of episodes per GPU. They go through the model as one sequence, the chunks of
+  all episodes laid end to end, so nothing is computed for the padding of the shorter ones. The loss is the mean
+  over the episodes of each episode's mean over its chunks.
 - The frozen video VAE and text encoder run online, in BF16.
 
 The dataset holds `observation.state` and `action` as the slots of SANA-Robot's robot row that
@@ -166,8 +168,24 @@ lerobot-train --policy.path=sana_robot_start --policy.keep_checkpoint_statistics
 ```
 
 `--policy.keep_checkpoint_statistics=true` keeps the normalization of the checkpoint the fine-tune starts from.
-The released LIBERO recipe also sets `--policy.timestep_weighting=false` and augments the camera frames; the
-augmentation is not part of this integration.
+The released LIBERO recipe also sets `--policy.timestep_weighting=false` and augments the camera frames.
+
+`policy.augmentation` holds the random image changes of an episode, in the format of the recipes of the
+SANA-Robot repository. They are drawn once per episode, applied to all of its frames on the GPU after the
+resize, and off by default. The cameras a change names are entries of `policy.camera_keys`. The released LIBERO
+recipe is:
+
+```bash
+--policy.augmentation='{"view_changes": {"clean_probability": 0.2, "crop_area": [0.75, 1.0],
+  "rotation": 10.0, "translation": 0.1, "brightness": 0.3, "contrast": 0.3, "saturation": 0.3,
+  "hue": 0.03, "gamma": 0.2, "camera_move": {"views": ["observation.images.image"],
+  "probability": 0.35, "yaw": 3.0, "pitch": 2.5, "roll": 0.75, "focal": [0.96, 1.06],
+  "shift_x": 4.0, "shift_y": 3.0, "radial": [-0.015, 0.03]}}}'
+```
+
+`view_changes` gives every camera its own crop, rotation, shift and colour change (`clean_probability` is the
+share of episodes it leaves as they are) and `camera_move` a small move of the named cameras. `camera`,
+`lighting` and `color` are the other changes of the original recipes; the config docstring lists their keys.
 
 The 4.5B weights with their gradients and the AdamW state do not fit one 80 GB GPU in FP32, so a full fine-tune
 shards them over the GPUs of a node (see [Multi-GPU training](./multi_gpu_training)):
@@ -192,25 +210,33 @@ hold the averaged weights in `pretrained_model_ema`; evaluate them with `lerobot
 | `timestep_weighting`                              | Weigh a chunk's loss by its noise level                          | true        |
 | `action_loss_weight`                              | Weight of the action loss next to the video loss                 | 1.0         |
 | `gradient_checkpointing`                          | Recompute the layers in the backward pass                        | true        |
+| `augmentation`                                    | Random image changes of an episode                               | none        |
+| `training_backend`                                | `triton`, `eager` (plain PyTorch) or `auto`                      | auto        |
 | `optimizer_lr`, `scheduler_decay_lr`              | Peak and final learning rate of the cosine schedule              | 5e-5, 5e-7  |
 | `scheduler_warmup_steps`, `scheduler_decay_steps` | Warmup and length of the schedule, scaled down for a shorter run | 1000, 20000 |
 
-On 8 H100 with two episodes per GPU (about 7 chunks each on LIBERO), a step takes 5.5 s and 28 GB per GPU, or
-4.9 s with `--accelerator.fsdp.reshard_after_forward=false`. Training in LeRobot differs from the SANA-Robot
-repository in three ways:
+`training_backend` selects how the Gated DeltaNet layers compute a training step: `triton` runs the fused Triton
+kernels of the original trainer (CUDA, under BF16 or FP16 autocast), `eager` plain PyTorch, and `auto` takes
+`triton` on CUDA when Triton is installed, which it is with the Linux wheels of PyTorch.
 
-- It runs in plain PyTorch, one episode at a time through the model. The original trainer packs the episodes of
-  a GPU into one sequence up to a budget of chunks and runs fused kernels, and is about three times faster per
-  chunk.
+On 8 H100 with two episodes per GPU (about 7 chunks each on LIBERO), a step takes 2.5 s and 22 GB per GPU with
+the Triton kernels and 3.3 s in plain PyTorch. Training in LeRobot differs from the SANA-Robot repository in
+three ways:
+
+- Of the original trainer's kernels, only those of the Gated DeltaNet layers are here. The softmax and the text
+  attention run as `scaled_dot_product_attention` calls instead of FlashAttention over variable-length groups,
+  and the timestep modulation in plain PyTorch. A chunk costs about 1.3 times what it costs in the original
+  trainer.
 - Episodes are drawn in proportion to their length, a fixed number per GPU, instead of in a task-balanced order
-  packed to the budget.
+  packed to a budget of chunks.
 - The video latents come from the block-wise encoder that inference uses. In BF16 they differ from the original
   trainer's single-pass encoding by rounding (5% in relative L2 norm; each is 3 to 4% from the FP32 latents).
 
 With the same latents, text embeddings and noise, the loss of an episode is the same as in the SANA-Robot
 repository within 2e-3 and its gradients agree as closely as BF16 and FP32 gradients do. Over the first 300
 steps of a LIBERO fine-tune from the pretrained weights, on the same data, normalization and schedule, the two
-trainers give the same loss curve within 4% from step 100 on (0.218 against 0.211 over the last 50 steps).
+trainers give the same loss curve within 6% from step 100 on (0.224 against 0.211 over the last 50 steps, with
+either backend).
 
 ## Results
 

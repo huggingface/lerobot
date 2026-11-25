@@ -25,8 +25,13 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs.configs import LiberoEnvConfig
 from lerobot.envs.factory import make_env_pre_post_processors
 from lerobot.policies import make_pre_post_processors
+from lerobot.policies.sana_robot import modeling_sana_robot
 from lerobot.policies.sana_robot.configuration_sana_robot import SanaRobotConfig
-from lerobot.policies.sana_robot.modeling_sana_robot import SanaRobotPolicy, episode_window
+from lerobot.policies.sana_robot.modeling_sana_robot import (
+    SanaRobotPolicy,
+    episode_window,
+    resolve_training_backend,
+)
 from lerobot.policies.sana_robot.processor_sana_robot import (
     LIBERO_BASE_POS,
     LIBERO_BASE_QUAT,
@@ -42,9 +47,11 @@ from lerobot.policies.sana_robot.processor_sana_robot import (
 )
 from lerobot.policies.sana_robot.sana_robot_core.causal_vae import LTX2VideoEncoder3d
 from lerobot.policies.sana_robot.sana_robot_core.robot80 import rotation_to_rot6d
+from lerobot.policies.sana_robot.sana_robot_core.teacher_forcing import padded_window_frames
 from lerobot.policies.sana_robot.sana_robot_core.windows import window_chunk_count
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.rotation import Rotation
+from tests.utils import require_cuda
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LATENT_CHANNELS = 8
@@ -136,12 +143,12 @@ def make_config(encoders, **overrides):
     return SanaRobotConfig(**config_fields(encoders, **overrides))
 
 
-def make_policy(config):
+def make_policy(config, noise=0.1):
     """A policy whose weights are all random: a new policy predicts no action flow, so its actions are its noise."""
     policy = SanaRobotPolicy(config)
     generator = torch.Generator().manual_seed(0)
     for parameter in policy.parameters():
-        parameter.data.add_(torch.randn(parameter.shape, generator=generator) * 0.1)
+        parameter.data.add_(torch.randn(parameter.shape, generator=generator) * noise)
     return policy
 
 
@@ -185,6 +192,8 @@ def rollout(policy, preprocess, postprocess, steps, seed=0, **arguments):
         {"spatial_layout": "3x3"},
         {"state_slots": [79, 80]},
         {"num_inference_steps": 0},
+        {"training_backend": "flash"},
+        {"augmentation": {"mixup": {}}},
     ],
 )
 def test_config_rejects_what_the_policy_cannot_run(encoders, overrides):
@@ -587,6 +596,181 @@ def test_training_loss_of_whole_episodes(encoders):
 
     with pytest.raises(ValueError, match="actions per sample"):
         policy.forward({**batch, ACTION: batch[ACTION][:, :-1]})
+
+
+def test_a_packed_row_computes_every_window_as_alone(encoders, monkeypatch):
+    config = make_config(encoders, max_episode_steps=128, instruction_dropout=0.0)
+    policy = make_policy(config)
+    policy.train()
+    batch = training_batch(config, [70, 120, 4, 40], [3, 77, 2, 0])
+    batch["task"] = ["pick", "place", "pick", "pick"]
+    model_forward = policy.model.forward
+    calls = []
+
+    def recorded_forward(**arguments):
+        calls.append((arguments, model_forward(**arguments)))
+        return calls[-1][1]
+
+    monkeypatch.setattr(policy.model, "forward", recorded_forward)
+    torch.manual_seed(0)
+    (losses, info) = policy.forward(batch, reduction="none")
+    # One pass of the model for the three episodes that have a chunk to train.
+    assert len(calls) == 1 and info["chunks"] == 2.5
+    assert losses[2] == 0 and (losses[[0, 1, 3]] > 0).all()
+    (arguments, packed) = calls[0]
+    data_info = arguments["data_info"]
+    assert data_info["chunk_counts"].tolist() == [3, 5, 2]
+    (chunk_actions, chunk_frames) = policy.model.chunk_size(data_info)
+    for index, count in enumerate([3, 5, 2]):
+        row = slice(index, index + 1)
+        frames = padded_window_frames(count, 5, chunk_frames)
+        robot_rows = count * (chunk_actions + 1) - 1
+        alone_info = {
+            name: value[row] if torch.is_tensor(value) else value
+            for (name, value) in data_info.items()
+            if name != "chunk_counts"
+        }
+        alone_info["teacher_forcing_num_chunks"] = count
+        for name in ("action", "action_mask", "action_timestep"):
+            alone_info[name] = alone_info[name][:, :robot_rows]
+        for name in ("chunk_states", "chunk_states_mask"):
+            alone_info[name] = alone_info[name][:, : count - 1]
+        with torch.no_grad():
+            alone = model_forward(
+                video_latents=arguments["video_latents"][row].index_select(2, frames),
+                timestep=arguments["timestep"][row].index_select(1, frames),
+                text_embeddings=arguments["text_embeddings"][row],
+                text_mask=arguments["text_mask"][row],
+                data_info=alone_info,
+            )
+        assert torch.allclose(
+            packed["video_pred"][row].index_select(2, frames), alone["video_pred"], atol=1e-5
+        )
+        assert torch.allclose(packed["action_pred"][row, :robot_rows], alone["action_pred"], atol=1e-5)
+        assert not packed["action_pred"][row, robot_rows:].any()
+
+
+def test_the_training_backend_follows_the_device_and_triton(monkeypatch):
+    (cpu, cuda) = (torch.device("cpu"), torch.device("cuda"))
+    monkeypatch.setattr(modeling_sana_robot, "is_package_available", lambda name: True)
+    assert resolve_training_backend("auto", cuda) == "triton"
+    assert resolve_training_backend("triton", cuda) == "triton"
+    assert resolve_training_backend("eager", cuda) == "eager"
+    assert resolve_training_backend("auto", cpu) == "eager"
+    assert resolve_training_backend("triton", cpu) == "eager"
+    monkeypatch.setattr(modeling_sana_robot, "is_package_available", lambda name: False)
+    assert resolve_training_backend("auto", cuda) == "eager"
+    with pytest.raises(ValueError, match="triton"):
+        resolve_training_backend("triton", cuda)
+
+
+@require_cuda
+def test_the_triton_kernels_give_the_loss_and_the_gradients_of_pytorch(encoders):
+    pytest.importorskip("triton")
+    # The fused kernel takes heads of 128 channels under BF16 autocast.
+    fields = {
+        "max_episode_steps": 128,
+        "instruction_dropout": 0.0,
+        "hidden_size": 256,
+        "linear_head_dim": 128,
+        "softmax_head_dim": 64,
+        "device": "cuda",
+    }
+    batch = None
+    results = []
+    for backend in ("eager", "triton"):
+        config = make_config(encoders, training_backend=backend, **fields)
+        torch.manual_seed(1)
+        policy = make_policy(config).to("cuda")
+        policy.train()
+        if batch is None:
+            batch = training_batch(config, [70, 120], [3, 77])
+            batch = {
+                key: value.to("cuda") if torch.is_tensor(value) else value for (key, value) in batch.items()
+            }
+        torch.manual_seed(0)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            (loss, _info) = policy.forward(batch)
+        loss.backward()
+        assert policy.training_backend == backend
+        results.append(
+            (loss.detach().float(), torch.cat([p.grad.float().flatten() for p in policy.parameters()]))
+        )
+    ((eager_loss, eager_gradient), (triton_loss, triton_gradient)) = results
+    assert torch.isfinite(triton_gradient).all()
+    assert torch.allclose(eager_loss, triton_loss, rtol=1e-2)
+    assert torch.nn.functional.cosine_similarity(eager_gradient, triton_gradient, dim=0) > 0.99
+
+
+LIBERO_VIEW_CHANGES = {
+    "clean_probability": 0.0,
+    "crop_area": [0.75, 1.0],
+    "rotation": 10.0,
+    "translation": 0.1,
+    "brightness": 0.3,
+    "contrast": 0.3,
+    "saturation": 0.3,
+    "hue": 0.03,
+    "gamma": 0.2,
+}
+
+
+def test_augmentation_changes_a_window_once_for_all_its_frames(encoders):
+    keys = make_config(encoders).camera_keys
+    camera_move = {
+        "views": [keys[0]],
+        "probability": 1.0,
+        "yaw": 3.0,
+        "pitch": 2.5,
+        "roll": 0.75,
+        "focal": [0.96, 1.06],
+        "shift_x": 4.0,
+        "shift_y": 3.0,
+        "radial": [-0.015, 0.03],
+    }
+    augmentation = {
+        "camera": {"views": [keys[1]], "probability": 1.0, "scale": [0.8, 0.9]},
+        "lighting": {
+            "gain_probability": 1.0,
+            "gain": [0.8, 1.2],
+            "shadow_probability": 1.0,
+            "shadow_width": [0.2, 0.4],
+            "shadow_depth": [0.2, 0.5],
+        },
+        "color": {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "gamma": 0.1},
+        "view_changes": {**LIBERO_VIEW_CHANGES, "camera_move": camera_move},
+    }
+    config = make_config(encoders, max_episode_steps=128, augmentation=augmentation)
+    policy = make_policy(config)
+    policy.train()
+    generator = torch.Generator().manual_seed(0)
+    # A still video per camera: every frame of a window gets the same change.
+    clips = [
+        (torch.rand(1, 1, 3, *size, generator=generator) * 2 - 1).repeat(1, 9, 1, 1, 1)
+        for size in config.view_sizes
+    ]
+    torch.manual_seed(0)
+    changed = policy._augment(clips, config.augmentation)
+    for clip, result in zip(clips, changed, strict=True):
+        assert result.shape == clip.shape and result.dtype == clip.dtype
+        assert result.min() >= -1 and result.max() <= 1
+        assert torch.equal(result, result[:, :1].expand_as(result))
+        assert (result - clip).abs().mean() > 0.05
+        levels = (result + 1) * 127.5
+        assert torch.allclose(levels, levels.round(), atol=1e-3)
+
+    clean = make_policy(
+        make_config(
+            encoders, augmentation={"view_changes": {**LIBERO_VIEW_CHANGES, "clean_probability": 1.0}}
+        )
+    )
+    clean.train()
+    for clip, result in zip(clips, clean._augment(clips, clean.config.augmentation), strict=True):
+        assert torch.allclose(result, clip, atol=1 / 255)
+
+    torch.manual_seed(0)
+    (loss, _info) = policy.forward(training_batch(config, [70], [3]))
+    assert torch.isfinite(loss) and loss > 0
 
 
 def test_gradient_checkpointing_keeps_the_loss_and_the_gradients(encoders):

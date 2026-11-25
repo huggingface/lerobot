@@ -16,10 +16,12 @@ from torch import Tensor
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.import_utils import require_package
+from lerobot.utils.import_utils import is_package_available, require_package
 
 from .configuration_sana_robot import SanaRobotConfig
 from .sana_robot_core.ar_session import ARSession
+from .sana_robot_core.augmentation import augment_views
+from .sana_robot_core.causal_gdn import CausalGatedDeltaNet
 from .sana_robot_core.memory_rtc import MemoryRTCController
 from .sana_robot_core.prompt import build_prompts
 from .sana_robot_core.robot80 import ROBOT_DIM
@@ -30,7 +32,7 @@ from .sana_robot_core.teacher_forcing_sequence import (
     with_state_rows,
 )
 from .sana_robot_core.text_encoder import load_text_encoder
-from .sana_robot_core.training_step import draw_window_noise, window_flow_inputs, window_losses
+from .sana_robot_core.training_step import draw_window_noise, pad_chunks, window_flow_inputs, window_losses
 from .sana_robot_core.vae import load_video_encoder
 from .sana_robot_core.video import VAE_SPATIAL_STRIDE
 from .sana_robot_core.view_stream import ViewStream
@@ -43,6 +45,26 @@ NORMALIZATION_LAYERS = (
     torch.nn.modules.batchnorm._BatchNorm,
     torch.nn.modules.instancenorm._InstanceNorm,
 )
+
+
+def resolve_training_backend(requested: str, device: torch.device) -> str:
+    """Return how the Gated DeltaNet layers compute a training step on ``device``: `"triton"` or `"eager"`.
+
+    Every CPU device and `"eager"` select plain PyTorch. `"auto"` selects the Triton kernels on CUDA when Triton is
+    installed; `"triton"` on CUDA without Triton raises `ValueError`.
+    """
+    if requested == "eager" or device.type != "cuda":
+        return "eager"
+    if is_package_available("triton"):
+        return "triton"
+    if requested == "triton":
+        raise ValueError("training_backend='triton' needs the triton package; use 'eager' or 'auto'")
+    return "eager"
+
+
+def pad_rows(values: Tensor, rows: int) -> Tensor:
+    """Return ``values`` `[1, R, ...]` with zero rows appended up to ``rows`` rows."""
+    return torch.cat((values, values.new_zeros(1, rows - values.shape[1], *values.shape[2:])), dim=1)
 
 
 def episode_window(real: Tensor, chunk_size: int, video_frame_stride: int) -> tuple[int, int, int]:
@@ -99,7 +121,7 @@ class SanaRobotPolicy(PreTrainedPolicy):
     runs one episode at a time (batch size 1).
 
     `forward` trains on whole episodes with teacher forcing: every sample of a batch is the episode of its
-    sampled frame, one window at a time.
+    sampled frame, and the episodes of a batch go through the model as one sequence.
     """
 
     config_class = SanaRobotConfig
@@ -129,6 +151,7 @@ class SanaRobotPolicy(PreTrainedPolicy):
             spatial_layout=config.spatial_layout,
         )
         self.model.grad_checkpointing = config.gradient_checkpointing
+        self.training_backend = "eager"
         if config.dtype is not None:
             self.to(dtype=config.dtype)
         self._encoders: dict[str, Any] = {}
@@ -202,41 +225,50 @@ class SanaRobotPolicy(PreTrainedPolicy):
         device = actions.device
         # The frozen encoders run in BF16 on a GPU, whatever the precision of the trained weights.
         self._load_encoders(torch.bfloat16 if device.type == "cuda" else None)
+        self._apply_training_backend(device)
         real = ~batch[f"{ACTION}_is_pad"]
         tasks = [batch["task"]] * actions.shape[0] if isinstance(batch["task"], str) else batch["task"]
-        zero = actions.new_zeros((), dtype=torch.float32)
-        (losses, video_losses, action_losses, chunk_counts) = ([], [], [], [])
+        (windows, trained, chunk_counts) = ([], [], [])
         for index in range(actions.shape[0]):
             (first_row, chunks, head_rows) = episode_window(
                 real[index], config.chunk_size, config.video_frame_stride
             )
             chunk_counts.append(chunks)
-            if chunks == 0:
-                # An episode too short for one trained chunk.
-                losses.append(zero)
-                continue
-            window = self._window_loss(batch, index, first_row, chunks, head_rows, tasks[index])
-            losses.append(window["loss"])
-            video_losses.append(window["video_loss"].detach())
-            action_losses.append(window["action_loss"].detach())
-        sample_losses = torch.stack(losses)
-        trained = max(1, len(video_losses))
-        info = {
-            "video_loss": float(torch.stack(video_losses).mean()) if video_losses else 0.0,
-            "action_loss": float(torch.stack(action_losses).mean()) if action_losses else 0.0,
-            "chunks": sum(chunk_counts) / len(chunk_counts),
-        }
+            # An episode too short for one trained chunk is left out of the step.
+            if chunks:
+                windows.append(
+                    self._training_window(batch, index, first_row, chunks, head_rows, tasks[index])
+                )
+                trained.append(index)
+        sample_losses = actions.new_zeros(actions.shape[0], dtype=torch.float32)
+        info = {"video_loss": 0.0, "action_loss": 0.0, "chunks": sum(chunk_counts) / len(chunk_counts)}
+        if not windows:
+            if reduction == "none":
+                return (sample_losses, info)
+            return (0.0 * next(self.model.parameters()).sum(), info)
+        losses = self._packed_losses(windows)
+        sample_losses = sample_losses.index_copy(
+            0, torch.tensor(trained, device=device), losses["loss"].to(sample_losses.dtype)
+        )
+        info["video_loss"] = float(losses["video_loss"].detach().mean())
+        info["action_loss"] = float(losses["action_loss"].detach().mean())
         if reduction == "none":
             return (sample_losses, info)
-        loss = sample_losses.sum() / trained
-        if not video_losses:
-            loss = loss + 0.0 * next(self.model.parameters()).sum()
-        return (loss, info)
+        return (sample_losses.sum() / len(windows), info)
 
-    def _window_loss(
+    def _apply_training_backend(self, device: torch.device) -> None:
+        """Select the kernels of the Gated DeltaNet layers for training on ``device`` (`resolve_training_backend`)."""
+        backend = resolve_training_backend(self.config.training_backend, device)
+        if backend != self.training_backend:
+            for module in self.model.modules():
+                if isinstance(module, CausalGatedDeltaNet):
+                    module.fused_kernels = backend == "triton"
+            self.training_backend = backend
+
+    def _training_window(
         self, batch: dict[str, Any], index: int, first_row: int, chunks: int, head_rows: int, instruction: str
     ) -> dict[str, Tensor]:
-        """Return the losses of the window of one sample: ``chunks`` chunks from ``first_row`` of its actions."""
+        """Return the window of one sample, ``chunks`` chunks from ``first_row`` of its actions: its robot rows, its clean latents and its text."""
         config = self.config
         (size, stride) = (config.chunk_size, config.video_frame_stride)
         device = batch[ACTION].device
@@ -256,9 +288,17 @@ class SanaRobotPolicy(PreTrainedPolicy):
         state[:, config.state_slots] = batch[OBS_STATE][index, first_state : first_state + chunks].float()
         state_mask = torch.zeros(chunks, ROBOT_DIM, dtype=torch.bool, device=device)
         state_mask[:, config.state_slots] = True
-        window = {
-            **self._data_info(device),
-            "teacher_forcing_num_chunks": chunks,
+
+        (first_frame, frames) = (first_row // stride, chunks * size // stride + 1)
+        clips = [
+            batch[key][index : index + 1, first_frame : first_frame + frames] for key in config.camera_keys
+        ]
+        if self.training and config.augmentation:
+            clips = self._augment(clips, config.augmentation)
+        views = [encode_teacher_forcing_latents(self._encoders["video"], clip, chunks) for clip in clips]
+        without_instruction = self.training and float(torch.rand(())) < config.instruction_dropout
+        (text_embeddings, text_mask) = self._text(None if without_instruction else instruction)
+        return {
             "initial_state": state[:1],
             "initial_state_condition_mask": state_mask[:1],
             "chunk_states": state[None, 1:],
@@ -267,27 +307,87 @@ class SanaRobotPolicy(PreTrainedPolicy):
             "action_mask": with_state_rows(action_mask, chunks, size)[None],
             "action_loss_mask": with_state_rows(loss_mask, chunks, size)[None],
             "chunk_supervised": supervised[None],
+            "window_latents": strip_view_latents([view[0] for view in views]),
+            "observation_latents": strip_view_latents([view[1] for view in views]),
+            "text_embeddings": text_embeddings,
+            "text_mask": text_mask,
         }
 
-        (first_frame, frames) = (first_row // stride, chunks * size // stride + 1)
-        views = [
-            encode_teacher_forcing_latents(
-                self._encoders["video"],
-                batch[key][index : index + 1, first_frame : first_frame + frames],
-                chunks,
+    def _augment(self, clips: list[Tensor], settings: dict[str, Any]) -> list[Tensor]:
+        """Return the frames of a window, `[1, T, 3, h, w]` in [-1, 1] per camera, after the image changes."""
+        with torch.autocast(clips[0].device.type, enabled=False):
+            views = augment_views(
+                [clip[0].float().add(1).div(2) for clip in clips], self.config.camera_keys, settings
             )
-            for key in config.camera_keys
-        ]
-        window_latents = strip_view_latents([view[0] for view in views])
-        observation_latents = strip_view_latents([view[1] for view in views])
-        without_instruction = self.training and float(torch.rand(())) < config.instruction_dropout
-        (text_embeddings, text_mask) = self._text(None if without_instruction else instruction)
-        noise = draw_window_noise(window_latents, chunks, size, ROBOT_DIM)
-        (inputs, targets) = window_flow_inputs(
-            window, window_latents, observation_latents, noise, config.timestep_weighting
+        return [view.mul(2).sub(1)[None].to(clip.dtype) for (view, clip) in zip(views, clips, strict=True)]
+
+    def _packed_losses(self, windows: list[dict[str, Tensor]]) -> dict[str, Tensor]:
+        """Return the losses of every window, `[windows]` each, from one pass of the model.
+
+        The windows are padded to the longest one, as the original trainer's batches are, and the model computes
+        them as one packed row: the chunks of all windows in one token sequence, nothing for the padding.
+        """
+        config = self.config
+        size = config.chunk_size
+        counts = [window["chunk_supervised"].shape[1] for window in windows]
+        longest = max(counts)
+        device = windows[0]["action"].device
+        packed: dict[str, Any] = {
+            **self._data_info(device, len(windows)),
+            "teacher_forcing_num_chunks": longest,
+            "chunk_counts": torch.tensor(counts, dtype=torch.long, device=device),
+        }
+        for name in ("initial_state", "initial_state_condition_mask"):
+            packed[name] = torch.cat([window[name] for window in windows])
+        for name, rows in (
+            ("chunk_states", longest - 1),
+            ("chunk_states_mask", longest - 1),
+            ("action", longest * (size + 1) - 1),
+            ("action_mask", longest * (size + 1) - 1),
+            ("action_loss_mask", longest * (size + 1) - 1),
+            ("chunk_supervised", longest),
+        ):
+            packed[name] = torch.cat([pad_rows(window[name], rows) for window in windows])
+        chunk_frames = (windows[0]["window_latents"].shape[2] - 1) // counts[0]
+        window_latents = torch.cat(
+            [
+                pad_chunks(window["window_latents"], (longest - count) * chunk_frames)
+                for (window, count) in zip(windows, counts, strict=True)
+            ]
         )
-        output = self.model(text_embeddings=text_embeddings, text_mask=text_mask, **inputs)
-        return window_losses(output, targets, window, config.action_loss_weight)
+        observation_latents = torch.cat(
+            [
+                pad_chunks(window["observation_latents"], longest - count)
+                for (window, count) in zip(windows, counts, strict=True)
+            ]
+        )
+        noise = draw_window_noise(window_latents, longest, size, ROBOT_DIM)
+        (inputs, targets) = window_flow_inputs(
+            packed, window_latents, observation_latents, noise, config.timestep_weighting
+        )
+        output = self.model(
+            text_embeddings=torch.cat([window["text_embeddings"] for window in windows]),
+            text_mask=torch.cat([window["text_mask"] for window in windows]),
+            **inputs,
+        )
+        per_window = []
+        for index in range(len(windows)):
+            row = slice(index, index + 1)
+            per_window.append(
+                window_losses(
+                    {name: value[row] for (name, value) in output.items()},
+                    {
+                        name: value if name.endswith("_positions") else value[row]
+                        for (name, value) in targets.items()
+                    },
+                    {name: packed[name][row] for name in ("chunk_supervised", "action_loss_mask")},
+                    config.action_loss_weight,
+                )
+            )
+        return {
+            name: torch.stack([losses[name] for losses in per_window])
+            for name in ("loss", "video_loss", "action_loss")
+        }
 
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
         raise NotImplementedError(
@@ -374,17 +474,21 @@ class SanaRobotPolicy(PreTrainedPolicy):
             self._text_cache[key] = self._encoders["text"]([prompts])
         return self._text_cache[key]
 
-    def _data_info(self, device: torch.device) -> dict[str, Any]:
-        """Return what the model reads about the cameras and the clock."""
+    def _data_info(self, device: torch.device, batch_size: int = 1) -> dict[str, Any]:
+        """Return what the model reads about the cameras and the clock, for ``batch_size`` windows."""
         config = self.config
         latent_shapes = [
             [size[0] // VAE_SPATIAL_STRIDE, size[1] // VAE_SPATIAL_STRIDE] for size in config.view_sizes
         ]
         return {
-            "view_latent_shape": torch.tensor(latent_shapes, dtype=torch.long, device=device)[None],
-            "view_slot_ids": torch.tensor(config.view_slots, dtype=torch.long, device=device)[None],
+            "view_latent_shape": torch.tensor(latent_shapes, dtype=torch.long, device=device).repeat(
+                batch_size, 1, 1
+            ),
+            "view_slot_ids": torch.tensor(config.view_slots, dtype=torch.long, device=device).repeat(
+                batch_size, 1
+            ),
             "view_count": len(config.view_sizes),
-            "model_fps": torch.tensor([float(config.fps)], dtype=torch.float64, device=device),
+            "model_fps": torch.full((batch_size,), float(config.fps), dtype=torch.float64, device=device),
             "video_frame_stride": config.video_frame_stride,
         }
 

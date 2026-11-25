@@ -3,17 +3,27 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
-# original path sana_robot/policy/layout/teacher_forcing.py. Import paths are rewritten to the LeRobot package;
-# the packed row of several windows is not vendored.
+# original path sana_robot/policy/layout/teacher_forcing.py. Import paths are rewritten to the LeRobot package.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import NamedTuple
 
 import torch
 
 SINK_HORIZON_CHUNKS = 7
+
+
+class TeacherForcingWindow(NamedTuple):
+    """One window of a packed row of teacher-forcing sequences: the range of its tokens in the row, its segment bounds counted from its first token, its number of chunks and the rotary phases of its sink copies."""
+
+    start: int
+    end: int
+    bounds: tuple
+    num_chunks: int
+    sink_phases: torch.Tensor
 
 
 def resolve_actions_per_chunk(actions_per_chunk: int | Mapping[str, int], fps: float) -> int:
@@ -45,6 +55,14 @@ def teacher_forcing_frame_positions(
         positions.append(float(chunk * chunk_frames))
         positions.extend(chunk * chunk_frames + frame + target_offset for frame in range(chunk_frames))
     return torch.tensor(positions, dtype=torch.float64, device=device)
+
+
+def padded_window_frames(num_chunks: int, padded_chunks: int, chunk_frames: int, device=None) -> torch.Tensor:
+    """Return where the latent frames of a window of ``num_chunks`` chunks sit in the teacher-forcing sequence of a batch that was padded to ``padded_chunks`` chunks: its sink and clean targets, then its noisy chunks."""
+    chunk_frames = int(chunk_frames)
+    clean = torch.arange(1 + (int(num_chunks) - 1) * chunk_frames, device=device)
+    first_noisy = 1 + (int(padded_chunks) - 1) * chunk_frames
+    return torch.cat((clean, first_noisy + torch.arange(int(num_chunks) * (1 + chunk_frames), device=device)))
 
 
 def noisy_chunk_frames(chunk_frames: int) -> int:

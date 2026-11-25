@@ -480,6 +480,9 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402", "D104"]
 # N803: Triton kernels name their constexpr arguments in upper case by convention
 "src/lerobot/policies/praxis/praxis_core/kernels/*.py" = ["N803"]
+# The Triton kernels of SANA-Robot keep their upstream text: upper-case constexpr arguments and pointers (N803,
+# N806, E741) and nested constexpr / runtime conditions (SIM102)
+"src/lerobot/policies/sana_robot/sana_robot_core/*_triton.py" = ["N803", "N806", "E741", "SIM102"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -573,6 +576,7 @@ default.extend-ignore-identifiers-re = [
     "temperal_downsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
+    "dne",  # gradient of the even rotated channel in the vendored SANA-Robot Triton kernels
 ]
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently

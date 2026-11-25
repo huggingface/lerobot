@@ -4,7 +4,7 @@
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/train/step/ar.py. Import paths are rewritten to the LeRobot package;
-# the inputs, the targets and the loss of one window; the latent store, the padded batch of several windows and its packed row are not vendored.
+# the inputs, the targets and the loss of a padded batch of windows; the latent store and the encoding of a batch are not vendored.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
@@ -44,7 +44,13 @@ POLICY_FIELDS = (
     "chunk_states",
     "chunk_states_mask",
     "action_mask",
+    "chunk_counts",
 )
+
+
+def pad_chunks(latents: torch.Tensor, chunks: int) -> torch.Tensor:
+    """Return latents [1, C, F, tokens] with zero frames appended for ``chunks`` more chunks."""
+    return torch.cat((latents, latents.new_zeros(*latents.shape[:2], int(chunks), latents.shape[3])), dim=2)
 
 
 def draw_window_noise(window_latents: torch.Tensor, chunks: int, chunk_size: int, slots: int) -> FlowNoise:

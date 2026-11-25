@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 
@@ -13,6 +14,9 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from .sana_robot_core.multiview import SPATIAL_LAYOUT_2X2, SPATIAL_LAYOUT_T_SHAPE
 from .sana_robot_core.robot80 import ACTION_MODE_EEF, ACTION_MODE_JOINT, ROBOT_DIM
 from .sana_robot_core.video import RESIZE_CROP, RESIZE_STRETCH, VAE_SPATIAL_STRIDE
+
+TRAINING_BACKENDS = ("auto", "triton", "eager")
+AUGMENTATIONS = ("camera", "lighting", "color", "view_changes")
 
 
 @PreTrainedConfig.register_subclass("sana_robot")
@@ -113,8 +117,22 @@ class SanaRobotConfig(PreTrainedConfig):
             Weigh the loss of a chunk by its noise level, more in the middle of the range.
         instruction_dropout (`float`, *optional*, defaults to `0.1`):
             The probability that a training window is given the prompt without its instruction.
+        augmentation (`dict[str, Any]`, *optional*):
+            The random image changes of a training window, drawn once per window and applied to all of its
+            frames after the resize, in the format of the recipes of the SANA-Robot repository. Each key is
+            optional: `camera` (`views`, `probability`, `scale`: a crop of the named cameras), `lighting`
+            (`gain_probability`, `gain`, `shadow_probability`, `shadow_width`, `shadow_depth`), `color`
+            (`brightness`, `contrast`, `saturation`, `gamma`, shared by the cameras) and `view_changes`
+            (`clean_probability`, `crop_area`, `rotation`, `translation`, `brightness`, `contrast`, `saturation`,
+            `hue`, `gamma`, every camera on its own, and `camera_move` with `views`, `probability`, `yaw`,
+            `pitch`, `roll`, `focal`, `shift_x`, `shift_y`, `radial`). `views` lists entries of `camera_keys`.
+            `None` trains on the frames as they are.
         gradient_checkpointing (`bool`, *optional*, defaults to `True`):
             Recompute every layer in the backward pass instead of keeping its activations.
+        training_backend (`str`, *optional*, defaults to `"auto"`):
+            How the Gated DeltaNet layers compute a training step: `"triton"` (the fused Triton kernels of the
+            original trainer, on CUDA under BF16 or FP16 autocast), `"eager"` (plain PyTorch) or `"auto"`
+            (`"triton"` on CUDA when Triton is installed, else `"eager"`). Inference does not read it.
         optimizer_lr (`float`, *optional*, defaults to `5e-5`):
             Peak learning rate of AdamW.
         optimizer_betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.95)`):
@@ -187,7 +205,9 @@ class SanaRobotConfig(PreTrainedConfig):
     action_loss_weight: float = 1.0
     timestep_weighting: bool = True
     instruction_dropout: float = 0.1
+    augmentation: dict[str, Any] | None = None
     gradient_checkpointing: bool = True
+    training_backend: str = "auto"
 
     optimizer_lr: float = 5e-5
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -242,6 +262,13 @@ class SanaRobotConfig(PreTrainedConfig):
             )
         if not 0.0 <= self.instruction_dropout <= 1.0:
             raise ValueError("instruction_dropout must be in [0, 1]")
+        unknown = set(self.augmentation or {}) - set(AUGMENTATIONS)
+        if unknown:
+            raise ValueError(f"augmentation takes the keys {AUGMENTATIONS}, got {sorted(unknown)}")
+        if self.training_backend not in TRAINING_BACKENDS:
+            raise ValueError(
+                f"training_backend must be one of {TRAINING_BACKENDS}, got {self.training_backend!r}"
+            )
         if not self.input_features:
             self.input_features = {
                 **{

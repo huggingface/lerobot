@@ -4,7 +4,7 @@
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/policy/sana_robot_ar.py. Import paths are rewritten to the LeRobot package;
-# the streaming entries and the forward on the teacher-forcing sequence of one window; the packed row of several windows and the row modulation kernels are not vendored.
+# the streaming entries and the forward on the teacher-forcing sequence, of one window or of a packed row of windows; the row modulation kernels are not vendored.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from lerobot.policies.sana_robot.sana_robot_core.block import PolicyBlock
 from lerobot.policies.sana_robot.sana_robot_core.causal_cross_attention import (
     ChunkTextCrossAttention,
     chunk_text_spans,
+    merge_text_spans,
 )
 from lerobot.policies.sana_robot.sana_robot_core.causal_gdn import CausalGatedDeltaNet
 from lerobot.policies.sana_robot.sana_robot_core.causal_softmax import CausalSoftmaxAttention
@@ -28,9 +29,11 @@ from lerobot.policies.sana_robot.sana_robot_core.multiview import (
 )
 from lerobot.policies.sana_robot.sana_robot_core.robot import ROBOT_DIM
 from lerobot.policies.sana_robot.sana_robot_core.teacher_forcing import (
+    TeacherForcingWindow,
     latent_centre_offset,
     noisy_chunk_frames,
     noisy_observation_spans,
+    padded_window_frames,
     resolve_actions_per_chunk,
     sink_read_chunks,
     teacher_forcing_frame_positions,
@@ -109,12 +112,17 @@ class SanaRobotAR(SanaRobotBackbone):
                 chunk [state; its actions]: ``initial_state`` and ``initial_state_condition_mask`` (chunk 0's
                 state), ``chunk_states`` and ``chunk_states_mask`` (the states of chunks 1..L-1), ``action`` and
                 ``action_mask`` [B, L * (A + 1) - 1, 80] (the rows after the first state, the later states' rows
-                being placeholders) and ``action_timestep`` for the same rows.
+                being placeholders) and ``action_timestep`` for the same rows. With ``chunk_counts`` [B], the
+                chunks of every window before the batch was right-padded to its longest window, the batch is
+                computed as one packed row of the windows' own chunks: the windows do not interact, nothing is
+                computed for the padded chunks and their predictions are zero.
 
         Returns:
             Dict with ``video_pred``, the video flow in the layout of ``video_latents``, and ``action_pred`` in the
             layout of ``action``.
         """
+        if "chunk_counts" in data_info:
+            return self._forward_packed(video_latents, timestep, text_embeddings, text_mask, data_info)
         view_shapes = batch_view_shapes(data_info)
         view_areas = [height * width for (height, width) in view_shapes]
         (batch, device) = (video_latents.shape[0], video_latents.device)
@@ -162,7 +170,9 @@ class SanaRobotAR(SanaRobotBackbone):
         rope_linear = rope_linear.index_select(2, order)
         rope_softmax = rope_softmax.index_select(2, order)
         modulation = modulation.index_select(2, order)
-        (text, text_spans) = self._pack_text(text, text_mask, bounds, view_areas, chunk_actions + 1, chunks)
+        (text, text_spans) = self._pack_text(
+            text, text_mask, bounds, view_areas, chunk_actions + 1, chunks, share_rows=True
+        )
         attention_arguments = {
             "chunk_bounds": bounds,
             "teacher_forcing_clean_segments": chunks,
@@ -187,6 +197,149 @@ class SanaRobotAR(SanaRobotBackbone):
             "action_pred": self.predict_actions(
                 hidden[:, video_tokens + 1 :], time_embedding[:, :, video_tokens + 1 :], data_info
             ),
+        }
+
+    def _forward_packed(self, video_latents, timestep, text_embeddings, text_mask, data_info):
+        """Predict a right-padded batch of windows as one packed row: the windows' own chunks laid end to end in one token sequence, in which attention, the recurrent state and the positions restart at every window. Returns the predictions in the padded layout of the batch, zero on the padded chunks."""
+        view_shapes = batch_view_shapes(data_info)
+        view_areas = [height * width for (height, width) in view_shapes]
+        (chunk_actions, chunk_frames) = self.chunk_size(data_info)
+        (batch, device) = (video_latents.shape[0], video_latents.device)
+        padded_chunks = int(data_info["teacher_forcing_num_chunks"])
+        timestep = timestep.long().float()
+        (windows, embedded) = ([], [])
+        for index, num_chunks in enumerate(data_info["chunk_counts"].tolist()):
+            frames = padded_window_frames(num_chunks, padded_chunks, chunk_frames, device=device)
+            robot_rows = num_chunks * (chunk_actions + 1) - 1
+            window_info = {
+                name: (
+                    value[index : index + 1]
+                    if torch.is_tensor(value) and value.ndim and value.shape[0] == batch
+                    else value
+                )
+                for (name, value) in data_info.items()
+                if name != "chunk_counts"
+            }
+            for name in ("action", "action_mask", "action_timestep"):
+                window_info[name] = window_info[name][:, :robot_rows]
+            for name in ("chunk_states", "chunk_states_mask"):
+                window_info[name] = window_info[name][:, : num_chunks - 1]
+            window = self._embed_window(
+                video_latents[index : index + 1].index_select(2, frames),
+                timestep[index : index + 1].index_select(1, frames),
+                text_embeddings[index : index + 1],
+                text_mask[index : index + 1],
+                window_info,
+                num_chunks,
+            )
+            first_token = windows[-1].end if windows else 0
+            windows.append(
+                TeacherForcingWindow(
+                    first_token,
+                    first_token + window["hidden"].shape[1],
+                    tuple(window["bounds"]),
+                    num_chunks,
+                    window["sink_phases"],
+                )
+            )
+            embedded.append(dict(window, frames=frames, robot_rows=robot_rows, data_info=window_info))
+
+        hidden = torch.cat([window["hidden"] for window in embedded], dim=1)
+        token_timestep = torch.cat([window["token_timestep"] for window in embedded], dim=1).unsqueeze(1)
+        time_embedding = self.embed_timesteps(token_timestep)
+        modulation = self.t_block(time_embedding)
+        (text, text_spans) = merge_text_spans([window["text"] for window in embedded])
+        attention_arguments = {
+            "windows": tuple(windows),
+            "observation_spans": noisy_observation_spans(view_areas, chunk_frames),
+        }
+        hidden = self._run_teacher_forcing_layers(
+            hidden,
+            text,
+            modulation,
+            text_spans,
+            torch.cat([window["rope_linear"] for window in embedded], dim=2),
+            torch.cat([window["rope_softmax"] for window in embedded], dim=2),
+            attention_arguments,
+            {"window_chunks": self.sliding_window_chunks},
+        )
+
+        (video_predictions, action_predictions) = ([], [])
+        for position, window in zip(windows, embedded, strict=False):
+            tokens = slice(position.start, position.end)
+            window_hidden = hidden[:, tokens].index_select(1, window["restore"])
+            window_time = time_embedding[:, :, tokens].index_select(2, window["restore"])
+            video_tokens = window["video_tokens"]
+            (self.f, self.h, self.w) = window["latent_grid"]
+            video_hidden = self.final_layer(window_hidden[:, :video_tokens], window_time[:, :, :video_tokens])
+            video = self.unpatchify(view_to_strip_tokens(video_hidden, self.f, view_shapes))
+            padded_video = video.new_zeros(1, video.shape[1], video_latents.shape[2], *video.shape[3:])
+            video_predictions.append(padded_video.index_copy(2, window["frames"], video))
+            action = self.predict_actions(
+                window_hidden[:, video_tokens + 1 :],
+                window_time[:, :, video_tokens + 1 :],
+                window["data_info"],
+            )
+            padded_rows = data_info["action"].shape[1] - window["robot_rows"]
+            action_predictions.append(
+                torch.cat((action, action.new_zeros(1, padded_rows, action.shape[2])), dim=1)
+            )
+        return {"video_pred": torch.cat(video_predictions), "action_pred": torch.cat(action_predictions)}
+
+    def _embed_window(
+        self, video_latents, timestep, text_embeddings, text_mask, data_info, num_chunks: int
+    ) -> dict:
+        """Embed one window of a packed row: its tokens, their timesteps and rotary phases in the order of its teacher-forcing segments, the segment bounds, the phases of its sink copies, its packed text, and what restores its own token order and latent grid."""
+        view_shapes = batch_view_shapes(data_info)
+        view_areas = [height * width for (height, width) in view_shapes]
+        device = video_latents.device
+        (chunk_actions, chunk_frames) = self.chunk_size(data_info)
+        fps = self.batch_fps(data_info["model_fps"], 1, device)
+        video_fps = fps / self.video_frame_stride(data_info)
+
+        self.set_latent_grid(video_latents)
+        text_embeddings = text_embeddings.to(self.dtype)
+        video = strip_to_view_tokens(self.x_embedder(video_latents.to(self.dtype)), self.f, view_shapes)
+        video_tokens = video.shape[1]
+        robot = self._embed_teacher_forcing_rows(data_info, video, chunk_actions)
+        robot_count = robot.shape[1]
+        token_timestep = torch.cat(
+            (
+                strip_to_view_tokens(self.video_token_timesteps(timestep, video_tokens), self.f, view_shapes),
+                timestep.new_zeros(1, 1),
+                self.action_row_timesteps(data_info, 1, robot_count - 1, device),
+            ),
+            dim=1,
+        )
+
+        frame_positions = teacher_forcing_frame_positions(
+            num_chunks, chunk_frames, self.vae_temporal_stride, device=device
+        )
+        row = torch.arange(robot_count, dtype=torch.long, device=device)
+        robot_steps = row - torch.div(row, chunk_actions + 1, rounding_mode="floor")
+        rope_arguments = (data_info, view_shapes, fps, video_fps, frame_positions, robot_steps)
+        rope_linear = self._rope(self.rope_linear, *rope_arguments)
+        rope_softmax = self._rope(self.rope_softmax, *rope_arguments)
+        sink_phases = self._sink_phases(num_chunks, chunk_frames, video_fps).to(rope_softmax.dtype)
+
+        (order, restore, bounds) = self._teacher_forcing_layout(
+            view_areas, robot_count, chunk_actions, chunk_frames, num_chunks, device
+        )
+        (text, embedded_mask) = self.embed_text(text_embeddings, text_mask)
+        packed_text = self._pack_text(
+            text, embedded_mask, bounds, view_areas, chunk_actions + 1, num_chunks, share_rows=True
+        )
+        return {
+            "hidden": torch.cat((video, robot), dim=1).index_select(1, order),
+            "token_timestep": token_timestep.index_select(1, order),
+            "rope_linear": rope_linear.index_select(2, order),
+            "rope_softmax": rope_softmax.index_select(2, order),
+            "sink_phases": sink_phases,
+            "bounds": bounds,
+            "restore": restore,
+            "text": packed_text,
+            "video_tokens": video_tokens,
+            "latent_grid": (self.f, self.h, self.w),
         }
 
     @torch.inference_mode()
@@ -564,8 +717,17 @@ class SanaRobotAR(SanaRobotBackbone):
         self._rope_table_cache[key] = (int(clock_chunks), tables)
         return tables
 
-    def _pack_text(self, text, text_mask, bounds, view_areas, segment_robot_rows, robotless_segments):
-        """Pack the grouped text for per-chunk cross-attention: every (segment, group) token span reads the text of its group. Returns the packed text tokens [1, T, hidden] and the ``ChunkTextSpans``."""
+    def _pack_text(
+        self,
+        text,
+        text_mask,
+        bounds,
+        view_areas,
+        segment_robot_rows,
+        robotless_segments,
+        share_rows: bool = False,
+    ):
+        """Pack the grouped text for per-chunk cross-attention: every (segment, group) token span reads the text of its group. Returns the packed text tokens [1, T, hidden] and the ``ChunkTextSpans``; with ``share_rows`` the text of a group is packed once and every span of the group reads those rows."""
         (batch, groups) = (text.shape[0], text.shape[1])
         frame_area = sum(view_areas)
         segment_spans = []
@@ -581,14 +743,20 @@ class SanaRobotAR(SanaRobotBackbone):
             [text[sample, group][text_mask[sample, group].to(torch.bool)] for group in range(groups)]
             for sample in range(batch)
         ]
-        (pieces, text_lengths) = ([], [])
+        (pieces, text_lengths, first_row, starts, packed_rows) = ([], [], {}, [], 0)
         for sample in range(batch):
             for spans in segment_spans:
                 for group in range(len(spans)):
-                    pieces.append(group_text[sample][group])
-                    text_lengths.append(int(group_text[sample][group].shape[0]))
+                    length = int(group_text[sample][group].shape[0])
+                    text_lengths.append(length)
+                    if not share_rows or (sample, group) not in first_row:
+                        first_row[sample, group] = packed_rows
+                        pieces.append(group_text[sample][group])
+                        packed_rows += length
+                    starts.append(first_row[sample, group])
         packed_text = torch.cat(pieces, dim=0).unsqueeze(0)
-        return (packed_text, chunk_text_spans(query_lengths, text_lengths, text.device))
+        spans = chunk_text_spans(query_lengths, text_lengths, text.device, starts if share_rows else None)
+        return (packed_text, spans)
 
     def _run_layers(self, hidden, text, modulation, text_spans, rope_linear, attention_arguments, kv_caches):
         """Run the layer stack; every finished group of ``attn_res_block_size`` layers becomes an AttnRes source."""

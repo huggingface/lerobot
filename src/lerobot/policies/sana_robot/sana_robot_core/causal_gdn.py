@@ -4,7 +4,7 @@
 
 # Vendored from the SANA-Robot code release (https://github.com/NVlabs/Sana/tree/robot) at commit 1e7d6cc51,
 # original path sana_robot/policy/attention/causal_gdn.py. Import paths are rewritten to the LeRobot package;
-# the recurrence in PyTorch; the fused kernels and the packed row of several windows are not vendored.
+# the fused kernels run when fused_kernels is set, not on every CUDA device.
 # Keep this file in sync with the upstream file.
 
 from __future__ import annotations
@@ -233,7 +233,9 @@ def gdn_teacher_forcing(
 
 
 class CausalGatedDeltaNet(GatedDeltaNet):
-    """Gated DeltaNet of SANA-Robot-AR: a recurrent state that every clean chunk decays and then writes by the delta rule, read by the chunks after it. A streaming window keeps the committed state in the layer's cache under ``"S"`` and the state after the current chunk's observation under ``"observation"``."""
+    """Gated DeltaNet of SANA-Robot-AR: a recurrent state that every clean chunk decays and then writes by the delta rule, read by the chunks after it. A streaming window keeps the committed state in the layer's cache under ``"S"`` and the state after the current chunk's observation under ``"observation"``. With ``fused_kernels`` the teacher-forcing sequence runs through the Triton kernels on CUDA."""
+
+    fused_kernels = False
 
     def reset_recurrence_parameters(self) -> None:
         """Set the decay, the write strength and the output gate to their starting values."""
@@ -253,7 +255,10 @@ class CausalGatedDeltaNet(GatedDeltaNet):
         kv_cache=None,
         save_kv_cache: bool = False,
         observation_prefill: bool = False,
+        windows=None,
     ):
+        if windows is not None:
+            return self._forward_packed_row(x, rotary_emb, windows, observation_spans)
         if kv_cache is None:
             return self._forward_teacher_forcing(
                 x, rotary_emb, chunk_bounds, teacher_forcing_clean_segments, observation_spans
@@ -277,15 +282,118 @@ class CausalGatedDeltaNet(GatedDeltaNet):
         return self._normalize_gate_project(out.to(v.dtype), x)
 
     def _forward_teacher_forcing(self, x, rotary_emb, chunk_bounds, clean_segments, observation_spans):
-        """Run every chunk of the teacher-forcing sequence."""
+        """Run every chunk of the teacher-forcing sequence; with ``fused_kernels`` on CUDA through the fused kernels."""
         bounds = tuple(int(bound) for bound in chunk_bounds)
         clean_segments = int(clean_segments)
-        (q, k, v, beta) = self._features(x, rotary_emb)
+        if not (self.fused_kernels and x.is_cuda):
+            (q, k, v, beta) = self._features(x, rotary_emb)
+            (segment_decay, observation) = self._teacher_forcing_decay(
+                x, bounds, clean_segments, observation_spans
+            )
+            out = gdn_teacher_forcing(q, k, v, beta, segment_decay, bounds, clean_segments, observation)
+            return self._normalize_gate_project(out, x)
+
+        from lerobot.policies.sana_robot.sana_robot_core.gdn_io_triton import (
+            gdn_output_norm_gate,
+            gdn_qk_norm_rope,
+        )
+        from lerobot.policies.sana_robot.sana_robot_core.gdn_teacher_forcing_triton import (
+            fused_teacher_forcing_ready,
+            gdn_teacher_forcing_fused,
+        )
+
+        (batch, tokens, channels) = x.shape
+        (q, k, v) = self.qkv(x).reshape(batch, tokens, 3, channels).unbind(2)
+        (q, k) = gdn_qk_norm_rope(
+            q, k, self.q_norm.weight, self.k_norm.weight, rotary_emb, self.q_norm.eps, self.heads
+        )
+        v = v.reshape(batch, tokens, self.heads, self.dim).permute(0, 2, 1, 3)
+        beta = self.beta_proj(x).sigmoid().permute(0, 2, 1).contiguous()
         (segment_decay, observation) = self._teacher_forcing_decay(
             x, bounds, clean_segments, observation_spans
         )
-        out = gdn_teacher_forcing(q, k, v, beta, segment_decay, bounds, clean_segments, observation)
-        return self._normalize_gate_project(out, x)
+        if fused_teacher_forcing_ready((q, k, v, q, k, beta)):
+            out = gdn_teacher_forcing_fused(
+                q,
+                k,
+                v,
+                q,
+                k,
+                beta,
+                segment_decay,
+                bounds,
+                clean_segments,
+                sink=1,
+                observation=observation,
+                observation_spans=observation_spans,
+            )
+        else:
+            out = gdn_teacher_forcing(q, k, v, beta, segment_decay, bounds, clean_segments, observation)
+        out = gdn_output_norm_gate(out, self.output_gate(x), self.o_norm.weight, self.o_norm.eps, "sigmoid")
+        return self.proj(out.to(self.proj.weight.dtype))
+
+    def _forward_packed_row(self, x, rotary_emb, windows, observation_spans):
+        """Run a packed row of teacher-forcing windows, the recurrent state restarting at every window; with ``fused_kernels`` on CUDA one fused pass walks all windows."""
+        if not (self.fused_kernels and x.is_cuda):
+            outputs = [
+                self._forward_teacher_forcing(
+                    x[:, window.start : window.end],
+                    rotary_emb[:, :, window.start : window.end],
+                    window.bounds,
+                    window.num_chunks,
+                    observation_spans,
+                )
+                for window in windows
+            ]
+            return torch.cat(outputs, dim=1)
+
+        from lerobot.policies.sana_robot.sana_robot_core.gdn_io_triton import (
+            gdn_output_norm_gate,
+            gdn_qk_norm_rope,
+        )
+        from lerobot.policies.sana_robot.sana_robot_core.gdn_teacher_forcing_triton import (
+            fused_teacher_forcing_ready,
+            gdn_packed_row_fused,
+        )
+
+        (batch, tokens, channels) = x.shape
+        (q, k, v) = self.qkv(x).reshape(batch, tokens, 3, channels).unbind(2)
+        (q, k) = gdn_qk_norm_rope(
+            q, k, self.q_norm.weight, self.k_norm.weight, rotary_emb, self.q_norm.eps, self.heads
+        )
+        v = v.reshape(batch, tokens, self.heads, self.dim).permute(0, 2, 1, 3)
+        beta = self.beta_proj(x).sigmoid().permute(0, 2, 1).contiguous()
+        decays = [
+            self._teacher_forcing_decay(
+                x[:, window.start : window.end], window.bounds, window.num_chunks, observation_spans
+            )
+            for window in windows
+        ]
+        if fused_teacher_forcing_ready((q, k, v, q, k, beta)):
+            out = gdn_packed_row_fused(
+                q,
+                k,
+                v,
+                beta,
+                [(segment_decay, observation.decay) for (segment_decay, observation) in decays],
+                tuple((window.start, window.bounds, window.num_chunks) for window in windows),
+                sink=1,
+                observation_spans=observation_spans,
+            )
+        else:
+            outputs = [
+                gdn_teacher_forcing(
+                    *(tensor[:, :, window.start : window.end] for tensor in (q, k, v, beta)),
+                    segment_decay,
+                    window.bounds,
+                    window.num_chunks,
+                    observation,
+                )
+                for (window, (segment_decay, observation)) in zip(windows, decays, strict=False)
+            ]
+            out = torch.cat(outputs, dim=2)
+        out = gdn_output_norm_gate(out, self.output_gate(x), self.o_norm.weight, self.o_norm.eps, "sigmoid")
+        return self.proj(out.to(self.proj.weight.dtype))
 
     def _teacher_forcing_decay(self, x, bounds: tuple, clean_segments: int, observation_spans):
         """Return the decay [B, heads, S] of every segment, a noisy chunk's from its prediction tokens, and the ``TeacherForcingObservation`` carrying the decay of every noisy chunk's observation tokens; each from the mean of its tokens."""
