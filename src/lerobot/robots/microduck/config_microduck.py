@@ -1,0 +1,98 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import math
+from dataclasses import dataclass
+
+from ..config import RobotConfig
+
+
+@RobotConfig.register_subclass("microduck")
+@dataclass
+class MicroDuckConfig(RobotConfig):
+    """Pollen Robotics Microduck, driven through its onboard locomotion policy.
+
+    The duck walks with an onboard RL policy, so LeRobot commands *intents* (a body twist and a head
+    pose), never joint targets. LeRobot opens an SSH forward to robotd automatically unless an
+    explicit robotd_address is supplied. Gamepad mode observes commands without sending them.
+
+    The robot stores its calibration. LeRobot does not calibrate the motors.
+    """
+
+    # IP of the duck on the LAN (``duckctl ip`` prints it). Used to reach its camera.
+    remote_ip: str = "192.168.1.42"
+
+    # robotd's socket as seen from this machine: a Unix socket path, or ``host:port`` for a TCP forward.
+    # None opens an owned SSH forward automatically using remote_ip.
+    robotd_address: str | None = None
+    ssh_user: str = "microduck"
+    ssh_port: int = 22
+    ssh_timeout_s: float = 10.0
+    # gamepad observes onboard control; LeRobot never enables, moves or stops the robot.
+    control_mode: str = "lerobot"
+    # updaterd's socket, only needed to fetch policies from the Hub (``MicroDuck.load_policy``).
+    updaterd_address: str | None = None
+    rpc_timeout_s: float = 5.0
+
+    # Rate of the robot.state stream; robotd's control loop runs at 50 Hz.
+    state_hz: int = 50
+
+    # Ask the onboard policy to drive (Limp -> Homing -> Ready) when connecting.
+    enable_on_connect: bool = True
+    # Cut torque when disconnecting. Off by default: a relaxed duck collapses.
+    relax_on_disconnect: bool = False
+
+    # Twist limits in action units, matching the onboard pad defaults (0.3 m/s, 0.3 m/s, 1.5 rad/s).
+    # robotd does not clamp robot.move itself.
+    max_x_vel: float = 0.3  # m/s
+    max_y_vel: float = 0.3  # m/s
+    max_theta_vel: float = 86.0  # deg/s
+    # Head pose limit applied to every head joint, rad.
+    max_head: float = 0.8
+
+    # Head camera, turned upright and resized to (camera_height, camera_width).
+    # Set ``use_camera=False`` to record state only.
+    use_camera: bool = True
+    # ``webrtc``: mediad's hardware H.264 stream from ``ws://<remote_ip>:<signalling_port>``, every camera
+    # frame; needs ``lerobot[microduck]``, and holds the robot's one WebRTC session, so its console cannot
+    # connect meanwhile. ``snapshot``: one PNG per ``GET http://<remote_ip>:<camera_port>/frame``,
+    # encoded on the robot's CPU.
+    camera_transport: str = "webrtc"
+    signalling_port: int = 8443
+    camera_port: int = 8080
+    camera_width: int = 360
+    camera_height: int = 640
+    # Snapshot request timeout. A WebRTC stream with no frame for three times this is reopened.
+    camera_timeout_s: float = 2.0
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.control_mode not in ("lerobot", "gamepad"):
+            raise ValueError("control_mode must be 'lerobot' or 'gamepad'")
+        if self.control_mode == "gamepad" and self.relax_on_disconnect:
+            raise ValueError("Gamepad recording cannot relax the robot on disconnect")
+        if not 1 <= self.ssh_port <= 65535:
+            raise ValueError("ssh_port must be between 1 and 65535")
+        for name in ("ssh_timeout_s", "rpc_timeout_s"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be positive and finite")
+        if self.camera_transport not in ("webrtc", "snapshot"):
+            raise ValueError(
+                f"camera_transport must be 'webrtc' or 'snapshot', got {self.camera_transport!r}"
+            )
+        if not math.isfinite(self.camera_timeout_s) or self.camera_timeout_s <= 0:
+            raise ValueError("camera_timeout_s must be positive and finite")
+        if self.camera_width <= 0 or self.camera_height <= 0:
+            raise ValueError("Camera dimensions must be positive")
