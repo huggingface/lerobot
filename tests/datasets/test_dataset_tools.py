@@ -40,11 +40,12 @@ from lerobot.datasets.dataset_tools import (
     merge_datasets,
     modify_features,
     modify_tasks,
+    recompute_stats,
     reencode_dataset,
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_episodes, load_info
+from lerobot.datasets.io_utils import load_episodes, load_info, load_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_REPO_ID
@@ -1892,3 +1893,91 @@ def test_remove_camera_then_split_dataset(sample_dataset, tmp_path):
             assert not any(column.startswith(f"stats/{camera}/") for column in pq.read_schema(path).names)
     assert camera in sample_dataset.meta.features
     assert camera in sample_dataset.meta.stats
+
+
+# ── Depth stats unit preservation (regression tests for #5349) ────────
+
+
+def _make_metre_depth_dataset(root: Path) -> LeRobotDataset:
+    """A small dataset with a depth map feature whose stats are stored in metres."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        root=root,
+        use_videos=False,
+        features={
+            "state": {"dtype": "float32", "shape": (1,), "names": None},
+            DUMMY_DEPTH_KEY: {
+                "dtype": "image",
+                "shape": (6, 8, 1),
+                "names": None,
+                "info": {"is_depth_map": True},
+            },
+        },
+    )
+    for value in (1.0, 2.0, 3.0):
+        dataset.add_frame(
+            {
+                "state": np.array([value], dtype=np.float32),
+                DUMMY_DEPTH_KEY: np.full((6, 8, 1), value, dtype=np.float32),
+                "task": "pick",
+            }
+        )
+    dataset.save_episode()
+    dataset.finalize()
+    return dataset
+
+
+def test_recompute_stats_keeps_depth_stats_in_recorded_unit(tmp_path):
+    """`recompute_stats` must not persist depth stats rescaled to the requested output unit.
+
+    Depth stats are stored on disk in their recorded unit ("m" here) and only rescaled in
+    memory when a dataset is opened with a different output unit (default "mm"). Merging back
+    the in-memory view used to persist the rescaled values, so every load + recompute cycle
+    multiplied the persisted depth stats by 1000 again.
+    """
+    root = tmp_path / "dataset"
+    _make_metre_depth_dataset(root)
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root)  # opens with the default mm output unit
+    assert dataset.meta.stats[DUMMY_DEPTH_KEY]["mean"].item() == pytest.approx(2000.0)
+
+    recompute_stats(dataset)
+
+    # Persisted stats stay in the recorded unit.
+    persisted = load_stats(root)
+    assert persisted[DUMMY_DEPTH_KEY]["mean"].item() == pytest.approx(2.0)
+
+    # Reopening rescales the recorded unit to the requested output unit — exactly once.
+    reopened = LeRobotDataset(DUMMY_REPO_ID, root=root)
+    assert reopened.meta.stats[DUMMY_DEPTH_KEY]["mean"].item() == pytest.approx(2000.0)
+
+
+def test_add_features_keeps_depth_stats_in_recorded_unit(tmp_path):
+    """`add_features` must persist depth stats in their recorded unit (see #5349)."""
+    root = tmp_path / "dataset"
+    _make_metre_depth_dataset(root)
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    num_frames = dataset.meta.total_frames
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "with_reward")
+        new_dataset = add_features(
+            dataset=dataset,
+            features={
+                "reward": (
+                    np.zeros((num_frames, 1), dtype=np.float32),
+                    {"dtype": "float32", "shape": (1,), "names": None},
+                ),
+            },
+            output_dir=tmp_path / "with_reward",
+        )
+
+    persisted = load_stats(new_dataset.root)
+    assert persisted[DUMMY_DEPTH_KEY]["mean"].item() == pytest.approx(2.0)
+
+    reopened = LeRobotDataset(new_dataset.repo_id, root=new_dataset.root)
+    assert reopened.meta.stats[DUMMY_DEPTH_KEY]["mean"].item() == pytest.approx(2000.0)

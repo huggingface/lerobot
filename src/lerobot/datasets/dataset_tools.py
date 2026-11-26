@@ -63,6 +63,7 @@ from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
     load_episodes,
+    load_stats,
     write_info,
     write_stats,
     write_tasks,
@@ -1322,17 +1323,22 @@ def _copy_episodes_metadata_and_stats(
 
     write_info(dst_meta.info, dst_meta.root)
 
+    # Read the stats from disk rather than from `src_dataset.meta.stats`: the in-memory stats
+    # may have been rescaled to the requested depth output unit (see `rescale_depth_stats`),
+    # while the persisted stats stay in their recorded unit.
+    src_stats = load_stats(src_dataset.meta.root)
+
     if set(dst_meta.features.keys()) != set(src_dataset.meta.features.keys()):
         logger.info("Recalculating dataset statistics...")
-        if src_dataset.meta.stats:
+        if src_stats:
             new_stats = {}
             for key in dst_meta.features:
-                if key in src_dataset.meta.stats:
-                    new_stats[key] = src_dataset.meta.stats[key]
+                if key in src_stats:
+                    new_stats[key] = src_stats[key]
             write_stats(new_stats, dst_meta.root)
     else:
-        if src_dataset.meta.stats:
-            write_stats(src_dataset.meta.stats, dst_meta.root)
+        if src_stats:
+            write_stats(src_stats, dst_meta.root)
 
 
 def _save_episode_images_for_video(
@@ -1883,9 +1889,13 @@ def recompute_stats(
     if relative_action_stats is not None:
         new_stats[ACTION] = relative_action_stats
 
-    # Merge: keep existing stats for features we didn't recompute
-    if dataset.meta.stats:
-        for key, value in dataset.meta.stats.items():
+    # Merge: keep existing stats for features we didn't recompute. Read them from disk rather
+    # than from `dataset.meta.stats`: the in-memory stats may have been rescaled to the
+    # requested depth output unit (see `rescale_depth_stats`), while the persisted stats stay
+    # in their recorded unit.
+    persisted_stats = load_stats(dataset.root)
+    if persisted_stats:
+        for key, value in persisted_stats.items():
             if key not in new_stats:
                 new_stats[key] = value
 
@@ -2127,10 +2137,13 @@ def convert_image_to_video_dataset(
 
         write_info(new_meta.info, new_meta.root)
 
-        # Copy stats and tasks
-        if dataset.meta.stats is not None:
+        # Copy stats and tasks. Read the stats from disk rather than from `dataset.meta.stats`:
+        # the in-memory stats may have been rescaled to the requested depth output unit (see
+        # `rescale_depth_stats`), while the persisted stats stay in their recorded unit.
+        persisted_stats = load_stats(dataset.root)
+        if persisted_stats is not None:
             # Remove image stats
-            new_stats = {k: v for k, v in dataset.meta.stats.items() if k not in img_keys}
+            new_stats = {k: v for k, v in persisted_stats.items() if k not in img_keys}
             write_stats(new_stats, new_meta.root)
 
         if dataset.meta.tasks is not None:
