@@ -35,9 +35,6 @@ on:
       build_args:
         required: true
         type: string
-      policy_extras:
-        required: true
-        type: string
       entry:
         required: true
         type: string
@@ -52,7 +49,7 @@ jobs:
       HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
       BENCHMARK_NAME: ${{ inputs.name }}
       SIM_IMAGE: lerobot-sim-${{ inputs.name }}:${{ inputs.sim_tag }}
-      POLICY_IMAGE: lerobot-policy:${{ github.sha }}-${{ inputs.name }}
+      POLICY_IMAGE: lerobot-policy:${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,8 +65,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+      # Build in the daemon's (containerd) image store and compress with zstd: gzip-compressing the layers was most of
+      # the time it took to get an image into Docker.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
+          driver: docker
           cache-binary: false
       - name: Format build arguments
         id: arguments
@@ -94,6 +94,8 @@ jobs:
           context: .
           file: ${{ inputs.dockerfile }}
           target: base
+          # Only the cache: the docker driver would otherwise unpack an unused copy of `base` into the image store.
+          outputs: type=cacheonly
           cache-from: type=gha,scope=sim-base
           cache-to: type=gha,scope=sim-base,mode=max,ignore-error=true
       - name: Build simulator
@@ -104,17 +106,14 @@ jobs:
           tags: ${{ env.SIM_IMAGE }}
           build-args: ${{ steps.arguments.outputs.args }}
           cache-from: type=gha,scope=sim-base
-          load: true
-          push: false
-      - name: Build policy from tested checkout
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+          outputs: type=docker,compression=zstd,compression-level=3,force-compression=true,oci-mediatypes=true
+      - name: Download policy image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          context: .
-          file: docker/Dockerfile.policy
-          tags: ${{ env.POLICY_IMAGE }}
-          build-args: POLICY_EXTRAS=${{ inputs.policy_extras }}
-          load: true
-          push: false
+          name: policy-image
+          path: ${{ runner.temp }}
+      - name: Load policy image
+        run: docker load -i "$RUNNER_TEMP/policy-image.tar" && rm "$RUNNER_TEMP/policy-image.tar"
       - name: Run evaluation and training smoke
         env:
           BENCHMARK_ENTRY: ${{ inputs.entry }}
