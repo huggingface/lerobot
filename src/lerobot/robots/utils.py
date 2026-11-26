@@ -83,6 +83,10 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .yam_follower import YamFollower
 
         return YamFollower(config)
+    elif config.type == "metal_follower":
+        from .metal_follower import MetalFollower
+
+        return MetalFollower(config)
     elif config.type == "rebot_b601_follower":
         from .rebot_b601_follower import RebotB601Follower
 
