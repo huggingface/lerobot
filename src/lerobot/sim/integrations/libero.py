@@ -36,6 +36,11 @@ __all__ = ["canonical_observation", "conventions", "env_fns"]
 
 logger = logging.getLogger(__name__)
 
+# `obs_type` that adds the keys below to the observation: the arm's joint positions, and the position and xyzw
+# quaternion of the robot base in the world frame, in which the 8-D state gives the end effector.
+JOINTS_OBS_TYPE = "pixels_agent_pos_joints"
+KINEMATIC_KEYS = {"joint_pos": 7, "base_pos": 3, "base_quat": 4}
+
 
 def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
     """Convert xyzw quaternions to axis-angle like robosuite's `quat2axisangle`: zeros near the identity."""
@@ -249,9 +254,15 @@ class LiberoEnv(gym.Env):
                     "pixels": spaces.Dict(images),
                 }
             )
-        elif self.obs_type == "pixels_agent_pos":
+        elif self.obs_type in ("pixels_agent_pos", JOINTS_OBS_TYPE):
+            # JOINTS_OBS_TYPE also gives the arm's joint positions and the base pose, next to the 8-D state.
+            kinematics = {
+                name: spaces.Box(low=-np.inf, high=np.inf, shape=(size,), dtype=np.float64)
+                for name, size in (KINEMATIC_KEYS.items() if self.obs_type == JOINTS_OBS_TYPE else ())
+            }
             self.observation_space = spaces.Dict(
                 {
+                    **kinematics,
                     "pixels": spaces.Dict(images),
                     "robot_state": spaces.Dict(
                         {
@@ -357,7 +368,7 @@ class LiberoEnv(gym.Env):
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
 
-        if self.obs_type == "pixels_agent_pos":
+        if self.obs_type in ("pixels_agent_pos", JOINTS_OBS_TYPE):
             # Validate required fields are present
             if eef_pos is None or eef_quat is None or gripper_qpos is None:
                 raise ValueError(
@@ -365,11 +376,21 @@ class LiberoEnv(gym.Env):
                     f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
                     f"gripper_qpos={gripper_qpos is not None}"
                 )
+            if self.obs_type == JOINTS_OBS_TYPE:
+                if joint_pos is None:
+                    raise ValueError("Missing robot0_joint_pos in raw observation.")
+                base = self._env.robots[0].robot_model.root_body
+                obs["joint_pos"] = np.asarray(joint_pos, dtype=np.float64)
+                obs["base_pos"] = np.array(self._env.sim.data.get_body_xpos(base), dtype=np.float64)
+                # MuJoCo quaternions are wxyz; LIBERO's observations (`robot0_eef_quat`) are xyzw.
+                obs["base_quat"] = np.roll(
+                    np.array(self._env.sim.data.get_body_xquat(base), dtype=np.float64), -1
+                )
             return obs
 
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "
-            "Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos')."
+            f"Please switch to an image-based obs_type (e.g. 'pixels', 'pixels_agent_pos', '{JOINTS_OBS_TYPE}')."
         )
 
     def reset(self, seed=None, **kwargs):

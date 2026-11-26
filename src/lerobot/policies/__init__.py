@@ -51,6 +51,7 @@ from .rtc import (
     reanchor_relative_rtc_prefix,
     validate_trained_rtc_horizon,
 )
+from .sana_robot.configuration_sana_robot import SanaRobotConfig as SanaRobotConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
@@ -90,6 +91,7 @@ __all__ = [
     "PI0FastConfig",
     "PI05Config",
     "PraxisConfig",
+    "SanaRobotConfig",
     "SmolVLAConfig",
     "TDMPCConfig",
     "VLAJEPAConfig",
