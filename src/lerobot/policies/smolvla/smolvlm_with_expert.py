@@ -85,6 +85,8 @@ class SmolVLMWithExpertModel(nn.Module):
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
+        local_files_only: bool = False,
+        vlm_dtype: torch.dtype | None = None,
     ):
         super().__init__()
         require_package("transformers", extra="smolvla")
@@ -97,12 +99,31 @@ class SmolVLMWithExpertModel(nn.Module):
                 low_cpu_mem_usage=True,
                 revision=revision,
                 code_revision=revision,
+                local_files_only=local_files_only,
             )
             config = self.vlm.config
         else:
-            config = AutoConfig.from_pretrained(repo_id, revision=revision, code_revision=revision)
+            config = AutoConfig.from_pretrained(
+                repo_id,
+                revision=revision,
+                code_revision=revision,
+                local_files_only=local_files_only,
+            )
+            if vlm_dtype is not None:
+                # Mirror AutoModelForImageTextToText.from_pretrained(..., torch_dtype=...) so both VLM
+                # weights and the derived lm_expert config inherit the same precision on meta skeletons.
+                config.dtype = vlm_dtype
+                if getattr(config, "text_config", None) is not None:
+                    config.text_config.dtype = vlm_dtype
             self.vlm = SmolVLMForConditionalGeneration(config=config)
-        self.processor = AutoProcessor.from_pretrained(repo_id, revision=revision, code_revision=revision)
+            if vlm_dtype is not None:
+                self.vlm.to(dtype=vlm_dtype)
+        self.processor = AutoProcessor.from_pretrained(
+            repo_id,
+            revision=revision,
+            code_revision=revision,
+            local_files_only=local_files_only,
+        )
         if num_vlm_layers > 0:
             print(f"Reducing the number of VLM layers to {num_vlm_layers} ...")
             self.get_vlm_model().text_model.layers = self.get_vlm_model().text_model.layers[:num_vlm_layers]
@@ -202,6 +223,26 @@ class SmolVLMWithExpertModel(nn.Module):
 
         if self.train_expert_only:
             self.vlm.eval()
+
+    def materialize_runtime_buffers(self, device: str | torch.device) -> None:
+        """Re-instantiate buffer-only submodules left on ``meta`` after skeleton construction."""
+        for root in (self.vlm, self.lm_expert):
+            replacements: list[tuple[str, nn.Module]] = []
+            for name, submodule in root.named_modules():
+                has_meta_buffer = any(
+                    buf is not None and buf.device.type == "meta" for buf in submodule._buffers.values()
+                )
+                if (
+                    has_meta_buffer
+                    and next(submodule.parameters(), None) is None
+                    and hasattr(submodule, "config")
+                    and name
+                ):
+                    replacements.append((name, type(submodule)(submodule.config).to(device=device)))
+            for name, fresh in replacements:
+                parent_name, _, attr_name = name.rpartition(".")
+                parent = root.get_submodule(parent_name) if parent_name else root
+                setattr(parent, attr_name, fresh)
 
     def embed_image(self, image: torch.Tensor):
         patch_attention_mask = None
