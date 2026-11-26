@@ -192,3 +192,30 @@ def test_train_with_ema_checkpoint_and_resume(tmp_path):
     uninterrupted_step, uninterrupted = load_ema_state(tmp_path / "uninterrupted" / "checkpoints" / "000008")
     assert resumed_step == uninterrupted_step == 4
     assert all(torch.equal(average, uninterrupted[name]) for name, average in resumed.items())
+
+
+def test_train_resumed_in_a_later_epoch_reads_the_same_frames(tmp_path, monkeypatch):
+    """accelerate's prepared dataloader must not reset the sampler epoch restored on resume."""
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
+    from lerobot.scripts import lerobot_train
+
+    frames = []
+    preprocess = lerobot_train._preprocess_dataset_batch
+
+    def record_frames(batch, *args):
+        frames.append(batch["index"].tolist())
+        return preprocess(batch, *args)
+
+    monkeypatch.setattr(lerobot_train, "_preprocess_dataset_batch", record_frames)
+    root = make_dummy_dataset(tmp_path)
+    lerobot_train.train(make_train_config(root, tmp_path / "uninterrupted", steps=14))
+    uninterrupted = frames[12:]
+    # 24 frames with batch 2 make 12 steps per epoch, so the run resumes at the start of epoch 1.
+    lerobot_train.train(make_train_config(root, tmp_path / "run", steps=12))
+    resume_cfg = make_train_config(root, tmp_path / "run", steps=14)
+    resume_cfg.resume = True
+    resume_cfg.checkpoint_path = tmp_path / "run" / "checkpoints" / "000012"
+    frames.clear()
+    lerobot_train.train(resume_cfg)
+    assert frames == uninterrupted

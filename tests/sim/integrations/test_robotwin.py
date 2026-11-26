@@ -22,6 +22,8 @@ YAML config loader) so they run without the full RoboTwin installation
 
 from __future__ import annotations
 
+import random
+import sys
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -30,9 +32,13 @@ import pytest
 
 from lerobot.sim.integrations.robotwin import (
     ACTION_DIM,
+    DEFAULT_OFFICIAL_INSTRUCTION_MAX,
+    OFFICIAL_INSTRUCTION_ENV,
+    OFFICIAL_INSTRUCTION_MAX_ENV,
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_TASKS,
     RoboTwinEnv,
+    _generate_robotwin_official_instruction,
     env_fns,
 )
 
@@ -217,6 +223,149 @@ class TestRoboTwinEnv:
     def test_deferred_init_env_is_none_before_reset(self):
         env = RoboTwinEnv(task_name="beat_block_hammer")
         assert env._env is None  # noqa: SLF001  (testing internal state)
+
+
+# ---------------------------------------------------------------------------
+# Official instruction generation (blocks_ranking_*)
+# ---------------------------------------------------------------------------
+
+_OPTIONS = [f"sentence {i}" for i in range(42)]
+
+
+def _block(x: float) -> MagicMock:
+    block = MagicMock()
+    block.get_pose.return_value.p = np.array([x, 0.0, 0.0])
+    return block
+
+
+def _make_blocks_task_env() -> MagicMock:
+    mock = _make_mock_task_env()
+    mock.block1, mock.block2, mock.block3 = _block(0.1), _block(-0.1), _block(0.2)
+    return mock
+
+
+def _fake_candidates(rng) -> list[str]:
+    """Like RoboTwin's generator: candidate order comes from a shuffle with the rng it is given."""
+    options = list(_OPTIONS)
+    rng.shuffle(options)
+    return options
+
+
+def _expected_instruction(seed: int) -> str:
+    return random.Random(f"{seed}:select").choice(_fake_candidates(random.Random(f"{seed}:0")))
+
+
+@contextmanager
+def _patch_generator(accepts_seed: bool = True):
+    """Install a fake ``description.utils.generate_episode_instructions`` and record its calls.
+
+    The seeded variant shuffles with a per-seed ``random.Random`` (as RoboTwin >= 724b05e does); the legacy
+    variant has no ``seed`` parameter and shuffles with the global ``random`` module.
+    """
+    calls = []
+
+    if accepts_seed:
+
+        def generate_episode_descriptions(task_name, episodes, max_descriptions=1000000, seed=None):
+            calls.append({"max_descriptions": max_descriptions, "seed": seed, "episodes": episodes})
+            rng = random if seed is None else random.Random(f"{seed}:0")
+            return [{"seen": _fake_candidates(rng), "unseen": ["unseen sentence"]}]
+
+    else:
+
+        def generate_episode_descriptions(task_name, episodes, max_descriptions=1000000):
+            calls.append({"max_descriptions": max_descriptions, "episodes": episodes})
+            return [{"seen": _fake_candidates(random), "unseen": ["unseen sentence"]}]
+
+    module = MagicMock(generate_episode_descriptions=generate_episode_descriptions)
+    with patch.dict(
+        sys.modules,
+        {
+            "description": MagicMock(),
+            "description.utils": MagicMock(),
+            "description.utils.generate_episode_instructions": module,
+        },
+    ):
+        yield calls
+
+
+@pytest.fixture
+def restore_global_rngs():
+    py_state, np_state = random.getstate(), np.random.get_state()
+    yield
+    random.setstate(py_state)
+    np.random.set_state(np_state)
+
+
+def _assert_same_numpy_state(a, b):
+    assert a[0] == b[0] and (a[1] == b[1]).all() and a[2:] == b[2:]
+
+
+class TestOfficialInstruction:
+    def test_default_max_and_seed(self, monkeypatch):
+        monkeypatch.delenv(OFFICIAL_INSTRUCTION_MAX_ENV, raising=False)
+        with _patch_generator() as calls:
+            _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 7)
+        assert calls[0]["max_descriptions"] == DEFAULT_OFFICIAL_INSTRUCTION_MAX == 100
+        assert calls[0]["seed"] == 7
+        assert calls[0]["episodes"][0]["{a}"] == "right" and calls[0]["episodes"][0]["{b}"] == "left"
+
+    def test_max_env_override(self, monkeypatch):
+        monkeypatch.setenv(OFFICIAL_INSTRUCTION_MAX_ENV, "5000")
+        with _patch_generator() as calls:
+            _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 7)
+        assert calls[0]["max_descriptions"] == 5000
+
+    @pytest.mark.parametrize("raw", ["abc", "0", "-5", ""])
+    def test_invalid_max_raises(self, monkeypatch, raw):
+        monkeypatch.setenv(OFFICIAL_INSTRUCTION_MAX_ENV, raw)
+        with _patch_generator() as calls, pytest.raises(ValueError, match=OFFICIAL_INSTRUCTION_MAX_ENV):
+            _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 7)
+        assert calls == []
+
+    def test_seeded_generator_instruction_depends_only_on_seed(self, restore_global_rngs):
+        picks = []
+        with _patch_generator():
+            for global_seed in (0, 1, 2):
+                random.seed(global_seed)
+                np.random.seed(global_seed)
+                picks.append(
+                    _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 7)
+                )
+            other = _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 8)
+        assert picks == [_expected_instruction(7)] * 3
+        assert other == _expected_instruction(8)
+
+    def test_seeded_generator_leaves_global_rngs_untouched(self, restore_global_rngs):
+        random.seed(0)
+        np.random.seed(0)
+        py_state, np_state = random.getstate(), np.random.get_state()
+        with _patch_generator():
+            _generate_robotwin_official_instruction("blocks_ranking_size", _make_blocks_task_env(), 7)
+        assert random.getstate() == py_state
+        _assert_same_numpy_state(np.random.get_state(), np_state)
+
+    def test_legacy_generator_without_seed_parameter(self, restore_global_rngs):
+        np.random.seed(0)
+        np_state = np.random.get_state()
+        with _patch_generator(accepts_seed=False) as calls:
+            instruction = _generate_robotwin_official_instruction(
+                "blocks_ranking_rgb", _make_blocks_task_env(), 7
+            )
+        assert "seed" not in calls[0]
+        assert instruction in _OPTIONS
+        # Candidate order still comes from the global Python RNG here; only the final pick is seeded.
+        _assert_same_numpy_state(np.random.get_state(), np_state)
+
+    def test_reset_uses_episode_seed(self, monkeypatch):
+        monkeypatch.delenv(OFFICIAL_INSTRUCTION_ENV, raising=False)
+        mock_task = _make_blocks_task_env()
+        env = RoboTwinEnv(task_name="blocks_ranking_size")
+        with _patch_runtime(mock_task), _patch_generator() as calls:
+            env.reset(seed=42)
+        assert calls[0]["seed"] == 42
+        assert env.task_description == _expected_instruction(42)
+        mock_task.set_instruction.assert_called_once_with(instruction=env.task_description)
 
 
 # ---------------------------------------------------------------------------

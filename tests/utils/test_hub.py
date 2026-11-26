@@ -16,42 +16,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot.utils import ensure_bucket_file
-from lerobot.utils.hub import find_latest_hub_checkpoint
+from lerobot.utils.hub import find_latest_hub_checkpoint, sanitize_checkpoint_consent
 
 
-def test_ensure_bucket_file_downloads_once(monkeypatch, tmp_path):
-    path = tmp_path / "cache" / "model.urdf"
-    data = b'<robot name="test" />'
-    download = MagicMock(side_effect=lambda _bucket, files, **_kwargs: files[0][1].write_bytes(data))
-    monkeypatch.setattr("lerobot.utils.hub.download_bucket_files", download)
+@pytest.mark.parametrize("remove", [False, True])
+def test_checkpoint_consent_is_cleared_regardless_of_config_structure(remove):
+    config = {"custom": [{"nested": {"trust_remote_code": True, "model": "user/model"}}], "other": None}
 
-    assert ensure_bucket_file("org/assets", "robot/model.urdf", path, token=False) == path
-    bucket_id, files = download.call_args.args
-    assert bucket_id == "org/assets"
-    assert files[0][0] == "robot/model.urdf"
-    assert files[0][1] != path
-    assert files[0][1].parent == path.parent
-    assert download.call_args.kwargs == {"raise_on_missing_files": True, "token": False}
-    assert path.read_bytes() == data
+    assert sanitize_checkpoint_consent(config, remove=remove)
 
-    assert ensure_bucket_file("org/assets", "robot/model.urdf", path, token=False) == path
-    download.assert_called_once()
-
-
-def test_ensure_bucket_file_cleans_up_failed_download(monkeypatch, tmp_path):
-    path = tmp_path / "cache" / "model.urdf"
-
-    def fail_download(_bucket, files, **_kwargs):
-        files[0][1].write_bytes(b"partial")
-        raise RuntimeError("download failed")
-
-    monkeypatch.setattr("lerobot.utils.hub.download_bucket_files", fail_download)
-
-    with pytest.raises(RuntimeError, match="download failed"):
-        ensure_bucket_file("org/assets", "robot/model.urdf", path)
-    assert not path.exists()
-    assert not any(path.parent.iterdir())
+    expected = {"model": "user/model"} if remove else {"trust_remote_code": False, "model": "user/model"}
+    assert config == {"custom": [{"nested": expected}], "other": None}
 
 
 def _patch_list_files(monkeypatch, files):
@@ -89,3 +64,21 @@ def test_find_latest_hub_checkpoint_ignores_non_step_entries(monkeypatch):
 def test_find_latest_hub_checkpoint_none_when_no_checkpoints(monkeypatch):
     _patch_list_files(monkeypatch, ["config.json", "model.safetensors"])
     assert find_latest_hub_checkpoint("u/run") is None
+
+
+def test_split_hub_reference_preserves_local_paths(tmp_path, monkeypatch):
+    from lerobot.utils.hub import split_hub_reference
+
+    path = tmp_path / "tokenizer@local"
+    path.mkdir()
+    monkeypatch.chdir(tmp_path)
+    for reference in (path, str(path), path.name):
+        assert split_hub_reference(reference) == (reference, None)
+
+
+@pytest.mark.parametrize("reference", ["org/tokenizer@", "@commit"])
+def test_split_hub_reference_rejects_incomplete_pins(reference):
+    from lerobot.utils.hub import split_hub_reference
+
+    with pytest.raises(ValueError, match="repo@revision"):
+        split_hub_reference(reference)

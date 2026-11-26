@@ -25,10 +25,10 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
+from lerobot.envs.configs import AlohaEnvConfig, EnvConfig, HILSerlRobotEnvConfig, PushtEnvConfig
 from lerobot.envs.factory import make_env, make_env_config, make_task_env
 from lerobot.envs.utils import prepare_canonical_observation, preprocess_observation
-from lerobot.sim.integrations import envhub
+from lerobot.sim.integrations import envhub, gym as gym_integration
 from lerobot.sim.integrations.envhub import _normalize_hub_result, _parse_hub_url
 from tests.fixtures.toy_env import DictObservationEnv, ToyEnvConfig
 from tests.utils import require_env
@@ -123,6 +123,66 @@ def test_factory_custom_gym_id():
     finally:
         if gym_id in gym_registry:
             del gym_registry[gym_id]
+
+
+@pytest.mark.parametrize(
+    "config, instruction",
+    [
+        (
+            AlohaEnvConfig(task="AlohaTransferCube-v0"),
+            "Pick up the cube with the right arm and transfer it to the left arm.",
+        ),
+        (AlohaEnvConfig(task="AlohaInsertion-v0"), "Insert the peg into the socket."),
+        (PushtEnvConfig(), "Push the T-shaped block onto the T-shaped target."),
+        (
+            AlohaEnvConfig(task="AlohaTransferCube-v0", instruction="Hand the cube over."),
+            "Hand the cube over.",
+        ),
+    ],
+)
+def test_aloha_and_pusht_send_their_dataset_instruction(config, instruction):
+    # A language-conditioned policy used to receive the gym id (e.g. "AlohaTransferCube-v0") as its
+    # prompt and scored 0 (#5373). The default is the instruction of the task's reference dataset.
+    assert config.sim_settings()["kwargs"]["instruction"] == instruction
+
+
+def test_unknown_task_sends_no_instruction():
+    assert "instruction" not in AlohaEnvConfig(task="AlohaUnknown-v0").sim_settings()["kwargs"]
+
+
+def test_gym_instruction_becomes_the_vector_envs_task_description():
+    gym_id = "dummy_instruction_pkg/DummyTask-v0"
+
+    @EnvConfig.register_subclass("dummy_instructed")
+    @dataclass
+    class InstructedEnv(EnvConfig):
+        task: str = "DummyTask-v0"
+        fps: int = 10
+        features: dict[str, PolicyFeature] = field(default_factory=dict)
+
+        @property
+        def gym_id(self) -> str:
+            return gym_id
+
+        def sim_settings(self):
+            settings = super().sim_settings()
+            settings["kwargs"]["instruction"] = "Move the block to the goal."
+            return settings
+
+    register(id=gym_id, entry_point=DictObservationEnv)
+    try:
+        (factory,) = gym_integration.env_fns("DummyTask-v0", 1, gym_id)["DummyTask-v0"][0]
+        plain = factory()
+        assert not hasattr(plain, "task_description")  # no instruction: unchanged
+        plain.close()
+
+        envs = make_env(InstructedEnv(), n_envs=2)
+        env = envs["DummyTask-v0"][0]
+        env.reset(seed=0)
+        assert env.call("task_description") == ("Move the block to the goal.",) * 2
+        env.close()
+    finally:
+        del gym_registry[gym_id]
 
 
 # Hub environment loading tests

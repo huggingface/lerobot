@@ -16,6 +16,7 @@
 
 import importlib
 import logging
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +172,11 @@ def make_reward_pre_post_processors(
         ValueError: If a processor factory is not implemented for the given reward
             model configuration type.
     """
+    trust_remote_code = kwargs.get("trust_remote_code", reward_cfg.trust_remote_code)
+    if trust_remote_code != reward_cfg.trust_remote_code:
+        reward_cfg = copy(reward_cfg)
+        reward_cfg.trust_remote_code = trust_remote_code
+
     # Create a new processor based on reward model type
     if isinstance(reward_cfg, RewardClassifierConfig):
         from lerobot.rewards.classifier.processor_classifier import make_classifier_processor

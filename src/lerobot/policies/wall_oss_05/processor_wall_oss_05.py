@@ -45,6 +45,7 @@ from lerobot.processor import (
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import normalize_semantic_messages, semantic_message_content_text
 
@@ -97,10 +98,9 @@ class WallOSS05TokenizerStep(ProcessorStep):
         if self._processor is not None:
             return self._processor
         require_package("transformers", extra="wall_oss_05")
+        repo_id, revision = split_hub_reference(self.processor_name, self.revision)
         self._processor = Qwen2_5_VLProcessor.from_pretrained(
-            self.processor_name,
-            revision=self.revision,
-            fix_mistral_regex=True,
+            repo_id, fix_mistral_regex=True, revision=revision, code_revision=revision
         )
         self._processor.tokenizer.add_tokens([WALL_OSS_PROPRIO_TOKEN, WALL_OSS_ACTION_TOKEN])
         self._processor.tokenizer.padding_side = "left"
@@ -596,6 +596,7 @@ def make_wall_oss_05_pre_post_processors_from_pretrained(
         postprocessor_overrides=postprocessor_overrides,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
+        trust_remote_code=config.trust_remote_code,
     )
     return reconcile_wall_oss_05_processors(config, preprocessor, postprocessor)
 
