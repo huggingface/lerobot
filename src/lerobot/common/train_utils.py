@@ -42,6 +42,8 @@ from huggingface_hub import (
 )
 from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
 from huggingface_hub.utils import httpx
+from safetensors.torch import load_file, save_file
+from torch import Generator
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -225,6 +227,8 @@ def save_checkpoint(
     postprocessor: PolicyProcessorPipeline | None = None,
     accelerator: "Accelerator | None" = None,
     ema: EMA | None = None,
+    *,
+    augmentation_generator: Generator | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -246,6 +250,7 @@ def save_checkpoint(
         ├── optimizer_state.safetensors  # optimizer state (non-sharded runs)
         ├── optimizer_0/  # DCP optimizer shards (sharded runs)
         ├── rng_state.safetensors  # rng states
+        ├── image_augmentation_rng_<device>_rank_<rank>.safetensors  # optional augmentation state
         ├── scheduler_state.json  # scheduler state (if scheduler provided)
         ├── scaler_state.json  # fp16 loss-scaler state (mixed_precision=fp16 only)
         ├── ema_state.safetensors  # EMA averages (EMA runs, non-sharded)
@@ -271,6 +276,7 @@ def save_checkpoint(
             channels. Defaults to None (plain single-process saves).
         ema (EMA | None, optional): The EMA of the policy weights, saved to `pretrained_model_ema/`
             and `training_state/`. Defaults to None.
+        augmentation_generator (Generator | None, optional): The local image augmentation RNG.
     """
     policy_to_save = accelerator.unwrap_model(policy) if accelerator is not None else policy
     sharded = is_sharded_module(policy_to_save)
@@ -300,6 +306,7 @@ def save_checkpoint(
         sharded=sharded,
         model=policy_to_save,
         ema=ema,
+        augmentation_generator=augmentation_generator,
     )
     if accelerator is not None:
         accelerator.wait_for_everyone()
@@ -353,6 +360,13 @@ def save_pretrained_model(
             postprocessor.save_pretrained(pretrained_dir)
 
 
+def _augmentation_rng_file(training_state_dir: Path, generator: Generator, process_index: int) -> Path:
+    return (
+        training_state_dir
+        / f"image_augmentation_rng_{generator.device.type}_rank_{process_index}.safetensors"
+    )
+
+
 def save_training_state(
     checkpoint_dir: Path,
     step: int,
@@ -364,6 +378,7 @@ def save_training_state(
     sharded: bool = False,
     model: PreTrainedPolicy | None = None,
     ema: EMA | None = None,
+    augmentation_generator: Generator | None = None,
 ) -> None:
     """Write training_state/. Collective under sharding: call on every rank.
 
@@ -385,11 +400,17 @@ def save_training_state(
             model FQNs), so accelerate's `save_fsdp_optimizer` needs the sharded module
             alongside the optimizer. Defaults to None.
         ema (EMA | None, optional): The EMA whose averages are saved. Defaults to None.
+        augmentation_generator (Generator | None, optional): Private image augmentation RNG to save per rank.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     # All ranks: the directory must exist before the DCP optimizer collective writes into it
     # (exist_ok makes the concurrent mkdir race-free on shared filesystems).
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    if augmentation_generator is not None:
+        process_index = accelerator.process_index if accelerator is not None else 0
+        path = _augmentation_rng_file(save_dir, augmentation_generator, process_index)
+        save_file({"generator_state": augmentation_generator.get_state()}, path)
 
     if optimizer is not None and sharded:
         if accelerator is None or model is None:
@@ -429,7 +450,9 @@ def _resume_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
     return cfg.checkpoint_path
 
 
-def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
+def resume_before_prepare(
+    cfg: TrainPipelineConfig, *, augmentation_generator: Generator | None = None, process_index: int = 0
+) -> int:
     """Phase 1 — before `accelerator.prepare()`: restore RNG and return the step counter.
 
     Pure loaders only. The sampler resume offset is *derived* from the returned step inside the
@@ -439,6 +462,8 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     Args:
         cfg (TrainPipelineConfig): The resumed training config; `cfg.checkpoint_path` locates
             the checkpoint to restore from.
+        augmentation_generator (Generator | None, optional): Private image augmentation RNG to restore.
+        process_index (int, optional): Global process index for the augmentation RNG file.
 
     Returns:
         int: The training step recorded in the checkpoint (micro-batch counter).
@@ -454,6 +479,10 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     metadata = load_training_metadata(training_state_dir)
     _guard_resume_changes(cfg, metadata)
     load_rng_state(training_state_dir)
+    if augmentation_generator is not None:
+        path = _augmentation_rng_file(training_state_dir, augmentation_generator, process_index)
+        if path.is_file():  # Older checkpoints do not have per-rank augmentation states.
+            augmentation_generator.set_state(load_file(path)["generator_state"])
     return metadata["step"]
 
 
