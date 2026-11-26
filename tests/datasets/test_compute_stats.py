@@ -28,13 +28,14 @@ from lerobot.datasets.compute_stats import (
     aggregate_feature_stats,
     aggregate_stats,
     compute_episode_stats,
+    compute_relative_action_stats,
     estimate_num_samples,
     get_feature_stats,
     sample_images,
     sample_indices,
 )
 from lerobot.datasets.io_utils import load_stats, write_stats
-from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 pytestmark = pytest.mark.dataset
 
@@ -982,3 +983,65 @@ def test_aggregate_stats_incremental_resume():
     # Bounds should widen monotonically
     np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
     np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+def _make_relative_action_hf_dataset(actions: list[list[float]], states: list[list[float]]):
+    import datasets
+
+    return datasets.Dataset.from_dict(
+        {
+            ACTION: actions,
+            OBS_STATE: states,
+            "episode_index": [0] * len(actions),
+        },
+        features=datasets.Features(
+            {
+                ACTION: datasets.Sequence(datasets.Value("float32"), length=2),
+                OBS_STATE: datasets.Sequence(datasets.Value("float32"), length=2),
+                "episode_index": datasets.Value("int64"),
+            }
+        ),
+    )
+
+
+def test_compute_relative_action_stats_single_sample():
+    # Regression test for https://github.com/huggingface/lerobot/issues/5486:
+    # a single relative-action vector (one frame, chunk_size=1) used to raise
+    # "Cannot compute statistics for less than 2 vectors." instead of falling
+    # back to basic statistics like `get_feature_stats` does.
+    features = {
+        ACTION: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+    }
+    hf_dataset = _make_relative_action_hf_dataset(actions=[[1.0, 2.0]], states=[[0.5, 0.5]])
+
+    stats = compute_relative_action_stats(hf_dataset, features, chunk_size=1, exclude_joints=["joint_b"])
+
+    expected_keys = {"min", "max", "mean", "std", "count", "q01", "q10", "q50", "q90", "q99"}
+    assert set(stats.keys()) == expected_keys
+
+    # The excluded joint (dim 1) stays absolute; the relative joint (dim 0) is action - state.
+    expected = np.array([0.5, 2.0])
+    for key in ("min", "max", "mean", "q01", "q10", "q50", "q90", "q99"):
+        np.testing.assert_allclose(stats[key], expected)
+    np.testing.assert_allclose(stats["std"], np.zeros(2))
+    np.testing.assert_allclose(stats["count"], [1])
+
+
+def test_compute_relative_action_stats_multiple_samples():
+    features = {
+        ACTION: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+        OBS_STATE: {"dtype": "float32", "shape": (2,), "names": ["joint_a", "joint_b"]},
+    }
+    hf_dataset = _make_relative_action_hf_dataset(
+        actions=[[1.0, 2.0], [3.0, 4.0]],
+        states=[[0.5, 0.5], [1.5, 1.5]],
+    )
+
+    stats = compute_relative_action_stats(hf_dataset, features, chunk_size=1, exclude_joints=["joint_b"])
+
+    # Relative joint dims: [1.0 - 0.5, 3.0 - 1.5] = [0.5, 1.5]; excluded dim stays absolute.
+    np.testing.assert_allclose(stats["mean"], [1.0, 3.0])
+    np.testing.assert_allclose(stats["min"], [0.5, 2.0])
+    np.testing.assert_allclose(stats["max"], [1.5, 4.0])
+    np.testing.assert_allclose(stats["count"], [2])
