@@ -114,7 +114,7 @@ RUN python -m venv "$VIRTUAL_ENV" && pip install --no-cache-dir gymnasium numpy
 
 `lerobot-env-server --docker=true` builds this image, then adds the server to it from your LeRobot checkout, so the server always matches its clients. The repository's `requirements.txt` and `packages.txt` are not installed. The image must:
 
-- set `VIRTUAL_ENV` to the Python 3.12 (or newer) environment `env.py` runs in, with its `bin` first on `PATH`. The server is installed there, along with its own requirements, keeping the image's versions where they are at least LeRobot's.
+- set `VIRTUAL_ENV` to the Python 3.12 (or newer) environment `env.py` runs in, with its `bin` first on `PATH`. The server is installed there, along with the requirements it is missing. Packages already installed keep their versions, and one outside the range the server needs fails the build.
 - set what the simulator needs to start with `ENV`, or in its `ENTRYPOINT`, which runs the server.
 
 ### `make_env`

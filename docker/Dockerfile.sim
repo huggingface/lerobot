@@ -135,15 +135,16 @@ RUN if [ -f /tmp/envhub/requirements.txt ]; then \
 COPY --chown=user_lerobot:user_lerobot --from=envhub . /envhub
 
 # An EnvHub repository with an envhub.Dockerfile installs its simulator in its own image, which
-# `lerobot-env-server --docker=true` builds first. This stage adds the server's requirements to that image's
-# environment (VIRTUAL_ENV), keeping the image's own versions where they are at least the server's.
+# `lerobot-env-server --docker=true` builds first. This stage adds the server's missing requirements to that
+# image's environment (VIRTUAL_ENV). Every package already installed keeps its version, transitive ones included:
+# one outside the server's range fails the build instead of changing the simulator's environment.
 FROM ${ENVHUB_IMAGE:-base} AS envhub_image_native
 USER root
 COPY --from=ghcr.io/astral-sh/uv:0.11.30 /uv /uvx /usr/local/bin/
 RUN id -u user_lerobot >/dev/null 2>&1 || useradd -m user_lerobot
 COPY docker/sim/requirements.txt /tmp/sim-requirements.txt
-RUN sed 's/==/>=/' /tmp/sim-requirements.txt > /tmp/server-requirements.txt \
-    && uv pip install --no-cache -r /tmp/server-requirements.txt
+RUN uv pip list --format freeze > /tmp/simulator-constraints.txt \
+    && uv pip install --no-cache -c /tmp/simulator-constraints.txt -r /tmp/sim-requirements.txt
 COPY --from=envhub . /envhub
 
 # ---------------------------------------------------------------------------- RoboCasa
