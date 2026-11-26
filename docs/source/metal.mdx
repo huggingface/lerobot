@@ -1,0 +1,93 @@
+# Metal
+
+Metal is a 6-DOF arm with a gripper from MakerMods. In LeRobot, `metal_follower` drives one arm and `bi_metal_follower` drives two, with the YAM follower's gravity-compensated MIT control loop. A second Metal arm (`metal_leader`, `bi_metal_leader`) or a Star Arm 102 (`rebot_102_leader`) can lead it.
+
+## Hardware and safety
+
+Each arm has seven Damiao motors with IDs 1 to 7, answering on `0x11` to `0x17`, on classic CAN at 1 Mbit/s, in MIT mode with Metal's scaling registers. You need one CAN adapter per arm (SocketCAN, or slcan on any OS), and internet access the first time you connect, to download the gravity model from [`lerobot/robot-urdfs`](https://huggingface.co/datasets/lerobot/robot-urdfs) (or set `urdf_path`).
+
+> [!WARNING]
+> The motors have no brakes and no CAN timeout: they keep their last command until power is removed. Disconnecting returns the joints to the folded rest pose at 30°/s, or `max_joint_speed_deg_s` if lower, and turns torque off only once the arm is verified still there. Otherwise (a fault, an obstruction, <kbd>Ctrl</kbd>+<kbd>C</kbd>) LeRobot commands a stiff hold where the arm is and leaves torque on: in a terminal, support it and type `RELEASE` to turn torque off; otherwise cut motor power. Use a hardware emergency stop.
+
+## Install LeRobot 🤗
+
+Follow the [Installation Guide](./installation), then:
+
+```bash
+pip install -e ".[metal]"
+```
+
+Add `rebot` for a Star Arm 102 leader.
+
+## Connect the hardware
+
+On Linux, bring each interface up without CAN FD; with slcan, use the adapter's serial port, such as `/dev/ttyACM0`, as `port`. Each arm needs its own interface, because all arms use the same motor IDs.
+
+```bash
+lerobot-setup-can --mode=setup --interfaces=can0 --use_fd=false
+```
+
+## Device types
+
+| Type                | Device                     |
+| ------------------- | -------------------------- |
+| `metal_follower`    | Single follower            |
+| `bi_metal_follower` | Bimanual follower          |
+| `metal_leader`      | Metal arm used as a leader |
+| `bi_metal_leader`   | Two Metal leaders          |
+
+With two arms, set each arm's options with `--robot.left_arm_config.<option>` and `--robot.right_arm_config.<option>`, and the same under `--teleop.`.
+
+## Calibration
+
+There is none: the zero pose, folded at rest as the arm sits unpowered with the gripper closed, is stored in the motors and survives power cycles. Set it again with the Metal Arm SDK (`metal-arm zero --all`). Fold the arm before connecting: LeRobot checks that every joint is within 11.5° of zero.
+
+## Observations and actions
+
+`shoulder_pan.pos`, `shoulder_lift.pos`, `elbow_flex.pos`, `wrist_flex.pos`, `wrist_yaw.pos`, `wrist_roll.pos` and `gripper.pos`, in degrees with the gripper from 0 (closed) to 100 (open); `use_degrees=false` gives radians and 0 to 1. Two arms add `left_` and `right_` prefixes.
+
+## Teleoperate
+
+A Metal leader floats, gravity compensated, with a free gripper:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=metal_follower --robot.port=can0 \
+  --teleop.type=metal_leader --teleop.port=can1
+```
+
+A Star Arm 102 needs Metal's mapping. Calibrate it once in Metal's zero pose (`lerobot-calibrate --teleop.type=rebot_102_leader --teleop.port=/dev/ttyUSB0 --teleop.id=star`), then:
+
+```bash
+lerobot-teleoperate \
+  --robot.type=metal_follower --robot.port=can0 \
+  --teleop.type=rebot_102_leader --teleop.port=/dev/ttyUSB0 --teleop.id=star \
+  --teleop.joint_directions='{"shoulder_pan": -1.0, "shoulder_lift": -1.0, "elbow_flex": -0.667, "wrist_flex": -1.0, "wrist_yaw": 1.0, "wrist_roll": -1.0, "gripper": 1.628}' \
+  --teleop.joint_ranges='{"shoulder_pan": [-160, 160], "shoulder_lift": [-180, 0], "elbow_flex": [0, 180], "wrist_flex": [-123, 81], "wrist_yaw": [-85, 85], "wrist_roll": [-145, 145], "gripper": [0, 100]}'
+```
+
+## Safety
+
+- A motor fault or feedback older than 0.3 s stops control. LeRobot then commands a stiff hold at the measured pose to every joint that still answers, and a limp gripper; joints that don't confirm it are logged. With two arms, a fault on either stops both. If the CAN link itself is lost, nothing can be sent: the motors keep their last command, so a follower keeps holding and a leader keeps floating. Support the arm before you disconnect.
+- LeRobot refuses to connect to an arm that already has torque on.
+
+## Configuration options
+
+| Option                  | Default                            | Description                                              |
+| ----------------------- | ---------------------------------- | -------------------------------------------------------- |
+| `port`                  | required                           | SocketCAN interface or slcan serial port                 |
+| `use_degrees`           | `true`                             | Degrees and a 0–100 gripper; `false` for radians and 0–1 |
+| `max_joint_speed_deg_s` | `90`                               | Fastest joint motion, at most 280                        |
+| `idle_mode`             | `hold`                             | `hold` or `float` when no action arrives                 |
+| `gravity_factors`       | `[1.2, 1.15, 1.1, 1.15, 1.0, 1.0]` | Per-joint gravity multipliers, for cameras or payloads   |
+| `urdf_path`             | none                               | Local URDF instead of the Hub download                   |
+
+## Troubleshooting
+
+| Problem                           | Check                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `missing or stale motor feedback` | 24 V power, CAN wiring and termination, 1 Mbit/s without CAN FD, and `port`.                    |
+| `fault` on a motor                | 8 overvoltage, 9 undervoltage, A overcurrent, B and C overtemperature, D comm lost, E overload. |
+| `already have torque on`          | A previous session left the arm holding: support it and cut motor power.                        |
+| `fold it to its rest pose`        | Fold the arm before connecting. If it is folded, set the zeros again.                           |
+| The arm drifts in float mode      | Adjust `gravity_factors`.                                                                       |
