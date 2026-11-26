@@ -82,6 +82,49 @@ def test_a_finished_env_keeps_its_terminal_observation_with_zero_reward():
         env.close()
 
 
+class _StateOnlyRGBEnv(ToyEnv):
+    render_mode = "rgb_array"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.observation_space = spaces.Dict({"agent_pos": self.observation_space["agent_pos"]})
+
+    def _obs(self) -> dict[str, np.ndarray]:
+        return {"agent_pos": self.state.copy()}
+
+
+@pytest.mark.parametrize("use_async_envs", [False, True], ids=["sync", "async"])
+def test_state_only_env_renders_rgb_with_terminal_frames(
+    monkeypatch: pytest.MonkeyPatch, use_async_envs: bool
+) -> None:
+    def env_fns(task: str, n_envs: int) -> dict:
+        return {task: {0: [_StateOnlyRGBEnv] * n_envs}}
+
+    _register_integration(monkeypatch, "toy_state_only", env_fns)
+    env = LocalVectorEnv(SimConfig(type="toy_state_only", task="reach"), 2, use_async_envs=use_async_envs)
+    try:
+        obs, _ = env.reset(seed=[3, 4])
+        assert set(obs) == {"observation.state"}
+        initial = env.call("render")
+        assert len(initial) == 2
+        assert all(frame.shape == (8, 8, 3) and frame.dtype == np.uint8 for frame in initial)
+
+        _, _, terminated, _, _ = env.step(np.array([[2.0, 0.0], [0.2, 0.0]], dtype=np.float32))
+        assert terminated.tolist() == [True, False]
+        first, second = env.render()
+        assert not np.array_equal(first, initial[0])
+        assert not np.array_equal(second, initial[1])
+
+        obs, _, _, _, info = env.step(np.array([[-2.0, 0.0], [0.2, 0.0]], dtype=np.float32))
+        frames = env.render()
+        assert info["elapsed_steps"].tolist() == [1, 2]
+        assert set(obs) == {"observation.state"}
+        np.testing.assert_array_equal(frames[0], first)
+        assert not np.array_equal(frames[1], second)
+    finally:
+        env.close()
+
+
 def test_every_run_mode_takes_the_same_steps():
     # Env 0 succeeds on the first step, env 1 on the third, and env 2 is truncated after five.
     actions = [[[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1], [0.3, 0.1], [0, 0]], [[1, 0], [1, 0], [0, 0]]]
