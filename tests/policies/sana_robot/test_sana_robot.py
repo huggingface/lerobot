@@ -23,6 +23,7 @@ from transformers import Gemma2Config, Gemma2ForCausalLM, PreTrainedTokenizerFas
 from lerobot.configs.sampling import EpisodeTable, SampleKey
 from lerobot.configs.types import FeatureType
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.envs.configs import LiberoEnvConfig
 from lerobot.envs.factory import make_env_pre_post_processors
 from lerobot.inference.sync import SyncInferenceEngine
@@ -839,16 +840,18 @@ def test_gradient_checkpointing_keeps_the_loss_and_the_gradients(encoders):
         assert torch.allclose(with_checkpointing, without, atol=1e-5)
 
 
-def test_training_reads_the_windows_of_a_lerobot_dataset(encoders, tmp_path):
+@pytest.mark.parametrize("reader", ["map", "streaming", "lance"])
+def test_training_reads_the_windows_of_a_lerobot_dataset(encoders, tmp_path, reader):
     config = make_config(encoders, instruction_dropout=0.0)
     features = {
-        key: {"dtype": "image", "shape": (64, 64, 3), "names": ["height", "width", "channels"]}
+        key: {"dtype": "video", "shape": (64, 64, 3), "names": ["height", "width", "channels"]}
         for key in config.camera_keys
     }
     features[OBS_STATE] = {"dtype": "float32", "shape": (len(config.state_slots),), "names": None}
     features[ACTION] = {"dtype": "float32", "shape": (len(config.action_slots),), "names": None}
+    # Videos: the Lance backend reads no image-backed features.
     dataset = LeRobotDataset.create(
-        "test/sana_robot", fps=20, features=features, root=tmp_path / "data", use_videos=False
+        "test/sana_robot", fps=20, features=features, root=tmp_path / "data", use_videos=True
     )
     generator = np.random.default_rng(0)
     for rows in (45, 70):
@@ -862,19 +865,36 @@ def test_training_reads_the_windows_of_a_lerobot_dataset(encoders, tmp_path):
         dataset.save_episode()
     dataset.finalize()
 
-    dataset = LeRobotDataset("test/sana_robot", root=tmp_path / "data", sampler=config.training_sampler)
-    # Every episode gives one window per chunk phase.
-    assert dataset.sample_counts == {0: 32, 1: 32} and len(dataset) == 64
-    (preprocess, _postprocess) = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
+    root = tmp_path / "data"
+    if reader == "lance":
+        pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the dataset")
+        from lerobot_lancedb.convert import convert
+
+        convert(tmp_path / "lance", root=root)
+        root = tmp_path / "lance"
+    if reader == "streaming":
+        stream = StreamingLeRobotDataset(
+            "test/sana_robot", root=root, sampler=config.training_sampler, shuffle=False
+        )
+        (items, stats_) = (list(stream), stream.meta.stats)
+    else:
+        dataset = LeRobotDataset("test/sana_robot", root=root, sampler=config.training_sampler)
+        assert dataset.sample_counts == {0: 32, 1: 32}
+        (items, stats_) = (dataset.__getitems__(list(range(len(dataset)))), dataset.meta.stats)
+    # Every episode gives one window per chunk phase, each read once.
+    windows = {
+        (int(item["episode_index"]), window_shape(item[f"{ACTION}_is_pad"], 32, 4)[0]): item for item in items
+    }
+    assert len(items) == len(windows) == 64
+    (preprocess, _postprocess) = make_pre_post_processors(config, dataset_stats=stats_)
     # Windows of 45 rows from 22 rows before the first frame (2 chunks) and of 70 rows from 4 (3 chunks).
-    batch = lerobot_collate_fn(dataset.__getitems__([SampleKey(0, 22), SampleKey(1, 4)]))
+    batch = lerobot_collate_fn([windows[0, 22], windows[1, 4]])
     assert batch[config.camera_keys[0]].shape == (2, 25, 3, 64, 64)
     assert batch[OBS_STATE].shape == (2, 3, len(config.state_slots))
     assert batch[ACTION].shape == (2, 96, len(config.action_slots))
     # The first window: 22 rows before the episode, and the collate pads it from 64 to 96 rows.
     assert int(batch[f"{ACTION}_is_pad"][0].sum()) == 22 + 32
-    episode = dataset.__getitems__([SampleKey(0, 0)])[0]
-    torch.testing.assert_close(batch[ACTION][0, 22:64], episode[ACTION][:42])
+    torch.testing.assert_close(batch[ACTION][0, 22:64], windows[0, 0][ACTION][:42])
 
     policy = make_policy(config)
     policy.train()
