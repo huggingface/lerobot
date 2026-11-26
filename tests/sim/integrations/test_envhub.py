@@ -375,6 +375,17 @@ def test_envhub_builds_only_the_requested_suite(hub_repo, monkeypatch):
         assert builtins.envhub_builds == [5.0]
     finally:
         envs["far"][0].close()
+    # Several suites, comma-separated: described from the first, each other one built when it runs.
+    builtins.envhub_builds.clear()
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="far, near"), 2)
+    try:
+        assert list(envs) == ["far", "near"]
+        assert builtins.envhub_builds == [5.0]
+        envs["near"][0].reset(seed=[3, 4])
+        assert builtins.envhub_builds == [5.0, 0.0]
+    finally:
+        for suite in envs.values():
+            suite[0].close()
     with pytest.raises(ValueError, match=r"Unknown task 'other'; this environment has \['far', 'near'\]"):
         make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="other"), 2)
 
