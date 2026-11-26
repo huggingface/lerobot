@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 from lerobot.lerobot_types import PolicyAction, RobotAction
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    bind_relative_anchor,
     policy_output_to_transition,
     transition_to_policy_action,
 )
@@ -85,6 +86,8 @@ def predict_action(
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
+        # Keep queued relative actions anchored to the state that produced their chunk.
+        bind_relative_anchor(policy, preprocessor)
         observation = preprocessor(observation)
 
         # Compute the next action with the policy
