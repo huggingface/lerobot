@@ -83,6 +83,8 @@
     title: LingBot-VLA 2.0
   - local: g05
     title: OpenGalaxea G0.5
+  - local: nat_vla
+    title: NAT VLA
   - local: fastwam
     title: FastWAM
   - local: longwam

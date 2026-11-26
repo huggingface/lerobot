@@ -36,6 +36,8 @@ from draccus.wrappers.field_wrapper import FieldWrapper
 from draccus.wrappers.suppressing_argparse import SuppressingArgumentParser
 from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
+from lerobot.utils.constants import TRAIN_CONFIG_NAME
+from lerobot.utils.hub import sanitize_checkpoint_consent
 from lerobot.utils.utils import has_method
 
 F = TypeVar("F", bound=Callable[..., object])
@@ -390,6 +392,9 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
         return config_path
 
     modified = False
+    # Sanitize before extracting overrides or losing the checkpoint filename to a temp path.
+    if config_file.name == TRAIN_CONFIG_NAME:
+        modified = sanitize_checkpoint_consent(config_data)
     for field in path_fields:
         if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
             _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
@@ -446,10 +451,10 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
-                    cli_args = filter_path_args(path_fields, cli_args)
-                    # Also extract path fields from the YAML/JSON config file
+                    # Extract first so CLI overrides of file-provided paths are filtered too.
                     if config_path_cli:
                         config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
+                    cli_args = filter_path_args(path_fields, cli_args)
                 try:
                     if has_method(argtype, "from_pretrained") and config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)

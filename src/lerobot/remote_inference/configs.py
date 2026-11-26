@@ -37,6 +37,7 @@ class ModelConfig:
     repo_or_path: str = ""
     revision: str | None = None
     device: str = "cuda"
+    trust_remote_code: bool = False
     # TF32 in float32 matmuls and cuDNN convolutions on Ampere and newer GPUs.
     tf32: bool | None = True
 

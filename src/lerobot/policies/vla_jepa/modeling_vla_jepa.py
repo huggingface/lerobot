@@ -29,6 +29,7 @@ from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
@@ -90,11 +91,13 @@ class VLAJEPAModel(nn.Module):
 
         # JEPA world model components
         if config.enable_world_model:
+            repo_id, revision = split_hub_reference(config.jepa_encoder_name)
             self.video_encoder = AutoModel.from_pretrained(
-                config.jepa_encoder_name,
-                torch_dtype=config.dtype,
+                repo_id, torch_dtype=config.dtype, revision=revision, code_revision=revision
             )
-            self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
+            self.video_processor = AutoVideoProcessor.from_pretrained(
+                repo_id, revision=revision, code_revision=revision
+            )
             num_views = config.num_world_model_views
             tubelet_size = self.video_encoder.config.tubelet_size
             image_size = getattr(self.video_encoder.config, "image_size", None)
