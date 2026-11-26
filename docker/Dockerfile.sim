@@ -321,15 +321,16 @@ p.write_text(t.replace( \
       open3d colorlog scikit-learn openai gdown
 # Task configs sample object meshes; with none, the task builder fails with IndexError (random.choice([])).
 # The Hub mirror (VLABENCH_ASSETS_REPO) is the reliable source, as Google Drive often answers HTTP 429, and
-# the build fails on empty asset directories instead of at evaluation.
+# the build fails on empty asset directories instead of at evaluation. Most of its 35k files are small meshes,
+# each one request, so it downloads with twice the default workers.
 ARG VLABENCH_ASSETS_REPO=""
 RUN ASSETS_DIR="$HOME/VLABench/VLABench/assets" && \
     if [ -n "${VLABENCH_ASSETS_REPO}" ]; then \
         echo "Downloading VLABench assets from HF Hub: ${VLABENCH_ASSETS_REPO}" && \
         uv pip install --no-cache "huggingface_hub[hf_xet]>=0.26" && \
-        python -c "from huggingface_hub import snapshot_download; \
+        HF_XET_HIGH_PERFORMANCE=1 python -c "from huggingface_hub import snapshot_download; \
 p = snapshot_download(repo_id='${VLABENCH_ASSETS_REPO}', repo_type='dataset', revision='08d7a4479a55c8fbb89ac0fd6fcf06e53d65b4a4', \
-    local_dir='${ASSETS_DIR}', allow_patterns=['obj/**', 'scenes/**']); \
+    local_dir='${ASSETS_DIR}', allow_patterns=['obj/**', 'scenes/**'], max_workers=16); \
 print('snapshot_download returned:', p)"; \
     else \
         echo "No VLABENCH_ASSETS_REPO set — falling back to gdown" && \
