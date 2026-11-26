@@ -19,6 +19,7 @@ import dataclasses
 import logging
 import os
 import warnings
+from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
@@ -206,6 +207,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = False,
         **kwargs,
     ) -> T:
@@ -227,8 +229,13 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
+
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)
         device = config.device

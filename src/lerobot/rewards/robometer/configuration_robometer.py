@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -115,8 +116,13 @@ class RobometerConfig(RewardModelConfig):
         # vocab the published ``Robometer-4B`` checkpoint was saved with.
         if not self.vlm_config:
             require_package("transformers", extra="robometer")
-            vlm = AutoConfig.from_pretrained(self.base_model_id).to_dict()
-            tokenizer = AutoTokenizer.from_pretrained(self.base_model_id)
+            repo_id, revision = split_hub_reference(self.base_model_id)
+            vlm = AutoConfig.from_pretrained(
+                repo_id, trust_remote_code=self.trust_remote_code, revision=revision, code_revision=revision
+            ).to_dict()
+            tokenizer = AutoTokenizer.from_pretrained(
+                repo_id, trust_remote_code=self.trust_remote_code, revision=revision, code_revision=revision
+            )
             text_config = vlm.get("text_config")
             if not isinstance(text_config, dict):
                 raise ValueError(

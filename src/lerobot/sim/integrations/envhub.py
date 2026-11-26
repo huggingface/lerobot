@@ -106,7 +106,9 @@ def _download_hub_file(
 
     repo_id, revision, file_path = _parse_hub_url(cfg_str)
 
-    snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
+    snapshot_dir = snapshot_download(
+        repo_id=repo_id, repo_type="space", revision=revision, cache_dir=hub_cache_dir
+    )
     local_file = os.path.join(snapshot_dir, file_path)
     if not os.path.isfile(local_file):
         raise FileNotFoundError(f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}")

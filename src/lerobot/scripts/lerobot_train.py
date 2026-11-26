@@ -324,7 +324,7 @@ def update_policy(
 
 
 def _balanced_eval_indices(task_indices: Iterable[int], limit: int) -> list[int]:
-    """Use the budget across tasks in round-robin order, keeping each task's frame order."""
+    """Select frames round-robin across tasks, then return them in dataset order."""
     frames_by_task: dict[int, list[int]] = defaultdict(list)
     for frame, task in enumerate(task_indices):
         task_frames = frames_by_task[task]
@@ -339,6 +339,7 @@ def _balanced_eval_indices(task_indices: Iterable[int], limit: int) -> list[int]
         if next_frame is not None:
             selected.append(next_frame)
             task_frames_left.append(current)
+    selected.sort()
     return selected
 
 
@@ -751,6 +752,7 @@ def train(cfg: TrainPipelineConfig) -> None:
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)
+    train_sampler = dataloader.sampler  # accelerator.prepare reuses this sampler object
 
     # --- prepare & resume phase 2 ---------------------------------------------------------------
     # The FSDP wrap-unit class names resolve right before prepare: user override, else the
@@ -775,6 +777,10 @@ def train(cfg: TrainPipelineConfig) -> None:
     ema = EMA(accelerator.unwrap_model(policy), cfg.ema) if cfg.ema is not None else None
     if cfg.resume:
         resume_after_prepare(cfg, accelerator, policy, optimizer, lr_scheduler, ema)
+        if not cfg.dataset.streaming:
+            # The prepared dataloader calls `sampler.set_epoch(iteration)` at the start of every pass and
+            # `iteration` is not checkpointed, so start it at the epoch the sampler was restored to.
+            dataloader.set_epoch(train_sampler.state_dict()["epoch"])
 
     # --- auxiliaries (after the core assembly, per the construction-order contract) -------------
     sample_weighter = None
@@ -783,9 +789,10 @@ def train(cfg: TrainPipelineConfig) -> None:
 
         if is_main_process():
             logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        # The weighter reads `policy.config`, which a DDP/FSDP wrapper doesn't expose.
         sample_weighter = make_sample_weighter(
             cfg.sample_weighting,
-            policy,
+            accelerator.unwrap_model(policy),
             device,
             dataset_root=cfg.dataset.root,
             dataset_repo_id=cfg.dataset.repo_id,

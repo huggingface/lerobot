@@ -591,6 +591,7 @@ class RewardClassifierProcessorStep(ProcessorStep):
         success_threshold: The probability threshold to consider a prediction as successful.
         success_reward: The reward value to assign on success.
         terminate_on_success: If True, terminates the episode upon successful classification.
+        trust_remote_code: Caller consent to execute custom classifier encoder code.
         reward_classifier: The loaded classifier model instance.
     """
 
@@ -601,13 +602,16 @@ class RewardClassifierProcessorStep(ProcessorStep):
     terminate_on_success: bool = True
 
     reward_classifier: Any = None
+    trust_remote_code: bool = False
 
     def __post_init__(self):
         """Initializes the reward classifier model after the dataclass is created."""
         if self.pretrained_path is not None:
             from lerobot.rewards.classifier.modeling_classifier import Classifier
 
-            self.reward_classifier = Classifier.from_pretrained(self.pretrained_path)
+            self.reward_classifier = Classifier.from_pretrained(
+                self.pretrained_path, trust_remote_code=self.trust_remote_code
+            )
             self.reward_classifier.to(self.device)
             self.reward_classifier.eval()
 
