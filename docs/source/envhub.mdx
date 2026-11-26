@@ -237,6 +237,8 @@ def vector_env_fns(task: str, n_envs: int, **make_env_kwargs):
     return {"suite_1": {0: partial(MyBatchedEnv, n_envs, "Task1"), 1: partial(MyBatchedEnv, n_envs, "Task2")}}
 ```
 
+`task` is the `--env.task` string (a server's `--sim.task`) as given: empty when unset, and comma-separated when several suites are requested (`"far,near"`), so split it before using it. Returning every suite whatever `task` is also works: LeRobot runs the requested ones.
+
 Each vector env must have `num_envs == n_envs` and must not autoreset (`metadata["autoreset_mode"] = gym.vector.AutoresetMode.DISABLED`). It returns batched observations in the format above, takes one seed per environment in `reset(seed=[...])`, and reports `info["is_success"]` per environment. `--env.make_env_kwargs` are passed to it. Since it already steps the whole batch, evaluate with `--eval.use_async_envs=false`: a worker process would only copy every batch between processes, and a server would build the simulator a second time, in the worker.
 
 `vector_env_fns` also suits a benchmark with many tasks: `make_env` builds the environments of every task when it is called, while only the factories of the tasks that run are called.
