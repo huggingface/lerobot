@@ -134,8 +134,7 @@ class HubEnvConfig(EnvConfig):
         # A served env is loaded by the server, from its own copy of the repository.
         if not self.hub_path and self.server is None:
             raise ValueError("--env.hub_path is required for an EnvHub environment that is not served")
-        # The repo defines the suites; --env.task picks among them, and reaches the repo's vector_env_fns as a
-        # server's --sim.task does, for a repo that builds only the tasks it is asked for.
+        # The repo receives --env.task, as a server's --sim.task.
         return {
             "type": "envhub",
             "task": self.task or "",
