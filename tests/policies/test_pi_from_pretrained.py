@@ -125,6 +125,32 @@ def init_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 
 @pytest.mark.parametrize("variant", VARIANTS, ids=lambda v: v.name)
+def test_strict_load_restores_every_tensor_without_random_init(tiny_pi, init_calls, variant, tmp_path):
+    torch.manual_seed(0)
+    source = variant.policy_cls(_config(variant))
+    saved = _save(source, tmp_path)
+    buffers = _non_persistent_buffers(source)
+    init_calls.clear()
+
+    rng_before = torch.random.get_rng_state()
+    loaded = variant.policy_cls.from_pretrained(tmp_path, config=_config(variant), strict=True)
+
+    # Skipped init draws nothing from the global generator and calls no init function.
+    assert torch.equal(torch.random.get_rng_state(), rng_before)
+    assert init_calls == []
+    state = loaded.state_dict()
+    assert state.keys() == saved.keys()
+    for key, value in saved.items():
+        torch.testing.assert_close(state[key], value, rtol=0, atol=0, msg=key)
+    # Non-persistent buffers are computed in __init__, not by the init functions skipped.
+    assert buffers, "expected rotary/position buffers"
+    loaded_buffers = _non_persistent_buffers(loaded)
+    assert loaded_buffers.keys() == buffers.keys()
+    for name, value in buffers.items():
+        torch.testing.assert_close(loaded_buffers[name], value, rtol=0, atol=0, msg=name)
+
+
+@pytest.mark.parametrize("variant", VARIANTS, ids=lambda v: v.name)
 def test_non_strict_load_keeps_normal_init(tiny_pi, init_calls, variant, tmp_path):
     torch.manual_seed(0)
     source = variant.policy_cls(_config(variant))
@@ -195,3 +221,58 @@ def test_corrupt_checkpoint_file_raises(tiny_pi, tmp_path):
 
     with pytest.raises(Exception, match=r"(?i)header|deserializ"):
         PI05Policy.from_pretrained(tmp_path, config=_config(VARIANTS[2]), local_files_only=True)
+
+
+def test_pi05_base_checkpoint_gets_fresh_proprio_memory_projection(tiny_pi, tmp_path):
+    variant = VARIANTS[2]
+    saved = _save(variant.policy_cls(_config(variant)), tmp_path)
+    assert not set(PROPRIO_KEYS) & saved.keys()
+
+    torch.manual_seed(3)
+    loaded = PI05Policy.from_pretrained(
+        tmp_path, config=_config(variant, use_proprioceptive_memory=True), strict=True
+    )
+    # The projection is the only random init a strict load runs, so it matches a fresh nn.Linear.
+    torch.manual_seed(3)
+    expected = nn.Linear(4, 16)
+
+    projection = loaded.model.proprio_history_proj
+    assert torch.isfinite(projection.weight).all() and torch.isfinite(projection.bias).all()
+    assert projection.weight.abs().sum() > 0
+    torch.testing.assert_close(projection.weight, expected.weight, rtol=0, atol=0)
+    torch.testing.assert_close(projection.bias, expected.bias, rtol=0, atol=0)
+    state = loaded.state_dict()
+    for key, value in saved.items():
+        torch.testing.assert_close(state[key], value, rtol=0, atol=0, msg=key)
+
+
+def test_pi05_non_strict_load_draws_the_same_random_numbers_as_a_normal_build(tiny_pi, tmp_path):
+    variant = VARIANTS[2]
+    _save(variant.policy_cls(_config(variant)), tmp_path)
+    memory_config = _config(variant, use_proprioceptive_memory=True)
+
+    torch.manual_seed(4)
+    reference = PI05Policy(memory_config).model.proprio_history_proj
+    rng_after_build = torch.random.get_rng_state()
+    torch.manual_seed(4)
+    loaded = PI05Policy.from_pretrained(tmp_path, config=memory_config, strict=False)
+
+    # The projection keeps its construction-time init: nothing re-draws it after the build.
+    assert torch.equal(torch.random.get_rng_state(), rng_after_build)
+    projection = loaded.model.proprio_history_proj
+    torch.testing.assert_close(projection.weight, reference.weight, rtol=0, atol=0)
+    torch.testing.assert_close(projection.bias, reference.bias, rtol=0, atol=0)
+
+
+def test_pi05_memory_checkpoint_strict_load_draws_no_random_numbers(tiny_pi, tmp_path):
+    memory_config = _config(VARIANTS[2], use_proprioceptive_memory=True)
+    saved = _save(PI05Policy(memory_config), tmp_path)
+    assert set(PROPRIO_KEYS) <= saved.keys()
+
+    rng_before = torch.random.get_rng_state()
+    loaded = PI05Policy.from_pretrained(tmp_path, config=memory_config, strict=True)
+
+    # The checkpoint supplies the projection, so it is not re-initialised before the load.
+    assert torch.equal(torch.random.get_rng_state(), rng_before)
+    for key in PROPRIO_KEYS:
+        torch.testing.assert_close(loaded.state_dict()[key], saved[key], rtol=0, atol=0)

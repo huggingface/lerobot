@@ -42,8 +42,10 @@ if TYPE_CHECKING or _transformers_available:
         _gated_residual,
         layernorm_forward,
         sdpa_attention_forward,
+        skip_weight_init,
     )
 else:
+    skip_weight_init = None
     CONFIG_MAPPING = None
     cached_file = None
     modeling_gemma = None
@@ -1157,8 +1159,11 @@ class PI05Policy(PreTrainedPolicy):
             )
 
         # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
+        # A strict load overwrites every tensor, so skip the random initialisation it would
+        # throw away.
+        require_package("transformers", extra="pi")
+        with skip_weight_init() if strict else nullcontext():
+            model = cls(config, **kwargs)
 
         # Load state dict (expects keys with "model." prefix). A missing or unreadable checkpoint,
         # or one that lacks model keys, raises rather than leaving the policy randomly initialised.
@@ -1177,13 +1182,24 @@ class PI05Policy(PreTrainedPolicy):
         original_state_dict = load_file(resolved_file)
         print("✓ Loaded state dict from model.safetensors")
 
-        remapped_state_dict = model._convert_openpi_state_dict(original_state_dict)
+        remapped_state_dict = model._remap_openpi_state_dict(original_state_dict)
+        proprio_keys = ("model.proprio_history_proj.weight", "model.proprio_history_proj.bias")
+        proprio = model.model.proprio_history_proj
+        if strict and proprio is not None and not all(key in remapped_state_dict for key in proprio_keys):
+            # pi05_base lacks this projection, so `_prepare_pretrained_state_dict` keeps the model's
+            # own values, which a strict load built without initialising.
+            proprio.reset_parameters()
+        remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
 
         load_state_dict_checked(model, remapped_state_dict, require_all_keys=strict)
         return model
 
     def _convert_openpi_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
         """Map an OpenPI-format checkpoint (e.g. ``lerobot/pi05_base``) onto this policy's keys."""
+        return self._prepare_pretrained_state_dict(self._remap_openpi_state_dict(state_dict))
+
+    def _remap_openpi_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Rename an OpenPI-format checkpoint's keys to this policy's, without filling any gaps."""
         # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
         fixed_state_dict = self._fix_pytorch_state_dict_keys(state_dict, self.config)
 
@@ -1202,7 +1218,7 @@ class PI05Policy(PreTrainedPolicy):
         if remap_count > 0:
             print(f"Remapped {remap_count} state dict keys")
 
-        return self._prepare_pretrained_state_dict(remapped_state_dict)
+        return remapped_state_dict
 
     def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
         # MEM's continuous proprioceptive projection is new relative to

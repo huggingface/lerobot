@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -24,6 +26,7 @@ from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.cache_utils import DynamicCache
+    from transformers.initialization import no_init_weights
     from transformers.masking_utils import create_causal_mask
     from transformers.modeling_layers import GradientCheckpointingLayer
     from transformers.modeling_outputs import BaseModelOutputWithPast
@@ -50,6 +53,31 @@ else:
     GradientCheckpointingLayer = None
     BaseModelOutputWithPast = None
     create_causal_mask = None
+    no_init_weights = None
+
+
+@contextmanager
+def skip_weight_init() -> Iterator[None]:
+    """Build modules without running their random weight initialisation.
+
+    Inside the block, the ``torch.nn.init`` functions that ``nn.Linear``, ``nn.Embedding`` etc.
+    call from ``reset_parameters`` do nothing, and neither does ``PreTrainedModel.init_weights``.
+    Parameters are allocated but hold whatever memory they were given, so use it only when every
+    parameter and persistent buffer is overwritten afterwards, such as before a strict checkpoint
+    load. Non-persistent buffers (rotary ``inv_freq``, SigLIP ``position_ids``, Gemma
+    ``embed_scale``) are computed in ``__init__`` without ``torch.nn.init``, so they stay correct.
+
+    A PI policy builds its PaliGemma and Gemma stacks, each with a 257152-token embedding, then
+    replaces their decoders. Initialising weights that the checkpoint overwrites is most of the
+    time ``from_pretrained`` takes.
+
+    This patches process-global state (the ``torch.nn.init`` functions and
+    ``PreTrainedModel.init_weights``) and is not thread-safe: a module another thread builds
+    meanwhile is not initialised either, and overlapping blocks can leave the no-ops installed.
+    Keep the block to the model construction itself, with Hub downloads and other I/O outside it.
+    """
+    with no_init_weights():
+        yield
 
 
 def _gated_residual(
@@ -375,6 +403,7 @@ class PaliGemmaForConditionalGenerationWithPiGemma(PaliGemmaForConditionalGenera
 
 
 __all__ = [
+    "skip_weight_init",
     "PiGemmaModel",
     "PiGemmaForCausalLM",
     "PiGemmaRMSNorm",

@@ -17,6 +17,7 @@
 import builtins
 import logging
 from collections import deque
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
@@ -38,8 +39,10 @@ if TYPE_CHECKING or _transformers_available:
         PiGemmaForCausalLM,
         _gated_residual,
         layernorm_forward,
+        skip_weight_init,
     )
 else:
+    skip_weight_init = None
     CONFIG_MAPPING = None
     cached_file = None
     modeling_gemma = None
@@ -842,8 +845,11 @@ class PI0Policy(PreTrainedPolicy):
             )
 
         # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
+        # A strict load overwrites every tensor, so skip the random initialisation it would
+        # throw away.
+        require_package("transformers", extra="pi")
+        with skip_weight_init() if strict else nullcontext():
+            model = cls(config, **kwargs)
 
         # Load state dict (expects keys with "model." prefix). A missing or unreadable checkpoint,
         # or one that lacks model keys, raises rather than leaving the policy randomly initialised.
