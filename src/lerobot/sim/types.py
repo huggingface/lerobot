@@ -46,7 +46,7 @@ class EnvDescriptor:
         tasks (`dict[str, list[int]]`):
             Task IDs of each suite.
         max_episode_steps (`int`):
-            Steps before an episode is truncated.
+            Upper bound on episode length for the advertised vector environment.
         robot_type (`str`, *optional*, defaults to `""`):
             Body a sim robot records in its dataset.
         config (`dict[str, Any]`, *optional*):
