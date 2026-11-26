@@ -300,6 +300,7 @@ def rollout(
         disable=inside_slurm(),  # we dont want progress bar when we use slurm, since it clutters the logs
         leave=False,
     )
+    running_successes = np.zeros(env.num_envs, dtype=bool)
     check_env_attributes_and_types(env)
     try:
         while not np.all(done) and step < max_steps:
@@ -398,6 +399,10 @@ def rollout(
                         recording_datasets[env_idx].save_episode()
                 raw_observation = deepcopy(observation)
 
+            if not progbar.disable:
+                # A completed slot may already have reset while the other slots are still running.
+                running_successes |= np.asarray(successes, dtype=bool) & ~done
+                progbar.set_postfix({"running_success_rate": f"{running_successes.mean() * 100:.1f}%"})
             done = episode_ends | done
 
             all_actions.append(torch.from_numpy(action_numpy))
@@ -414,10 +419,6 @@ def rollout(
             )
 
             step += 1
-            running_success_rate = (
-                einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
-            )
-            progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
             progbar.update()
     finally:
         if recording_datasets is not None:
