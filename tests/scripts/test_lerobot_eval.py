@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -31,6 +32,7 @@ from lerobot.policies import PreTrainedPolicy
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
+from lerobot.scripts import lerobot_eval
 from lerobot.scripts.lerobot_eval import eval_policy_all, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.fixtures.toy_env import ToyEnvConfig
@@ -286,3 +288,49 @@ def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
         dataset = LeRobotDataset(repo_id=f"eval_recording_env_{index}", root=root)
         assert [bool(dataset[i]["next.done"].item()) for i in range(len(dataset))] == expected
         assert bool(dataset[len(dataset) - 1]["next.success"].item()) == (index == 0)
+
+
+@pytest.mark.parametrize(("n_episodes", "render_limit"), [(3, 10), (3, 2), (4, 10), (3, 0)])
+def test_eval_policy_renders_only_evaluated_episodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, n_episodes: int, render_limit: int
+) -> None:
+    class _RenderEnv(_TwoStepEnv):
+        metadata = {"render_fps": 10}
+        observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-10.0, 10.0, (6,), np.float32)})
+
+        def _observation(self) -> dict[str, np.ndarray]:
+            return {"agent_pos": np.full(6, self.episode + self.tick * 0.1, np.float32)}
+
+        def render(self) -> np.ndarray:
+            return np.full((8, 8, 3), self.episode * 50, np.uint8)
+
+    rendered_seeds: dict[str, int] = {}
+
+    def save_video(path: str | Path, frames: np.ndarray, _fps: int) -> None:
+        rendered_seeds[Path(path).name] = int(frames[0, 0, 0, 0]) // 50
+
+    monkeypatch.setattr(lerobot_eval, "write_video", save_video)
+    PreTrainedPolicy.register(_RecordingPolicy)
+    preprocessor, postprocessor = make_policy_processor_pipelines([], [])
+    env = gym.vector.SyncVectorEnv([_RenderEnv, _RenderEnv])
+    try:
+        result = lerobot_eval.eval_policy(
+            env,
+            _RecordingPolicy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=n_episodes,
+            max_episodes_rendered=render_limit,
+            videos_dir=tmp_path,
+            start_seed=0,
+        )
+    finally:
+        env.close()
+
+    seeds = [episode["seed"] for episode in result["per_episode"]]
+    assert seeds == list(range(n_episodes))
+    expected_seeds = {f"eval_episode_{i}.mp4": seed for i, seed in enumerate(seeds[:render_limit])}
+    assert [Path(path).name for path in result.get("video_paths", [])] == list(expected_seeds)
+    assert rendered_seeds == expected_seeds
