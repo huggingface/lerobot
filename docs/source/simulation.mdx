@@ -123,7 +123,7 @@ lerobot-env-server --config_path=docker/sim/configs/libero.yaml --docker=true
 lerobot-env-server --envhub=my-org/my-env@<commit> --trust_remote_code=true --docker=true
 ```
 
-`--docker=true` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type` (or builds one from the EnvHub repository), mounts the effective YAML, and runs the container on the host network, so the server listens on `localhost:7448` unless `--zenoh.listen_endpoints` says otherwise. Swap the YAML to select another simulator. Each simulator's control rate, action convention, component names and robot type come from its integration's `conventions()` (an EnvHub repository's `LEROBOT_SIM`), so a YAML only names the task and the simulator's options.
+`--docker=true` uses `docker/sim/compose.server.yaml`, selects the image from `sim.type` (or builds one from the EnvHub repository), mounts the effective YAML, and runs the container on the host network, so the server listens on `localhost:7448` unless `--zenoh.listen_endpoints` says otherwise. Swap the YAML to select another simulator. Each simulator's control rate, action convention, component names and robot type come from its integration's `sim_settings()` (an EnvHub repository's), so a YAML only names the task and the simulator's options.
 
 As for `lerobot-policy-server`, every YAML field accepts a nested command-line override, and the file stays unchanged. A dictionary value such as `sim.kwargs` is merged into the YAML's:
 

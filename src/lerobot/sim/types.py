@@ -90,6 +90,23 @@ class EnvDescriptor:
         """Return the action space of one env: unbounded float32."""
         return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
 
+    def schema_difference(self, other: "EnvDescriptor") -> str:
+        """Name what differs in `other`'s observations and actions, matched by name in any order; empty if none."""
+        expected = {f.name: f for f in (*self.features, self.action_feature)}
+        actual = {f.name: f for f in (*other.features, other.action_feature)}
+        differences = []
+        for name in sorted(expected.keys() | actual.keys()):
+            want, got = expected.get(name), actual.get(name)
+            if want is None or got is None:
+                differences.append(f"{name} {'missing' if got is None else 'not expected'}")
+                continue
+            for key in ("shape", "dtype", "names", "semantics"):
+                if getattr(want, key) != getattr(got, key):
+                    differences.append(
+                        f"{name} {key}: expected {getattr(want, key)}, got {getattr(got, key)}"
+                    )
+        return "; ".join(differences)
+
     def same_schema(self, other: "EnvDescriptor") -> bool:
         """Return whether `other` has the same observation features, action feature and semantics."""
         return (

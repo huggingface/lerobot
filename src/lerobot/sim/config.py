@@ -21,6 +21,7 @@ from typing import Any
 
 from lerobot.sim.integrations import simulator_required
 from lerobot.sim.types import CONTROL_MODES
+from lerobot.utils.constants import ACTION, OBS_STR
 
 
 @dataclass
@@ -47,6 +48,9 @@ class SimConfig:
             Component names of the action. Left empty, they are `command_<i>`.
         robot_type (`str`, *optional*, defaults to `""`):
             Body a sim robot records in its dataset. Left empty, it records `sim_robot`.
+        features (`dict[str, tuple[int, ...]]`, *optional*):
+            Shape of each observation, with LeRobot keys, and of the `action`. Given, the env is described
+            without building its simulator, and the simulator is checked against them when it is built.
     """
 
     type: str
@@ -58,11 +62,18 @@ class SimConfig:
     state_names: tuple[str, ...] = ()
     action_names: tuple[str, ...] = ()
     robot_type: str = ""
+    features: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Check `control_mode` and `fps`, and fill in the default `semantics`."""
+        """Check `control_mode`, `fps` and `features`, and fill in the default `semantics`."""
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
+        self.features = {name: tuple(shape) for name, shape in self.features.items()}
+        if self.features and ACTION not in self.features:
+            raise ValueError(f"features must give the shape of {ACTION!r}, got {sorted(self.features)}")
+        unknown = [name for name in self.features if name != ACTION and not name.startswith(f"{OBS_STR}.")]
+        if unknown:
+            raise ValueError(f"features are observations ({OBS_STR}.*) or {ACTION!r}, got {unknown}")
         if self.control_mode not in CONTROL_MODES:
             raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
         if not math.isfinite(self.fps) or self.fps <= 0:
@@ -71,12 +82,19 @@ class SimConfig:
             self.semantics = f"{self.type}-{self.control_mode.replace('_', '-')}-v1"
 
     @classmethod
-    def resolve(cls, settings: dict[str, Any]) -> "SimConfig":
-        """Build a config from `settings`, taking missing values from the integration's `conventions`."""
-        with simulator_required(settings["type"]):
-            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
-            conventions = getattr(integration, "conventions", None)
-            declared = conventions(settings.get("kwargs") or {}) if conventions else {}
+    def resolve(cls, settings: dict[str, Any], suite: str) -> "SimConfig":
+        """Build `suite`'s config from `settings`, taking missing values from the integration's `sim_settings`.
+
+        With no suite (`""`), the integration's values are left out: `LocalVectorEnv`, given the settings
+        themselves, resolves its own suite once it knows it.
+        """
+        declared: dict[str, Any] = {}
+        if suite:
+            with simulator_required(settings["type"]):
+                integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
+                sim_settings = getattr(integration, "sim_settings", None)
+                if sim_settings is not None:
+                    declared = sim_settings(suite, **(settings.get("kwargs") or {}))
         return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
 
 
@@ -84,7 +102,7 @@ class SimConfig:
 class SimSettings:
     """`SimConfig`'s fields as a config file gives them; `SimConfig.resolve` fills in the unset (`None`) ones.
 
-    They come from the integration's conventions, so a file only names the simulator, its task and its options.
+    They come from the integration's `sim_settings`, so a file only names the simulator, its task and its options.
     """
 
     type: str = ""
@@ -96,3 +114,4 @@ class SimSettings:
     state_names: list[str] | None = None
     action_names: list[str] | None = None
     robot_type: str | None = None
+    features: dict[str, list[int]] | None = None

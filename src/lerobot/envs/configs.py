@@ -94,8 +94,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         return _gym_settings(self, "delta")
 
     def sim_config(self) -> SimConfig:
-        """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
-        return SimConfig.resolve(self.sim_settings())
+        """Return ``sim_settings()`` with the sim's defaults for the first suite ``task`` names."""
+        suite = next((part.strip() for part in (self.task or "").split(",") if part.strip()), "")
+        return SimConfig.resolve(self.sim_settings(), suite)
 
     def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""

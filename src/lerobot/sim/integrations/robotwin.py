@@ -35,7 +35,7 @@ from lerobot.utils.import_utils import _scipy_available
 
 from .utils import RobotObservation, canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]
 
 
 # scipy is only used for end-effector-pose composition (``--env.action_mode=ee``); guard it so this
@@ -661,7 +661,7 @@ def env_fns(
     return {k: dict(v) for k, v in out.items()}
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+def sim_settings(task: str, **kwargs: Any) -> dict[str, Any]:
     """Return RoboTwin's default fps, control mode, state and action names, and robot type."""
     # Left arm first; each arm has six joints, then its gripper.
     joints = tuple(

@@ -48,12 +48,16 @@ def test_libero_numpy_adapter_parity(monkeypatch):
 
 
 def test_libero_declares_the_control_mode_it_runs(monkeypatch):
-    relative = resolve_without_simulator(LiberoEnvConfig(task="libero_spatial").sim_settings(), monkeypatch)
+    relative = resolve_without_simulator(
+        LiberoEnvConfig(task="libero_spatial").sim_settings(), monkeypatch, "libero_spatial"
+    )
     assert (relative.control_mode, relative.semantics) == ("delta", "libero-delta-v1")
     assert relative.action_names[0] == "eef.delta.x"
     # LIBERO's absolute mode commands end-effector poses, not deltas.
     absolute = resolve_without_simulator(
-        LiberoEnvConfig(task="libero_spatial", control_mode="absolute").sim_settings(), monkeypatch
+        LiberoEnvConfig(task="libero_spatial", control_mode="absolute").sim_settings(),
+        monkeypatch,
+        "libero_spatial",
     )
     assert (absolute.control_mode, absolute.semantics) == ("eef_pose", "libero-eef-pose-v1")
     assert absolute.action_names[0] == "eef.x"

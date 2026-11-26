@@ -14,7 +14,7 @@ A benchmark touches three layers:
 
 | Component            | Location                                      | What to add                                                                                                                                                             |
 | -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `conventions()` for that simulator                                                          |
+| Integration          | `src/lerobot/sim/integrations/<benchmark>.py` | The `gym.Env`, `env_fns()` factories, `canonical_observation()` adapter and `sim_settings()` for that simulator                                                         |
 | Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                                                                 |
 | Server configuration | `docker/sim/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                                                                       |
 | Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies (including any CUDA toolkit, as the base is plain Ubuntu) and asset revisions; the final stage adds the server |
@@ -31,7 +31,7 @@ native simulator → LocalVectorEnv, locally or on an env server → canonical N
   → policy → saved action postprocessing → native simulator
 ```
 
-Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and its control conventions in its `conventions()`, so that evaluation and rollout agree. Reuse `sim/integrations/utils.py` only for mappings shared by integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
+Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and its control conventions in its `sim_settings()`, so that evaluation and rollout agree. Reuse `sim/integrations/utils.py` only for mappings shared by integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
 
 ## How evaluation runs
 
@@ -98,9 +98,9 @@ Any other array is passed as `observation.<key>`. Rename your simulator's output
 
 **GPU-based simulators (e.g. MuJoCo with EGL rendering):** if your simulator allocates GPU/EGL contexts during `__init__`, defer that allocation to a `_ensure_env()` helper called on first `reset()`/`step()`, so that an environment built in a worker process does not inherit stale GPU handles. See `LiberoEnv._ensure_env()` for the pattern.
 
-### Conventions (`conventions()` in the integration)
+### Settings (`sim_settings()` in the integration)
 
-Return the simulator's control rate, controller and ordered component names from `conventions(kwargs)`, a function of the simulator's options (they can depend on an action mode, as for RoboTwin). They fill the settings a configuration leaves out, and name the state and action components for robots, datasets and checkpoints. `semantics` defaults to `<type>-<control>-v1`. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim_robot`.
+Return the simulator's control rate, controller and ordered component names from `sim_settings(task, **kwargs)`, a function of one suite's name and of the simulator's options (they can depend on an action mode, as for RoboTwin). LeRobot calls it for each suite it runs, so suites can differ, e.g. in control rate. They fill the settings a configuration leaves out, and name the state and action components for robots, datasets and checkpoints. `semantics` defaults to `<type>-<control>-v1`. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim_robot`. `features`, the shapes of the observations and of the action, are optional: given, LeRobot describes the suite without building its simulator, then checks the simulator against them once it is built.
 
 ### The config (`src/lerobot/envs/configs.py`)
 
@@ -140,7 +140,7 @@ Keep its defaults and the server YAML's in agreement: a served evaluation refuse
 
 ## Changing a benchmark
 
-An integration's `canonical_observation()`, `conventions()` and environment wrapper decide what the policy sees and how its actions apply. A wrong image orientation, state order or control rate does not crash: the policy sees slightly wrong inputs, and its success rate drops. A change to any of them comes with:
+An integration's `canonical_observation()`, `sim_settings()` and environment wrapper decide what the policy sees and how its actions apply. A wrong image orientation, state order or control rate does not crash: the policy sees slightly wrong inputs, and its success rate drops. A change to any of them comes with:
 
 - **A regression test** comparing the old and new outputs on a recorded or synthetic observation. `test_libero_numpy_adapter_parity` in `tests/sim/integrations/test_libero.py` is the model: it shows the torch-free LIBERO adapter produces exactly what the previous LIBERO processor did.
 - **The expected effect on scores** in the pull request: none, or which scores should move and why.

@@ -81,7 +81,7 @@ Published examples: [SO-101 tabletop in MuJoCo](https://huggingface.co/spaces/le
 
 | File               | Required               | Content                                                                                                                        |
 | ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `env.py`           | yes                    | `make_env`, the environment, and optionally `LEROBOT_SIM`                                                                      |
+| `env.py`           | yes                    | `make_env`, the environment, and optionally `sim_settings`                                                                     |
 | `requirements.txt` | no                     | Python packages `env.py` needs, installed in the server image                                                                  |
 | `packages.txt`     | no                     | Ubuntu packages, one per line, installed in the server image                                                                   |
 | `index.html`       | yes for a static Space | A page presenting the environment and explaining how to run it                                                                 |
@@ -132,20 +132,34 @@ LeRobot maps the observation to `observation.images.<camera>` (`observation.imag
 
 If your simulator allocates GPU or EGL contexts, create them on the first `reset()` rather than in `__init__`, so that an environment built in a worker process does not inherit stale handles.
 
-### `LEROBOT_SIM`
+### `sim_settings`
 
-A module-level dictionary in `env.py` that describes the environment. It applies locally and when served, and every key is optional:
+A function in `env.py` that describes the environment, one suite at a time. It applies locally and when served, and returns a dictionary in which every key is optional:
 
-| Key            | Meaning                                                  | Default                            |
-| -------------- | -------------------------------------------------------- | ---------------------------------- |
-| `fps`          | Control rate: `step()`s per second of simulated time     | `30`                               |
-| `control_mode` | Action convention: `position`, `delta` or `eef_pose`     | `"position"`                       |
-| `semantics`    | Name of the observation and action conventions           | `"envhub-v1"`                      |
-| `state_names`  | Names of the `observation.state` components, in order    | `state_0`, `state_1`, ...          |
-| `action_names` | Names of the action components, in order                 | `command_0`, `command_1`, ...      |
-| `robot_type`   | Simulated body, recorded as the `robot_type` of datasets | none (datasets record `sim_robot`) |
+| Key            | Meaning                                                                                                            | Default                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `fps`          | Control rate: `step()`s per second of simulated time                                                               | `30`                                  |
+| `control_mode` | Action convention: `position`, `delta` or `eef_pose`                                                               | `"position"`                          |
+| `semantics`    | Name of the observation and action conventions                                                                     | `"envhub-v1"`                         |
+| `state_names`  | Names of the `observation.state` components, in order                                                              | `state_0`, `state_1`, ...             |
+| `action_names` | Names of the action components, in order                                                                           | `command_0`, `command_1`, ...         |
+| `robot_type`   | Simulated body, recorded as the `robot_type` of datasets                                                           | none (datasets record `sim_robot`)    |
+| `features`     | Shape of each observation, with LeRobot keys (`observation.images.<camera>`, `observation.state`), and of `action` | read from the environment, once built |
+
+LeRobot calls `sim_settings(task, **make_env_kwargs)` before it builds a suite, with that suite's name (a key of what `make_env` or `vector_env_fns` returns) and the repository's options (`--env.make_env_kwargs`). `task` is always one suite: with `--env.task=pick,place`, it is called for `pick` and for `place`, and with no `--env.task`, for each suite LeRobot runs. Return the same dictionary for every suite, or one per suite when they differ, for example in robot or control rate. It runs before the environment is built, so read the values from something quick to load, such as a file next to `env.py`:
+
+```python
+def sim_settings(task: str, **make_env_kwargs) -> dict:
+    return {"fps": 15 if task == "pick" else 50, "control_mode": "delta", "robot_type": "panda"}
+```
 
 Declare it whenever the defaults do not match your environment. An unknown key is an error, naming the closest valid one. A server's `--sim.*` options override it, e.g. `--sim.fps=15`.
+
+With `features`, LeRobot describes a suite without building it: in your process, no simulator starts before the first reset, and a server starts without building one, then builds the suite each session opens. Once built, a simulator is checked against its declared features. Without them, LeRobot builds the first suite's simulator to read them.
+
+The suites of one run must have the same observations and actions, since one policy runs them all. A suite that differs stops the run, naming the differences: before any simulator is built when the suites declare their features, else when it is built. Separate runs can use suites that differ, for example a humanoid suite and an arm suite of one server, each evaluated with its own policy. A server describes a suite other than its first one only from its declared features, so such suites need them.
+
+A repository written for LeRobot 0.7 sets the dictionary as a module-level `LEROBOT_SIM` instead. LeRobot still reads it, with a deprecation warning. Define both to also run on older versions; `sim_settings` then takes precedence.
 
 To make an environment a twin of a real robot LeRobot supports, use that robot's names, units and `robot_type`. A teleoperator then drives it as it drives the real follower, datasets recorded in simulation and on hardware match, and a checkpoint trained on one runs on the other. For an SO-101, that is `shoulder_pan.pos` ... `gripper.pos`, in degrees with the gripper from 0 to 100, and `robot_type: "so_follower"`. When LeRobot has no class for your robot, pick a short snake_case `robot_type` (`panda`, `sawyer`).
 
@@ -163,13 +177,20 @@ from gymnasium import spaces
 
 JOINTS = ["x.pos", "y.pos"]
 
-# How LeRobot describes this environment, locally and when served. Every key is optional.
-LEROBOT_SIM = {
-    "fps": 10,
-    "control_mode": "position",
-    "state_names": JOINTS,
-    "action_names": JOINTS,
-}
+
+def sim_settings(task: str, image_size: int = 96, **make_env_kwargs) -> dict:
+    """How LeRobot describes this environment, locally and when served. Every key is optional."""
+    return {
+        "fps": 10,
+        "control_mode": "position",
+        "state_names": JOINTS,
+        "action_names": JOINTS,
+        "features": {
+            "observation.images.top": (image_size, image_size, 3),
+            "observation.state": (2,),
+            "action": (2,),
+        },
+    }
 
 
 class ReachEnv(gym.Env):
@@ -218,7 +239,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False, **kwargs):
     return {"reach": {0: vector_cls([factory] * n_envs)}}
 ```
 
-Each EnvHub Space should document its simulator, installation requirements, observations and actions, and provide a page or demo showing what to expect. For real simulators, see the [MuJoCo](https://huggingface.co/spaces/lerobot/so101-tabletop-mujoco) and [Isaac Sim](https://huggingface.co/spaces/lerobot/so101-tabletop-isaac) SO-101 Spaces. They share the same `LEROBOT_SIM`, and the Isaac one installs its simulator through `requirements.txt` and `packages.txt`.
+Each EnvHub Space should document its simulator, installation requirements, observations and actions, and provide a page or demo showing what to expect. For real simulators, see the [MuJoCo](https://huggingface.co/spaces/lerobot/so101-tabletop-mujoco) and [Isaac Sim](https://huggingface.co/spaces/lerobot/so101-tabletop-isaac) SO-101 Spaces. They declare the same settings, and the Isaac one installs its simulator through `requirements.txt` and `packages.txt`.
 
 ### Batches
 
@@ -386,7 +407,7 @@ An environment's versions are its Hub commits. A revision after `@` (a commit, a
 | `--env.server.endpoint`                       | Run the environment on an env server; see [Simulation](./simulation) for the other server options   |
 | `lerobot-env-server --envhub=<path>`          | Serve a repository; with `--docker=true`, in an image built from it                                 |
 | `lerobot-env-server --sim.kwargs=...`         | The server's `make_env` options, e.g. `'{make_env_kwargs: {episode_length: 900}}'`                  |
-| `lerobot-env-server --sim.<key>=...`          | Override a `LEROBOT_SIM` value, e.g. `--sim.fps=15`                                                 |
+| `lerobot-env-server --sim.<key>=...`          | Override a `sim_settings` value, e.g. `--sim.fps=15`                                                |
 
 ### Security
 
@@ -398,12 +419,13 @@ Running an EnvHub environment runs its code, with your permissions. LeRobot neve
 
 ### Troubleshooting
 
-| Error                                                                        | Fix                                                                                                                        |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `Refusing to run the EnvHub environment`                                     | Add `--env.trust_remote_code=true` (`--robot.env.trust_remote_code=true`) after reading the code, or serve the environment |
-| `failed to import because the dependency '<name>' is not installed`          | Install the repository's `requirements.txt` next to LeRobot, or serve the environment                                      |
-| `requires an unwrapped SyncVectorEnv or AsyncVectorEnv`                      | Return the vector env built from factories, without wrappers                                                               |
-| `LEROBOT_SIM has unknown keys`                                               | Use the keys listed in [`LEROBOT_SIM`](#lerobot_sim); the error names the closest one                                      |
-| `The env server at ... runs another environment than this command describes` | The server runs another environment than `--env.*` describes; pass the same options, or restart the server with yours      |
-| `A sim robot needs an observation.state feature with component names`        | Return `agent_pos` in the observation                                                                                      |
-| `images must be HWC uint8 with three channels`                               | Convert camera images to height x width x 3, `uint8`                                                                       |
+| Error                                                                        | Fix                                                                                                                         |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `Refusing to run the EnvHub environment`                                     | Add `--env.trust_remote_code=true` (`--robot.env.trust_remote_code=true`) after reading the code, or serve the environment  |
+| `failed to import because the dependency '<name>' is not installed`          | Install the repository's `requirements.txt` next to LeRobot, or serve the environment                                       |
+| `requires an unwrapped SyncVectorEnv or AsyncVectorEnv`                      | Return the vector env built from factories, without wrappers                                                                |
+| `sim_settings has unknown keys`                                              | Use the keys listed in [`sim_settings`](#sim_settings); the error names the closest one                                     |
+| `Suite '<suite>' ... has other observations or actions than ...`             | The suite's simulator differs from its declared `features`, or from the run's other suites; the error lists the differences |
+| `The env server at ... runs another environment than this command describes` | The server runs another environment than `--env.*` describes; pass the same options, or restart the server with yours       |
+| `A sim robot needs an observation.state feature with component names`        | Return `agent_pos` in the observation                                                                                       |
+| `images must be HWC uint8 with three channels`                               | Convert camera images to height x width x 3, `uint8`                                                                        |

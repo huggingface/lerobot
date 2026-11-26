@@ -54,7 +54,7 @@ def test_overrides_merge_into_the_config_and_leave_the_file_alone(tmp_path):
     cfg = draccus.parse(EnvServerLaunchConfig, config_path=str(path), args=args)
     assert cfg.sim.task == "libero_goal"
     assert cfg.sim.kwargs == {"init_states": False, "camera_name": "agentview_image"}
-    # Left to the integration's conventions when the server starts.
+    # Left to the integration's sim_settings when the server starts.
     assert cfg.sim.fps is None and cfg.sim.control_mode is None
     assert path.read_text() == source
     with pytest.raises(SystemExit):
@@ -217,10 +217,13 @@ def test_build_and_stop_require_docker():
 
 
 @pytest.mark.parametrize("path", SERVER_CONFIGS, ids=str)
-def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypatch):
+def test_server_configs_take_their_settings_from_the_simulator(path, monkeypatch):
     # The image starts the server from this file, so it must parse as the launch config.
     cfg = draccus.parse(EnvServerLaunchConfig, config_path=str(path), args=[])
-    sim = resolve_without_simulator(asdict(cfg.sim), monkeypatch)
+    # A server configured with every task (RoboLab's) resolves each suite as a session opens it; these
+    # integrations' settings don't depend on the suite.
+    suite = cfg.sim.task.split(",")[0] or "any_suite"
+    sim = resolve_without_simulator(asdict(cfg.sim), monkeypatch, suite)
     assert sim.semantics == f"{sim.type}-{sim.control_mode.replace('_', '-')}-v1"
     assert sim.action_names
 
@@ -229,7 +232,8 @@ def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypa
 def test_server_configs_serve_what_their_env_options_describe(path, monkeypatch):
     # `--env.type=<sim> --env.task=<task> --env.server.endpoint=...` against the shipped image passes the client's check.
     sim = yaml.safe_load(path.read_text())["sim"]
-    served = asdict(resolve_without_simulator(sim, monkeypatch))
+    # The server describes its first suite to a client that names none.
+    served = asdict(resolve_without_simulator(sim, monkeypatch, sim["task"].split(",")[0] or "any_suite"))
     expected = EnvConfig.get_choice_class(sim["type"])(task=sim["task"]).sim_settings()
     check_served(served, expected, str(path))
 

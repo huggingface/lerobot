@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from multiprocessing.connection import Connection
-from typing import Any
+from typing import Any, cast
 
 import gymnasium as gym
 import numpy as np
@@ -33,7 +33,7 @@ from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 from lerobot.sim.config import SimConfig
 from lerobot.sim.integrations import simulator_required
 from lerobot.sim.types import EnvDescriptor, StepResult
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,58 @@ class _ProcessEnv:
         self._pipe.close()
 
 
+def _describe(
+    config: SimConfig,
+    tasks: dict[str, list[int]],
+    observations: Mapping[str, tuple[tuple[int, ...], str]],
+    action_shape: tuple[int, ...],
+    max_episode_steps: int,
+) -> EnvDescriptor:
+    """Describe observations given as `{name: (shape, dtype)}` and a 1-D action, with a suite's settings."""
+    features = []
+    for name, (shape, dtype) in observations.items():
+        names = config.state_names if name == OBS_STATE else ()
+        if not names and len(shape) == 1:
+            names = tuple(f"state_{index}" for index in range(shape[0]))
+        kind = "rgb" if dtype == "uint8" else "tensor"
+        features.append(FeatureSpec(name, shape, dtype, kind, names, config.semantics))
+    if len(action_shape) != 1:
+        raise ValueError(f"LeRobot simulation needs a 1-D action, got shape {action_shape}")
+    dim = action_shape[0]
+    action_names = config.action_names or tuple(f"command_{index}" for index in range(dim))
+    action = FeatureSpec(ACTION, (dim,), "float32", names=action_names, semantics=config.semantics)
+    return EnvDescriptor(
+        sim_type=config.type,
+        semantics=config.semantics,
+        features=tuple(features),
+        action_feature=action,
+        control_mode=config.control_mode,
+        fps=config.fps,
+        tasks=tasks,
+        max_episode_steps=max_episode_steps,
+        robot_type=config.robot_type,
+        config=asdict(config),
+    )
+
+
+def declared_descriptor(
+    config: SimConfig, tasks: dict[str, list[int]], max_episode_steps: int = _DEFAULT_MAX_EPISODE_STEPS
+) -> EnvDescriptor | None:
+    """Describe a suite from its declared `features`, without building it; None if it declares none.
+
+    Images are `uint8` and every other observation `float32`, as `canonical_observation` returns them. The episode
+    limit is a placeholder until the simulator is built.
+    """
+    if not config.features:
+        return None
+    observations = {
+        name: (shape, "uint8" if name == OBS_IMAGE or name.startswith(f"{OBS_IMAGES}.") else "float32")
+        for name, shape in config.features.items()
+        if name != ACTION
+    }
+    return _describe(config, tasks, observations, config.features[ACTION], max_episode_steps)
+
+
 class LocalVectorEnv(gym.vector.VectorEnv):
     """`num_envs` envs of one simulator task, with no autoreset.
 
@@ -240,18 +292,19 @@ class LocalVectorEnv(gym.vector.VectorEnv):
 
     def __init__(
         self,
-        config: SimConfig,
+        config: SimConfig | Mapping[str, Any],
         num_envs: int = 1,
         task_group: str | None = None,
         task_id: int | None = None,
         use_async_envs: bool = False,
         descriptor: EnvDescriptor | None = None,
     ) -> None:
-        """Select the task; given a `descriptor`, build the simulators on first use instead of now.
+        """Select the task; build its simulators now only if nothing else describes them.
 
         Args:
-            config (`SimConfig`):
-                The simulator to run.
+            config (`SimConfig` or `dict`):
+                The simulator to run: a `SimConfig`, used as is, or its settings (`SimSettings` fields), resolved
+                with the integration's `sim_settings` for the suite this env runs.
             num_envs (`int`, *optional*, defaults to `1`):
                 Number of envs in the batch.
             task_group (`str`, *optional*):
@@ -261,41 +314,55 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             use_async_envs (`bool`, *optional*, defaults to `False`):
                 Run each env in its own worker process.
             descriptor (`EnvDescriptor`, *optional*):
-                The env's descriptor, if already known, as for another task of the same simulator.
+                The descriptor of another suite of the same run, which this one must match: one policy runs
+                them all.
         """
-        with simulator_required(config.type):
-            integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
+        settings: dict[str, Any] | None = None
+        if isinstance(config, SimConfig):
+            sim_type, task, options = config.type, config.task, config.kwargs
+        else:
+            settings = dict(config)
+            sim_type, task, options = (
+                settings["type"],
+                settings.get("task") or "",
+                settings.get("kwargs") or {},
+            )
+        with simulator_required(sim_type):
+            integration = importlib.import_module(f"lerobot.sim.integrations.{sim_type}")
             vector_env_fns = getattr(integration, "vector_env_fns", None)
             # None from vector_env_fns: this config has no batched sim (e.g. an EnvHub repo without one).
             factories = None
             if vector_env_fns is not None:
-                factories = vector_env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
+                factories = vector_env_fns(task=task, n_envs=num_envs, **options)
             # One vector env for the whole batch, instead of one env per batch entry.
             self._batched = factories is not None
             if factories is None:
-                factories = integration.env_fns(task=config.task, n_envs=num_envs, **config.kwargs)
+                factories = integration.env_fns(task=task, n_envs=num_envs, **options)
         self._canonical_observation = integration.canonical_observation
-        self.config = config
         self.num_envs = num_envs
         self.use_async_envs = use_async_envs
         self.tasks: dict[str, list[int]] = {group: list(tasks) for group, tasks in factories.items()}
         self.task_group = task_group or next(iter(factories))
         if self.task_group not in factories:
             raise ValueError(f"Unknown task {self.task_group!r}; this environment has {sorted(self.tasks)}")
+        # Each suite has its own settings, e.g. its control rate or robot.
+        self.config = (
+            SimConfig.resolve(settings, self.task_group) if settings is not None else cast(SimConfig, config)
+        )
         task_factories = factories[self.task_group]
         # Default to the suite's first task id, not 0: a suite can be filtered (e.g. LIBERO's task_ids).
         self.task_id: int = next(iter(task_factories), 0) if task_id is None else task_id
         if self.task_id not in task_factories:
             raise ValueError(f"Unknown task: {self.task_group}/{self.task_id}")
         fns = [task_factories[self.task_id]] if self._batched else task_factories[self.task_id]
-        self._env_fns: list[Callable[[], Any]] = [partial(_build_env, config.type, fn) for fn in fns]
+        self._env_fns: list[Callable[[], Any]] = [partial(_build_env, sim_type, fn) for fn in fns]
         self._envs: list[Any] = []
         self._last: list[_LastStep] = []
         self._elapsed_steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
         self._max_steps: list[int] = []
         self._latest: StepResult | None = None
         try:
-            self.descriptor = descriptor or self._describe()
+            self.descriptor = self._first_descriptor(descriptor)
         except BaseException:
             self._close_envs()
             raise
@@ -304,7 +371,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
         self.metadata = {
-            "render_fps": config.fps,
+            "render_fps": self.config.fps,
             "autoreset_mode": _NO_AUTORESET,
             "canonical_observations": True,
         }
@@ -402,9 +469,29 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             self.closed = True
 
     def _build(self) -> None:
-        """Build the simulators if not built yet, so each task builds on first use."""
+        """Build the simulators if not built yet, checking them against the descriptor they were described by."""
         if self._envs:
             return
+        self._build_envs()
+        try:
+            built = self._read_descriptor()
+            # Observations are a dict: features declared in another order still match.
+            difference = self.descriptor.schema_difference(built)
+            if difference:
+                source = "its declared features" if self.config.features else "the run's other suites"
+                raise ValueError(
+                    f"Suite {self.task_group!r} of {self.config.type} has other observations or actions than "
+                    f"{source}: {difference}"
+                )
+        except BaseException:
+            # Not left built, so a later call checks it again instead of running it.
+            self._close_envs()
+            raise
+        # The same schema, with the simulator's own episode limit.
+        self.descriptor = built
+
+    def _build_envs(self) -> None:
+        """Build the simulators, so each task builds on first use."""
         try:
             if self.use_async_envs:
                 # Start every process before waiting, so the environments build in parallel.
@@ -432,9 +519,39 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             )
         self._max_steps = [limit or _DEFAULT_MAX_EPISODE_STEPS for limit in limits]
 
-    def _describe(self) -> EnvDescriptor:
-        """Build the envs and describe the first one's observations (with LeRobot keys) and actions."""
-        self._build()
+    def _first_descriptor(self, other: EnvDescriptor | None) -> EnvDescriptor:
+        """Describe the env from its declared features, else from `other`, without building it.
+
+        With neither, build it to describe it. `_build` checks a description the simulator didn't give.
+        """
+        limit = other.max_episode_steps if other is not None else _DEFAULT_MAX_EPISODE_STEPS
+        described = declared_descriptor(self.config, self.tasks, limit)
+        if described is None and other is not None:
+            try:
+                described = _describe(
+                    self.config,
+                    self.tasks,
+                    {f.name: (f.shape, f.dtype) for f in other.features},
+                    other.action_feature.shape,
+                    limit,
+                )
+            except ValueError as error:
+                raise ValueError(
+                    f"Suite {self.task_group!r} of {self.config.type} doesn't fit the run's other suites: {error}"
+                ) from error
+        if described is None:
+            self._build_envs()
+            return self._read_descriptor()
+        difference = other.schema_difference(described) if other is not None else ""
+        if difference:
+            raise ValueError(
+                f"Suite {self.task_group!r} of {self.config.type} has other observations or actions than the "
+                f"run's other suites: {difference}"
+            )
+        return described
+
+    def _read_descriptor(self) -> EnvDescriptor:
+        """Describe the first built env's observations (with LeRobot keys) and actions."""
         observation_space, action_space = _spaces(self._envs[0])
         if not isinstance(observation_space, spaces.Dict):
             raise ValueError(
@@ -443,29 +560,11 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             )
         if not isinstance(action_space, spaces.Box) or len(action_space.shape) != 1:
             raise ValueError(f"LeRobot simulation needs a 1-D Box action space, got {action_space}")
-        config = self.config
-        features = []
-        for name, value in self._canonical_observation(observation_space.sample()).items():
-            names = config.state_names if name == OBS_STATE else ()
-            if not names and value.ndim == 1:
-                names = tuple(f"state_{index}" for index in range(value.shape[0]))
-            kind = "rgb" if value.dtype == np.uint8 else "tensor"
-            features.append(FeatureSpec(name, value.shape, value.dtype.name, kind, names, config.semantics))
-        dim = action_space.shape[0]
-        action_names = config.action_names or tuple(f"command_{index}" for index in range(dim))
-        action = FeatureSpec(ACTION, (dim,), "float32", names=action_names, semantics=config.semantics)
-        return EnvDescriptor(
-            sim_type=config.type,
-            semantics=config.semantics,
-            features=tuple(features),
-            action_feature=action,
-            control_mode=config.control_mode,
-            fps=config.fps,
-            tasks=self.tasks,
-            max_episode_steps=self._max_steps[0],
-            robot_type=config.robot_type,
-            config=asdict(config),
-        )
+        observations = {
+            name: (value.shape, value.dtype.name)
+            for name, value in self._canonical_observation(observation_space.sample()).items()
+        }
+        return _describe(self.config, self.tasks, observations, action_space.shape, self._max_steps[0])
 
     def _reset_envs(self, seeds: list[int | None]) -> list[Any]:
         """Reset the simulators, one seed per env, and return each env's raw observation."""

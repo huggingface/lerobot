@@ -185,7 +185,8 @@ def _env_factory(
         )
         probe = connect()
         try:
-            descriptor = probe.describe()
+            # The run's first suite: every suite it runs must match it, one policy runs them all.
+            descriptor = probe.describe(task_group)
         finally:
             probe.close()
         check_served(descriptor.config, settings, server.endpoint)
@@ -202,10 +203,9 @@ def _env_factory(
 
         return descriptor, make
 
-    sim = cfg.sim_config()
     parallel = use_async_envs and n_envs > 1
     # Reuse the env built to read the descriptor for its own task instead of building it twice.
-    first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
+    first = [LocalVectorEnv(settings, n_envs, task_group, task_id, parallel)]
     descriptor = first[0].descriptor
 
     def make_local(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
@@ -215,7 +215,7 @@ def _env_factory(
                 return env
             env.close()
         # With the descriptor given, the other tasks build their sims on first use.
-        return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
+        return LocalVectorEnv(settings, n_envs, group, task_id, parallel, descriptor)
 
     return descriptor, make_local
 

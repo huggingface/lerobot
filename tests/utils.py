@@ -225,7 +225,7 @@ def import_without_simulator(name: str, monkeypatch: pytest.MonkeyPatch) -> Modu
                 monkeypatch.setitem(sys.modules, module, sys.modules.pop(module))
 
 
-def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch) -> SimConfig:
-    """``SimConfig.resolve``, stubbing the simulator's own packages when they are not installed."""
+def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch, suite: str) -> SimConfig:
+    """``SimConfig.resolve`` for ``suite``, stubbing the simulator's own packages when they are not installed."""
     import_without_simulator(settings["type"], monkeypatch)
-    return SimConfig.resolve(settings)
+    return SimConfig.resolve(settings, suite)

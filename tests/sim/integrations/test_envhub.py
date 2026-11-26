@@ -15,6 +15,11 @@
 """Environments built from an EnvHub repository's `env.py`."""
 
 import builtins
+import contextlib
+import logging
+import threading
+import warnings
+from collections.abc import Iterator
 
 import gymnasium as gym
 import numpy as np
@@ -196,28 +201,49 @@ def test_envhub_needs_dict_observations(hub_repo):
 
 def test_envhub_settings_come_from_the_repository(hub_repo):
     declared = (
-        'LEROBOT_SIM = {"fps": 15, "control_mode": "delta", "semantics": "reach-delta-v1",'
-        ' "state_names": ["x", "y"], "action_names": ["dx", "dy"], "robot_type": "so_follower"}\n'
+        "def sim_settings(task, **options):\n"
+        "    return {'fps': 15, 'control_mode': 'delta', 'semantics': 'reach-delta-v1', 'state_names': ['x', 'y'],"
+        " 'action_names': ['dx', 'dy'], 'robot_type': 'so_follower'}\n"
     )
     sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
     # Repository values fill the settings left out; an explicit value wins over them.
     hub_repo(_ENVHUB_ENV + declared)
-    resolved = SimConfig.resolve({**sim, "fps": 50})
+    resolved = SimConfig.resolve({**sim, "fps": 50}, "reach_suite")
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (50, "delta", "reach-delta-v1")
     assert (resolved.state_names, resolved.action_names) == (("x", "y"), ("dx", "dy"))
     assert resolved.robot_type == "so_follower"
-    # Repositories without LEROBOT_SIM keep working with the defaults.
+    # Repositories without sim_settings keep working with the defaults.
     hub_repo(_ENVHUB_ENV)
-    resolved = SimConfig.resolve(sim)
+    resolved = SimConfig.resolve(sim, "reach_suite")
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (30, "position", "envhub-v1")
-    # A typo or an old key in LEROBOT_SIM is an error naming the closest valid key, not an ignored setting.
-    hub_repo(_ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30, "control": "delta", "gripper_indices": [6]}\n')
+    # A typo or an old key is an error naming the closest valid key, not an ignored setting.
+    hub_repo(
+        _ENVHUB_ENV
+        + "def sim_settings(task):\n    return {'fsp': 30, 'control': 'delta', 'gripper_indices': [6]}\n"
+    )
     with pytest.raises(ValueError) as error:
-        SimConfig.resolve(sim)
+        SimConfig.resolve(sim, "reach_suite")
     message = str(error.value)
+    assert "sim_settings has unknown keys" in message
     assert "'control' (did you mean 'control_mode'?)" in message
     assert "'fsp' (did you mean 'fps'?)" in message
     assert "'gripper_indices'; expected" in message
+    hub_repo(_ENVHUB_ENV + "def sim_settings(task):\n    return [('fps', 15)]\n")
+    with pytest.raises(TypeError, match="must return a dict"):
+        SimConfig.resolve(sim, "reach_suite")
+
+
+def test_envhub_still_reads_lerobot_sim_with_a_warning(hub_repo):
+    # Repositories written for LeRobot 0.7 set a LEROBOT_SIM dict.
+    sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    hub_repo(_ENVHUB_ENV + "LEROBOT_SIM = {'fps': 15}\n")
+    with pytest.warns(FutureWarning, match=r"define sim_settings\(task, \*\*make_env_kwargs\)"):
+        assert SimConfig.resolve(sim, "reach_suite").fps == 15
+    # A repository keeping LEROBOT_SIM for older LeRobot versions next to sim_settings gets no warning.
+    hub_repo(_ENVHUB_ENV + "LEROBOT_SIM = {'fps': 15}\n\ndef sim_settings(task):\n    return {'fps': 20}\n")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert SimConfig.resolve(sim, "reach_suite").fps == 20
 
 
 def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it():
@@ -388,6 +414,200 @@ def test_envhub_builds_only_the_requested_suite(hub_repo, monkeypatch):
             suite[0].close()
     with pytest.raises(ValueError, match=r"Unknown task 'other'; this environment has \['far', 'near'\]"):
         make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="other"), 2)
+
+
+_TWO_SUITES = (
+    _BATCHED_ENV
+    + """
+
+class WideReach(ReachBatch):
+    # A suite whose robot reports one more state component.
+    def __init__(self, n_envs, goal):
+        super().__init__(n_envs, goal)
+        self.single_observation_space["agent_pos"] = spaces.Box(-10, 10, (3,), np.float32)
+
+    def _obs(self):
+        obs = super()._obs()
+        obs["agent_pos"] = np.concatenate([obs["agent_pos"], np.zeros((self.num_envs, 1), np.float32)], axis=1)
+        return obs
+
+
+def vector_env_fns(task, n_envs, wide=False):
+    return {"near": {0: partial(ReachBatch, n_envs, 0.0)}, "far": {0: partial(WideReach if wide else ReachBatch, n_envs, 5.0)}}
+"""
+)
+
+
+def test_envhub_settings_differ_per_suite(hub_repo, monkeypatch):
+    # One repository whose suites run at different rates; sim_settings only ever gets one suite's name.
+    hub_repo(
+        _TWO_SUITES
+        + "\n\ndef sim_settings(task, wide=False):\n    return {'fps': {'near': 50, 'far': 15}[task]}\n"
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    # Both suites requested, or every suite of the repository.
+    for task in ("far,near", ""):
+        envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task=task), 2)
+        try:
+            assert envs["far"][0].metadata["render_fps"] == 15 and envs["far"][0].descriptor.fps == 15
+            assert envs["near"][0].metadata["render_fps"] == 50 and envs["near"][0].descriptor.fps == 50
+        finally:
+            for suite in envs.values():
+                suite[0].close()
+    # Given the settings, as a server configured with every suite has them, an env resolves its own suite.
+    served = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    env = LocalVectorEnv(served, 2, "far")
+    try:
+        assert env.descriptor.fps == 15
+    finally:
+        env.close()
+
+
+@contextlib.contextmanager
+def _serve_every_suite(**make_env_kwargs) -> Iterator[str]:
+    """Serve the repository `user/reach` with every suite, as `lerobot-env-server --envhub=user/reach` does."""
+    pytest.importorskip("zenoh")
+    pytest.importorskip("msgpack")
+    from lerobot.env_server import EnvServer, EnvServerConfig
+    from lerobot.sim import SimSettings
+    from lerobot.transport.zenoh import ZenohConfig
+    from tests.fixtures.sim_server import free_port
+
+    endpoint = f"tcp/127.0.0.1:{free_port()}"
+    kwargs = {"hub_path": "user/reach", "trust_remote_code": True, "make_env_kwargs": make_env_kwargs}
+    server = EnvServer(
+        EnvServerConfig(
+            sim=SimSettings(type="envhub", task="", kwargs=kwargs),
+            deployment="envhub",
+            zenoh=ZenohConfig(listen_endpoints=[endpoint]),
+        )
+    )
+    thread = threading.Thread(target=server.serve)
+    thread.start()
+    try:
+        assert server.ready.wait(5)
+        yield endpoint
+    finally:
+        server.stop()
+        thread.join(5)
+    assert not thread.is_alive()
+
+
+def test_a_server_with_every_suite_gives_each_session_its_suite_settings(hub_repo, monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    hub_repo(
+        _TWO_SUITES
+        + "\n\ndef sim_settings(task, wide=False):\n    return {'fps': {'near': 50, 'far': 15}[task]}\n"
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    with _serve_every_suite() as endpoint:
+        # Without declared features, the first suite is built to describe the env.
+        assert builtins.envhub_builds == [0.0]
+        assert "suite 'near' has no declared features" in caplog.text
+        for suite, fps in (("far", 15), ("near", 50)):
+            env = make_env(HubEnvConfig(task=suite, server=EnvClientConfig(endpoint)), 2)[suite][0]
+            try:
+                env.reset(seed=[3, 4])
+                assert env.metadata["render_fps"] == fps
+            finally:
+                env.close()
+
+
+def test_a_server_serves_suites_that_differ_to_different_runs(hub_repo, monkeypatch):
+    # A wide arm suite and a narrow one, each declaring its own observations.
+    hub_repo(
+        _TWO_SUITES
+        + "\n\ndef sim_settings(task, wide=False):\n"
+        + "    state = 3 if task == 'far' and wide else 2\n"
+        + "    return {'features': {'observation.images.front': (8, 8, 3), 'observation.state': (state,), 'action': (2,)}}\n"
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    with _serve_every_suite(wide=True) as endpoint:
+        # Ready without building any simulator.
+        assert builtins.envhub_builds == []
+        # One run over both suites: one policy can't run both, so it fails before either is built.
+        envs = make_env(HubEnvConfig(task="near,far", server=EnvClientConfig(endpoint)), 2)
+        try:
+            with pytest.raises(
+                Exception, match=r"Suite 'far' .* observation.state shape: expected \(2,\), got \(3,\)"
+            ):
+                envs["far"][0].reset(seed=[3, 4])
+            assert builtins.envhub_builds == []
+        finally:
+            for suite in envs.values():
+                suite[0].close()
+        # One run per suite: each gets its own observations, and only its own simulator is built.
+        for suite, state, builds in (("far", 3, [5.0]), ("near", 2, [5.0, 0.0])):
+            env = make_env(HubEnvConfig(task=suite, server=EnvClientConfig(endpoint)), 2)[suite][0]
+            try:
+                assert env.reset(seed=[3, 4])[0]["observation.state"].shape == (2, state)
+                assert builtins.envhub_builds == builds
+            finally:
+                env.close()
+
+
+def test_envhub_suites_of_one_run_must_match(hub_repo, monkeypatch):
+    hub_repo(_TWO_SUITES)
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    config = HubEnvConfig(
+        hub_path="user/reach", trust_remote_code=True, task="near,far", make_env_kwargs={"wide": True}
+    )
+    envs = make_env(config, 2)
+    try:
+        # One policy runs every suite: one with other observations fails when it is built, not at its first step.
+        with pytest.raises(
+            ValueError,
+            match=r"Suite 'far' .* other suites: observation.state shape: expected \(2,\), got \(3,\)",
+        ):
+            envs["far"][0].reset(seed=[3, 4])
+    finally:
+        for suite in envs.values():
+            suite[0].close()
+
+
+def test_envhub_declared_features_describe_suites_without_building_them(hub_repo, monkeypatch):
+    # In another order than the simulator returns them: observations are matched by name.
+    features = "{'action': (2,), 'observation.state': (2,), 'observation.images.front': (8, 8, 3)}"
+    hub_repo(
+        _TWO_SUITES + f"\n\ndef sim_settings(task, wide=False):\n    return {{'features': {features}}}\n"
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="near,far"), 2)
+    try:
+        assert builtins.envhub_builds == []
+        assert {f.name: f.shape for f in envs["near"][0].descriptor.features} == {
+            "observation.images.front": (8, 8, 3),
+            "observation.state": (2,),
+        }
+        # Built on the first reset and checked against what it declares.
+        envs["near"][0].reset(seed=[3, 4])
+        assert builtins.envhub_builds == [0.0]
+        assert envs["near"][0].call("_max_episode_steps") == (5, 5)
+    finally:
+        for suite in envs.values():
+            suite[0].close()
+    # A simulator building other observations than its suite declares fails on its first reset.
+    config = HubEnvConfig(
+        hub_path="user/reach", trust_remote_code=True, task="far", make_env_kwargs={"wide": True}
+    )
+    env = make_env(config, 2)["far"][0]
+    try:
+        with pytest.raises(
+            ValueError, match=r"Suite 'far' .* its declared features: observation.state shape"
+        ):
+            env.reset(seed=[3, 4])
+    finally:
+        env.close()
+    # Suites declaring different observations fail before any simulator is built.
+    hub_repo(
+        _TWO_SUITES
+        + "\n\ndef sim_settings(task, wide=False):\n"
+        + "    return {'features': {'observation.images.front': (8, 8, 3), 'observation.state': (2 if task == 'near' else 3,), 'action': (2,)}}\n"
+    )
+    builtins.envhub_builds.clear()
+    with pytest.raises(ValueError, match="Suite 'far' .* other suites"):
+        make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="near,far"), 2)
+    assert builtins.envhub_builds == []
 
 
 def test_a_served_envhub_client_needs_no_hub_path():

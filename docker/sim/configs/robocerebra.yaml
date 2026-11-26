@@ -1,4 +1,4 @@
-# Settings left out (fps, control mode, component names, robot type) come from the integration's conventions().
+# Settings left out (fps, control mode, component names, robot type) come from the integration's sim_settings().
 deployment: robocerebra
 sim:
   type: robocerebra
