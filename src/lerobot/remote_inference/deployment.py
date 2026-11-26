@@ -122,7 +122,7 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         raise ValueError("Explicit canonical features and action_feature are required")
     path = resolve_artifact(cfg.model.repo_or_path, cfg.model.revision)
     artifacts = {"checkpoint": path}
-    policy_cfg = PreTrainedConfig.from_pretrained(path)
+    policy_cfg = PreTrainedConfig.from_pretrained(path, trust_remote_code=cfg.model.trust_remote_code)
     execution_steps = cfg.execution.n_action_steps
     if execution_steps is not None:
         if "n_action_steps" not in {field.name for field in fields(policy_cfg)}:
