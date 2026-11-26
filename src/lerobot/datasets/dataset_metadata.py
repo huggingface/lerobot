@@ -82,6 +82,7 @@ class LeRobotDatasetMetadata:
         *,
         repo_type: Literal["dataset", "bucket"] = "dataset",
         token: str | bool | None = None,
+        subfolder: str | None = None,
     ) -> None:
         """Load or download metadata for an existing LeRobot dataset.
 
@@ -96,7 +97,9 @@ class LeRobotDatasetMetadata:
                 existing local datasets are still looked up under
                 ``$HF_LEROBOT_HOME/{repo_id}``, but Hub downloads use a
                 revision-safe snapshot cache under
-                ``$HF_LEROBOT_HOME/hub``.
+                ``$HF_LEROBOT_HOME/hub``. With a ``subfolder``, this is the
+                local copy of the repository and the dataset lives in
+                ``root/subfolder``.
             revision: Git revision (branch, tag, or commit hash). Defaults to
                 the current codebase version.
             force_cache_sync: If ``True``, re-download metadata from the Hub
@@ -109,20 +112,33 @@ class LeRobotDatasetMetadata:
                 token, ``True`` to require the locally stored token, ``False``
                 to disable authentication, or ``None`` to use the Hugging Face
                 Hub default.
+            subfolder: Path of the dataset inside its Hub repository, for
+                repositories that hold several datasets. Only this folder of
+                the repository is downloaded. Not supported with
+                ``repo_type="bucket"``.
         """
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
+        self.subfolder = (subfolder or "").rstrip("/") or None
+        if self.subfolder is not None:
+            if repo_type == "bucket":
+                raise ValueError(f"subfolder={subfolder!r} is not supported with repo_type='bucket'.")
+            if "\\" in self.subfolder or any(part in ("", ".", "..") for part in self.subfolder.split("/")):
+                raise ValueError(
+                    f"subfolder={subfolder!r} must be a relative POSIX path inside the repository, "
+                    "without '.', '..' or empty segments."
+                )
 
         self.repo_id = repo_id
         self.repo_type = repo_type
         self.revision: str | None = revision if revision else CODEBASE_VERSION
         self._requested_root = Path(root) if root is not None else None
         if self._requested_root is not None:
-            self.root = self._requested_root
+            self.root = self._requested_root / (self.subfolder or "")
         elif self.repo_type == "bucket":
             self.root = HF_LEROBOT_HUB_CACHE / ("buckets--" + self.repo_id.replace("/", "--"))
         else:
-            self.root = HF_LEROBOT_HOME / repo_id
+            self.root = HF_LEROBOT_HOME / repo_id / (self.subfolder or "")
         self._pq_writer: pq.ParquetWriter | None = None
         self.latest_episode: dict | None = None
         self._metadata_buffer: list[dict] = []
@@ -148,7 +164,8 @@ class LeRobotDatasetMetadata:
                     else:
                         self.revision = get_safe_version(self.repo_id, self.revision, token=token)
 
-                self._pull_from_repo(allow_patterns="meta/", token=token)
+                meta_pattern = f"{self.subfolder}/meta/" if self.subfolder else "meta/"
+                self._pull_from_repo(allow_patterns=meta_pattern, token=token)
                 self._load_metadata()
 
     def _flush_metadata_buffer(self) -> None:
@@ -284,7 +301,7 @@ class LeRobotDatasetMetadata:
                     ignore_patterns=ignore_patterns,
                     **token_kwargs,
                 )
-            )
+            ) / (self.subfolder or "")
             return
 
         self._requested_root.mkdir(exist_ok=True, parents=True)
@@ -297,7 +314,7 @@ class LeRobotDatasetMetadata:
             ignore_patterns=ignore_patterns,
             **token_kwargs,
         )
-        self.root = self._requested_root
+        self.root = self._requested_root / (self.subfolder or "")
 
     @property
     def url_root(self) -> str:
@@ -836,6 +853,7 @@ class LeRobotDatasetMetadata:
         """
         obj = cls.__new__(cls)
         obj.repo_id = repo_id
+        obj.subfolder = None
         obj._requested_root = Path(root) if root is not None else None
         obj.root = obj._requested_root if obj._requested_root is not None else HF_LEROBOT_HOME / repo_id
 

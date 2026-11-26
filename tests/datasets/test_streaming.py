@@ -31,13 +31,14 @@ pytestmark = pytest.mark.dataset
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])
 @pytest.mark.parametrize("from_local", [False, True])
+@pytest.mark.parametrize("subfolder", [None, "datasets/dataset-a"])
 def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
-    tmp_path, monkeypatch, token, from_local
+    tmp_path, monkeypatch, token, from_local, subfolder
 ):
     requested_root = tmp_path / "local" if from_local else None
     metadata = SimpleNamespace(
         repo_id=DUMMY_REPO_ID,
-        root=requested_root or tmp_path / "snapshots" / ("a" * 40),
+        root=(requested_root or tmp_path / "snapshots" / ("a" * 40)) / (subfolder or ""),
         revision=streaming_dataset_module.CODEBASE_VERSION,
         _version=streaming_dataset_module.CODEBASE_VERSION,
         features={},
@@ -46,13 +47,14 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
         depth_keys=[],
         image_keys=[],
         rescale_depth_stats=Mock(),
+        subfolder=subfolder,
     )
     metadata_cls = Mock(return_value=metadata)
     ensure_sidecar = Mock(return_value=None)
     monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", metadata_cls)
     monkeypatch.setattr(streaming_dataset_module, "ensure_dataset_mp4_sidecar", ensure_sidecar)
 
-    dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token)
+    dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token, subfolder=subfolder)
 
     metadata_cls.assert_called_once_with(
         DUMMY_REPO_ID,
@@ -61,11 +63,13 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
         force_cache_sync=False,
         repo_type="dataset",
         token=token,
+        subfolder=subfolder,
     )
     assert ensure_sidecar.call_args.kwargs["token"] is (None if from_local else token)
     assert dataset._streaming_io_token is (None if from_local else token)
+    in_repo = f"/{subfolder}" if subfolder else ""
     assert dataset._data_root == (
-        str(requested_root) if from_local else f"hf://datasets/{DUMMY_REPO_ID}@{'a' * 40}"
+        f"{requested_root}{in_repo}" if from_local else f"hf://datasets/{DUMMY_REPO_ID}@{'a' * 40}{in_repo}"
     )
 
 
@@ -81,6 +85,7 @@ def test_streaming_dataset_sidecar_lock_timeout(tmp_path, monkeypatch):
         depth_keys=[],
         image_keys=[],
         rescale_depth_stats=Mock(),
+        subfolder=None,
     )
     ensure_sidecar = Mock(side_effect=TimeoutError("Timed out waiting 5s for MP4 sidecar lock"))
     monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", Mock(return_value=metadata))

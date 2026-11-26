@@ -154,6 +154,7 @@ def load_dataset_metadata(
     force_cache_sync: bool = False,
     *,
     storage_options: dict[str, str] | None = None,
+    subfolder: str | None = None,
 ) -> LeRobotDatasetMetadata:
     """Load dataset metadata wherever the dataset lives.
 
@@ -163,6 +164,11 @@ def load_dataset_metadata(
     from .dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415  (import cycle)
 
     if root is not None and is_remote_uri(root):
+        if subfolder:
+            raise ValueError(
+                f"subfolder={subfolder!r} cannot be combined with the object-store root {str(root)!r}. "
+                "Write the subfolder into the root URI instead."
+            )
         root = localize_remote_root(
             repo_id,
             root,
@@ -179,4 +185,5 @@ def load_dataset_metadata(
         repo_type=repo_type,
         token=token,
         force_cache_sync=force_cache_sync,
+        subfolder=subfolder,
     )

@@ -175,6 +175,45 @@ streaming concurrency, the MP4 sidecar index, memory settings, resume and troubl
   </figure>
 </div>
 
+## Load a dataset from a repository subfolder
+
+A Hub repository can hold several LeRobot datasets, each in its own folder with its own
+`meta/info.json`:
+
+```text
+my-org/my-datasets
+├── dataset-a/
+│   ├── meta/
+│   ├── data/
+│   └── videos/
+└── dataset-b/
+    ├── meta/
+    ├── data/
+    └── videos/
+```
+
+Select one with `subfolder`. Only that folder of the repository is downloaded:
+
+```python
+from lerobot.datasets import LeRobotDataset, StreamingLeRobotDataset
+
+dataset = LeRobotDataset("my-org/my-datasets", subfolder="dataset-a")
+streaming_dataset = StreamingLeRobotDataset("my-org/my-datasets", subfolder="dataset-a")
+```
+
+With a subfolder, `root` is the local copy of the whole repository and the dataset lives in
+`root/subfolder`. This is the layout that `hf download --local-dir` creates:
+
+```bash
+hf download my-org/my-datasets --repo-type dataset --include "dataset-a/*" --local-dir /path/to/my-datasets
+lerobot-train \
+  --dataset.repo_id=my-org/my-datasets \
+  --dataset.subfolder=dataset-a \
+  --dataset.root=/path/to/my-datasets \
+  --policy.type=act \
+  --output_dir=outputs/train/act_dataset_a
+```
+
 ## Image transforms
 
 Image transforms are data augmentations applied to camera frames during training to improve model robustness and generalization. LeRobot supports various transforms including brightness, contrast, saturation, hue, and sharpness adjustments.

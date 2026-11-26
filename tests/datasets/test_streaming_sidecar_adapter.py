@@ -35,7 +35,7 @@ pytestmark = pytest.mark.dataset
 
 
 def test_hub_data_root_is_revision_qualified() -> None:
-    meta = SimpleNamespace(repo_id="owner/dataset", revision="a" * 40)
+    meta = SimpleNamespace(repo_id="owner/dataset", revision="a" * 40, subfolder=None)
 
     root = streaming_data_root(meta, requested_root=None, configured_data_root=None)
 
@@ -55,7 +55,11 @@ def test_explicit_bucket_root_is_preserved() -> None:
 
 def test_bucket_root_is_derived_without_an_override() -> None:
     meta = SimpleNamespace(
-        repo_id="owner/bucket", repo_type="bucket", url_root="hf://buckets/owner/bucket", revision="v3.0"
+        repo_id="owner/bucket",
+        repo_type="bucket",
+        url_root="hf://buckets/owner/bucket",
+        revision="v3.0",
+        subfolder=None,
     )
 
     root = streaming_data_root(meta, requested_root=None, configured_data_root=None)
@@ -65,7 +69,7 @@ def test_bucket_root_is_derived_without_an_override() -> None:
 
 
 def test_local_and_generic_remote_roots_use_fsspec(tmp_path: Path) -> None:
-    meta = SimpleNamespace(repo_id="owner/dataset", revision="commit-sha")
+    meta = SimpleNamespace(repo_id="owner/dataset", revision="commit-sha", subfolder=None)
 
     local = streaming_data_root(meta, requested_root=tmp_path, configured_data_root=None)
 
@@ -108,6 +112,7 @@ def test_default_hub_root_uses_metadata_snapshot_commit(tmp_path: Path) -> None:
         repo_id="owner/dataset",
         revision="main",
         root=tmp_path / "snapshots" / sha,
+        subfolder=None,
     )
     assert streaming_data_root(meta, requested_root=None, configured_data_root=None) == (
         f"hf://datasets/owner/dataset@{sha}"

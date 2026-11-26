@@ -115,6 +115,7 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
         episodes=cfg.episodes,
         revision=cfg.revision,
         video_backend=cfg.video_backend,
+        subfolder=cfg.subfolder,
     )
 
     output_dir = output_dir / cfg.repo_id.split("/")[-1]

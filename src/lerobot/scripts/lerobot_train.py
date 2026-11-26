@@ -776,6 +776,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             device,
             dataset_root=cfg.dataset.root,
             dataset_repo_id=cfg.dataset.repo_id,
+            dataset_subfolder=cfg.dataset.subfolder,
         )
 
     # --- banner (main process only; numel() reads metadata — on DTensors it is the GLOBAL shape,

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 import fsspec
@@ -43,7 +43,8 @@ def streaming_data_root(
         meta (`LeRobotDatasetMetadata`):
             Dataset identity and resolved metadata revision.
         requested_root (`str | Path | None`):
-            Explicit local payload directory, if provided.
+            Explicit local copy of the repository, if provided. The payload lives in its
+            ``meta.subfolder`` when the dataset has one.
         configured_data_root (`str | None`):
             Payload override, taking precedence over the local root and metadata URL.
         token (`str | bool | None`, *optional*):
@@ -54,17 +55,21 @@ def streaming_data_root(
     """
     if configured_data_root is not None:
         return StorageLocation.parse(configured_data_root.rstrip("/")).pinned(token=token).uri
+    subfolder = meta.subfolder
     if requested_root is not None:
-        return str(Path(requested_root).expanduser())
+        return str(Path(requested_root).expanduser() / (subfolder or ""))
     if getattr(meta, "repo_type", "dataset") == "bucket":
         return meta.url_root
     revision = meta.revision
     metadata_root = Path(meta.root) if hasattr(meta, "root") else None
+    if metadata_root is not None and subfolder:
+        metadata_root = metadata_root.parents[len(PurePosixPath(subfolder).parts) - 1]
     if metadata_root is not None and metadata_root.parent.name == "snapshots":
         revision = metadata_root.name
     # Pin to an immutable commit for both sidecar identity and payload reads.
     url_root = getattr(meta, "url_root", hf_dataset_uri(meta.repo_id))
-    return StorageLocation.parse(f"{url_root}@{revision}").pinned(token=token).uri
+    suffix = f"/{subfolder}" if subfolder else ""
+    return StorageLocation.parse(f"{url_root}@{revision}{suffix}").pinned(token=token).uri
 
 
 def make_sidecar_spec(

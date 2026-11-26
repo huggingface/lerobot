@@ -76,6 +76,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
         storage_options: dict[str, str] | None = None,
+        subfolder: str | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -226,6 +227,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             storage_options (dict[str, str] | None, optional): Storage connection options used for
                 both remote metadata and data reads. Currently supported by the Lance backend,
                 which forwards them to ``lancedb.connect``. Defaults to None.
+            subfolder (str | None, optional): Path of the dataset inside its Hub repository, for
+                repositories that hold several datasets. ``root`` is then the local copy of the repository
+                and the dataset lives in ``root/subfolder``. Only this folder of the repository is
+                downloaded. Supported for the default storage format only. Defaults to None.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -241,6 +246,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Datasets can live at an object-store root (e.g. ``hf://datasets/...``): a
         # non-default reader reads the data in place and only ``meta/`` is localized.
         self._storage_root = root if root is not None and is_remote_uri(root) else None
+        if subfolder and self._storage_root is not None:
+            raise ValueError(
+                f"subfolder={subfolder!r} cannot be combined with the object-store root "
+                f"{str(self._storage_root)!r}. Write the subfolder into the root URI instead."
+            )
         if self._storage_root is not None:
             root = localize_remote_root(
                 repo_id,
@@ -271,7 +281,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # an object-store root already refreshed its meta/ at localization
             force_cache_sync=force_cache_sync and self._storage_root is None,
             token=token,
+            subfolder=subfolder,
         )
+        if self.meta.subfolder is not None and self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise ValueError(
+                f"subfolder is only supported for the default {DEFAULT_STORAGE_FORMAT!r} storage format, "
+                f"but {self.repo_id}/{self.meta.subfolder} uses {self.meta.storage_format!r}."
+            )
         self.root = self.meta.root
         self.revision = self.meta.revision
         self.meta.rescale_depth_stats(self._depth_output_unit)
@@ -676,7 +692,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         Creates the repository if it does not exist, uploads all dataset files
         (optionally excluding videos), generates a dataset card, and tags the
-        revision with the current codebase version.
+        revision with the current codebase version. A dataset loaded from a
+        repository subfolder is uploaded into that subfolder, with its card as
+        ``<subfolder>/README.md``.
 
         Args:
             branch: Optional branch to push to. Created from the current
@@ -699,6 +717,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
             )
+        subfolder = self.meta.subfolder
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
@@ -722,6 +741,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         hub_api.upload_folder(
             repo_id=self.repo_id,
             folder_path=self.root,
+            path_in_repo=subfolder,
             repo_type="dataset",
             revision=branch,
             allow_patterns=allow_patterns,
@@ -731,7 +751,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
         card = create_lerobot_dataset_card(
             tags=tags, dataset_info=self.meta.info, license=license, repo_id=self.repo_id, **card_kwargs
         )
-        card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+        if subfolder is None:
+            card.push_to_hub(repo_id=self.repo_id, repo_type="dataset", revision=branch)
+        else:
+            hub_api.upload_file(
+                path_or_fileobj=str(card).encode(),
+                path_in_repo=f"{subfolder}/README.md",
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                revision=branch,
+            )
 
         if tag_version:
             with contextlib.suppress(RevisionNotFoundError):
@@ -747,6 +776,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         reader = cast(DatasetReader, self.reader)
         if self.episodes is not None:
             files = reader.get_episodes_file_paths()
+        subfolder = self.meta.subfolder
+        if subfolder is not None:
+            files = [f"{subfolder}/{path}" for path in files] if files is not None else [f"{subfolder}/"]
+            ignore_patterns = None if download_videos else f"{subfolder}/videos/"
 
         if self._requested_root is None:
             self.meta.root = Path(
@@ -759,7 +792,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     ignore_patterns=ignore_patterns,
                     **token_kwargs,
                 )
-            )
+            ) / (subfolder or "")
         else:
             self._requested_root.mkdir(exist_ok=True, parents=True)
             snapshot_download(
@@ -771,7 +804,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 ignore_patterns=ignore_patterns,
                 **token_kwargs,
             )
-            self.meta.root = self._requested_root
+            self.meta.root = self._requested_root / (subfolder or "")
 
         # Propagate resolved root from metadata (single source of truth)
         self.root = self.meta.root

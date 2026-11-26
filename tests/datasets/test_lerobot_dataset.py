@@ -34,6 +34,7 @@ from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
 pytestmark = pytest.mark.dataset
@@ -143,7 +144,9 @@ def test_len_matches_num_frames(tmp_path, lerobot_dataset_factory):
     assert len(dataset) == dataset.num_frames
 
 
+@pytest.mark.parametrize("subfolder", [None, "datasets/dataset-a/"])
 def test_metadata_without_root_uses_hub_cache_snapshot_download(
+    subfolder,
     tmp_path,
     info_factory,
     stats_factory,
@@ -161,8 +164,9 @@ def test_metadata_without_root_uses_hub_cache_snapshot_download(
     repo_id = DUMMY_REPO_ID
     cache_root = tmp_path / "lerobot_cache"
     snapshot_root = cache_root / "hub" / "datasets--dummy--repo" / "snapshots" / "commit-main"
+    in_repo = subfolder.rstrip("/") if subfolder else ""
     _write_dataset_tree(
-        snapshot_root,
+        snapshot_root / in_repo,
         motor_features=SNAPSHOT_MAIN_FEATURES,
         info_factory=info_factory,
         stats_factory=stats_factory,
@@ -180,16 +184,19 @@ def test_metadata_without_root_uses_hub_cache_snapshot_download(
     snapshot_download = Mock(return_value=str(snapshot_root))
     monkeypatch.setattr(dataset_metadata_module, "snapshot_download", snapshot_download)
 
-    meta = LeRobotDatasetMetadata(repo_id=repo_id, revision="main", force_cache_sync=True)
+    meta = LeRobotDatasetMetadata(
+        repo_id=repo_id, revision="main", force_cache_sync=True, subfolder=subfolder
+    )
 
-    assert meta.root == snapshot_root
+    assert meta.subfolder == (in_repo or None)
+    assert meta.root == snapshot_root / in_repo
     assert snapshot_download.call_count == 1
     assert snapshot_download.call_args.args == (repo_id,)
     assert snapshot_download.call_args.kwargs == {
         "repo_type": "dataset",
         "revision": "main",
         "cache_dir": cache_root / "hub",
-        "allow_patterns": "meta/",
+        "allow_patterns": f"{in_repo}/meta/" if in_repo else "meta/",
         "ignore_patterns": None,
     }
 
@@ -227,7 +234,7 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     dataset.revision = "main"
     dataset.episodes = None
     dataset._requested_root = None
-    dataset.meta = SimpleNamespace(root=None)
+    dataset.meta = SimpleNamespace(root=None, subfolder=None)
     dataset.reader = SimpleNamespace(root=None)
 
     dataset._download(token=token)
@@ -386,7 +393,9 @@ def test_metadata_without_root_ignores_legacy_local_dir_cache(
     assert snapshot_download.call_count == 1
 
 
+@pytest.mark.parametrize("subfolder", [None, "datasets/dataset-a"])
 def test_download_without_root_uses_hub_cache(
+    subfolder,
     tmp_path,
     info_factory,
     stats_factory,
@@ -408,7 +417,7 @@ def test_download_without_root_uses_hub_cache(
     # Pre-populate snapshot directory so metadata loads succeed, but leave
     # data absent so that _download() is triggered.
     _write_dataset_tree(
-        snapshot_root,
+        snapshot_root / (subfolder or ""),
         motor_features=SIMPLE_FEATURES,
         info_factory=info_factory,
         stats_factory=stats_factory,
@@ -431,13 +440,34 @@ def test_download_without_root_uses_hub_cache(
     data_snapshot_download = Mock(return_value=str(snapshot_root))
     monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", data_snapshot_download)
 
-    LeRobotDataset(repo_id=repo_id, revision="main", force_cache_sync=True)
+    dataset = LeRobotDataset(
+        repo_id=repo_id, revision="main", force_cache_sync=True, download_videos=False, subfolder=subfolder
+    )
 
     # _download() should have called snapshot_download with cache_dir
+    assert dataset.root == snapshot_root / (subfolder or "")
     assert data_snapshot_download.call_count == 1
     call_kwargs = data_snapshot_download.call_args.kwargs
     assert call_kwargs["cache_dir"] == cache_root / "hub"
     assert "local_dir" not in call_kwargs
+    assert call_kwargs["allow_patterns"] == ([f"{subfolder}/"] if subfolder else None)
+    assert call_kwargs["ignore_patterns"] == (f"{subfolder}/videos/" if subfolder else "videos/")
+
+
+def test_push_to_hub_uploads_into_the_dataset_subfolder(tmp_path, monkeypatch, lerobot_dataset_factory):
+    subfolder = "datasets/dataset-a"
+    reference = lerobot_dataset_factory(root=tmp_path / subfolder, total_episodes=2, total_frames=40)
+    hub_api = Mock()
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", lambda: hub_api)
+
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path, subfolder=subfolder)
+    dataset.push_to_hub()
+
+    assert dataset.root == tmp_path / subfolder
+    assert torch.equal(dataset[5][ACTION], reference[5][ACTION])
+    assert hub_api.upload_folder.call_args.kwargs["path_in_repo"] == subfolder
+    assert hub_api.upload_file.call_args.kwargs["path_in_repo"] == f"{subfolder}/README.md"
+    hub_api.create_tag.assert_called_once()
 
 
 # ── Write-only mode (via create()) ──────────────────────────────────
