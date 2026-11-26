@@ -142,9 +142,7 @@ class OpenArmFollower(Robot):
 
         # Run calibration if needed
         if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
+            logger.info(f"No calibration file found for {self.id}, running calibration")
             self.calibrate()
 
         for cam in self.cameras.values():

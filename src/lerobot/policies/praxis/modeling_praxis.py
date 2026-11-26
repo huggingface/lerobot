@@ -254,7 +254,9 @@ def _state_rows(batch: dict[str, Any], index: int, n_frames: int, n_arms: int = 
     values = rows.detach().float().cpu().numpy()
     if values.shape[-1] == droid:
         values = np.concatenate(
-            [droid7_to_pose8(values[:, 7 * i : 7 * i + 7]) for i in range(n_arms)], axis=1
+            # the bimanual rig keeps the raw gripper value (`droid7_to_pose8`)
+            [droid7_to_pose8(values[:, 7 * i : 7 * i + 7], clip_grip=n_arms == 1) for i in range(n_arms)],
+            axis=1,
         )
     return values.astype(np.float32)
 
@@ -304,6 +306,23 @@ def _praxis_numerics():
             torch.set_float32_matmul_precision(saved_precision)
         elif saved_cublas is not None:
             matmul.fp32_precision = saved_cublas
+
+
+def _backward_under_praxis_numerics(grad: Tensor) -> Tensor:
+    """Tensor hook of the training loss: run the rest of its backward pass with the praxis numerics.
+
+    `forward` pins the praxis numerics (`_praxis_numerics`), but the backward runs later, from the
+    training loop, under the host's flags: `lerobot-train` turns TF32 on by default. The float32
+    GEMMs of the backward (the MoE router's) and the activation-checkpoint recompute of each block
+    (which recomputes the float32 router logits, so a near-tied expert choice could flip) would then
+    run in TF32. The hook fires first in the backward (the loss gradient is computed before any
+    other); it enters the guard and queues its exit at the end of the backward, the autograd
+    engine's end-of-backward callback that FSDP uses for its own post-backward work.
+    """
+    guard = _praxis_numerics()
+    guard.__enter__()
+    torch.autograd.Variable._execution_engine.queue_callback(lambda: guard.__exit__(None, None, None))
+    return grad
 
 
 def _scene_seed(batch: dict[str, Any], index: int) -> int:
@@ -436,6 +455,9 @@ class _EnvState:
         self.actions: deque[np.ndarray] = deque()
         self.frames: deque[np.ndarray] = deque()
         self.scene_seed: int = 0
+        # The real commands of the last `predict_action_chunk` row block (21 for the first chunk of a
+        # context window, padded to `chunk_size`): the frames handed over after it count up to there.
+        self.chunk_rows: int | None = None
 
 
 class PraxisPolicy(PreTrainedPolicy):
@@ -794,6 +816,7 @@ class PraxisPolicy(PreTrainedPolicy):
         # The praxis trainer runs on PyTorch defaults without autocast: the router scores in
         # float32, no TF32 in float32 matmuls. The host's autocast (`--accelerator.mixed_precision`)
         # would turn the router GEMM into bfloat16, so it is off here; the model is bfloat16 already.
+        # The backward of the loss runs with the same numerics (`_backward_under_praxis_numerics`).
         with _praxis_numerics(), torch.autocast(device_type=device.type, enabled=False):
             for index, window in enumerate(windows):
                 encoded = encode_window(window, self.vae, self._text, self.config.model_config, device)
@@ -808,6 +831,8 @@ class PraxisPolicy(PreTrainedPolicy):
             # the training sequence where it was.
             self.train_counter.calls.add_(1)
         total = torch.stack(losses).mean()
+        if total.requires_grad:
+            total.register_hook(_backward_under_praxis_numerics)
         return total, {key: float(value / len(windows)) for key, value in sums.items()}
 
     # LoRA fine-tuning through PEFT. The default targets are the praxis `expert` group: the
@@ -974,13 +999,16 @@ class PraxisPolicy(PreTrainedPolicy):
         ``select_action`` does, without queueing the commands. The next chunk is conditioned
         on the executed frames only when the call receives them: pass the frames executed since
         the previous call as a stack ``(B, T, 3, H, W)`` with their states ``(B, T, 7 | 8)``
-        (oldest first); a call with one frame after a chunk starts the context again.
+        (oldest first); a call with one frame after a chunk starts the context again. Frames past
+        the real commands of the previous chunk (those of its padded rows) are dropped: the
+        context is the one of a caller that executed the real commands only.
         """
         self.eval()
         self._push_observations(batch)
         rows = []
         for env in self._envs:
             actions, _frames = self._sample_chunk(env)
+            env.chunk_rows = len(actions)
             if len(actions) < self.config.chunk_size:
                 actions = actions + [actions[-1]] * (self.config.chunk_size - len(actions))
             rows.append(np.stack(actions[: self.config.chunk_size]))
@@ -1104,7 +1132,10 @@ class PraxisPolicy(PreTrainedPolicy):
             )
         for i, env in enumerate(self._envs):
             poses = _state_rows(batch, i, n_frames, self._n_arms)
-            for t in range(n_frames):
+            # After a padded chunk, the frames of its padded rows are not context.
+            kept = n_frames if env.chunk_rows is None else min(n_frames, env.chunk_rows)
+            env.chunk_rows = None
+            for t in range(kept):
                 frames = tuple(cam[i, t] if cam.ndim == 5 else cam[i] for cam in cameras)
                 env.history.append((tuple(_frame_for_history(f, self._tile_hw) for f in frames), poses[t]))
             env.task = _task_of(batch, i)

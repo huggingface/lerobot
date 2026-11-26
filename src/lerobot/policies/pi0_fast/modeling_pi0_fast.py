@@ -17,6 +17,7 @@
 import builtins
 import logging
 from collections import deque
+from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
@@ -24,6 +25,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
@@ -768,20 +770,36 @@ class PI0FastPolicy(PreTrainedPolicy):
         # Load tokenizers first
         try:
             # Load FAST tokenizer
+            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
-                config.action_tokenizer_name, trust_remote_code=True
+                repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
             )
 
             # Load PaliGemma tokenizer for token conversion
+            repo_id, revision = split_hub_reference(config.text_tokenizer_name)
             self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                config.text_tokenizer_name, trust_remote_code=True, add_eos_token=True, add_bos_token=False
+                repo_id,
+                trust_remote_code=config.trust_remote_code,
+                add_eos_token=True,
+                add_bos_token=False,
+                revision=revision,
+                code_revision=revision,
             )
 
             logging.info("Loaded FAST tokenizer for action detokenization")
         except Exception as e:
             logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
             logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
-            raise RuntimeError("Failed to load required tokenizers for PI0FastPolicy initialization") from e
+            hint = (
+                ""
+                if config.trust_remote_code
+                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
+                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
+                "or trust_remote_code=True in Python."
+            )
+            raise RuntimeError(
+                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
+            ) from e
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()
@@ -810,6 +828,7 @@ class PI0FastPolicy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool | None = None,
         strict: bool = True,
         **kwargs,
     ) -> T:
@@ -833,8 +852,13 @@ class PI0FastPolicy(PreTrainedPolicy):
                 cache_dir=cache_dir,
                 local_files_only=local_files_only,
                 revision=revision,
+                trust_remote_code=bool(trust_remote_code),
                 **kwargs,
             )
+
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
 
         # Initialize model without loading weights
         # Check if dataset_stats were provided in kwargs

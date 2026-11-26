@@ -32,10 +32,12 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     TokenizerProcessorStep,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
 from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 
 from .configuration_pi0_fast import PI0FastConfig
 
@@ -154,6 +156,7 @@ def make_pi0_fast_pre_post_processors(
         ),
         ActionTokenizerProcessorStep(
             action_tokenizer_name=config.action_tokenizer_name,
+            trust_remote_code=config.trust_remote_code,
             max_action_tokens=config.max_action_tokens,
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,
@@ -168,3 +171,25 @@ def make_pi0_fast_pre_post_processors(
     ]
 
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
+
+
+def make_pi0_fast_pre_post_processors_from_pretrained(
+    config: PI0FastConfig, pretrained_path: str, **kwargs: Any
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Apply repo@revision overrides before loading saved processor steps."""
+    kwargs.pop("dataset_stats", None)
+    kwargs.pop("dataset_meta", None)
+    overrides = deepcopy(kwargs.pop("preprocessor_overrides", None) or {})
+    for step, key, name in (
+        ("tokenizer_processor", "tokenizer_name", config.text_tokenizer_name),
+        ("action_tokenizer_processor", "paligemma_tokenizer_name", config.text_tokenizer_name),
+        ("action_tokenizer_processor", "action_tokenizer_name", config.action_tokenizer_name),
+    ):
+        if split_hub_reference(name)[1] is not None:
+            overrides.setdefault(step, {}).setdefault(key, name)
+    return load_pretrained_policy_processors(
+        pretrained_path,
+        preprocessor_overrides=overrides,
+        trust_remote_code=config.trust_remote_code,
+        **kwargs,
+    )

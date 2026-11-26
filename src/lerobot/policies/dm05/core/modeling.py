@@ -51,6 +51,8 @@ from transformers.models.gemma3.modeling_gemma3 import (
 )
 from transformers.utils import is_torch_flex_attn_available
 
+from lerobot.utils.hub import split_hub_reference
+
 from .utils import IGNORE_INDEX, build_action_prefix_mask, validate_action_prefill_pair
 
 logger = logging.getLogger(__name__)
@@ -634,7 +636,8 @@ def resolve_action_attn_implementation(
 
 def hydrate_config(config_ref):
     if isinstance(config_ref, str):
-        return AutoConfig.from_pretrained(config_ref)
+        repo_id, revision = split_hub_reference(config_ref)
+        return AutoConfig.from_pretrained(repo_id, revision=revision, code_revision=revision)
     if isinstance(config_ref, dict) and "model_type" in config_ref:
         return CONFIG_MAPPING[config_ref["model_type"]](**config_ref)
     return config_ref
@@ -1239,10 +1242,9 @@ class DM05Model(DM05CoreVLAModel):
 
         # Initialize VLM.
         if isinstance(vlm_source, str) and not _on_meta:
+            repo_id, revision = split_hub_reference(vlm_source)
             self.vlm = Gemma3ForConditionalGeneration.from_pretrained(
-                vlm_source,
-                config=vlm_config_ref,
-                torch_dtype=torch_dtype,
+                repo_id, config=vlm_config_ref, torch_dtype=torch_dtype, revision=revision
             )
         else:
             self.vlm = Gemma3ForConditionalGeneration(vlm_config_ref)
@@ -1250,10 +1252,9 @@ class DM05Model(DM05CoreVLAModel):
         # Initialize the action expert, then wrap it as a suffix-only module
         # while preserving layer/norm parameter paths.
         if isinstance(action_source, str) and not _on_meta:
+            repo_id, revision = split_hub_reference(action_source)
             action_expert = Gemma3TextModel.from_pretrained(
-                action_source,
-                config=action_config_ref,
-                torch_dtype=torch_dtype,
+                repo_id, config=action_config_ref, torch_dtype=torch_dtype, revision=revision
             )
         else:
             action_expert = Gemma3TextModel(action_config_ref)
