@@ -223,3 +223,189 @@ def test_cli_preserves_reference_after_config_load(monkeypatch, tmp_path, local,
     assert isinstance(cfg.pretrained_path, type(expected))
     assert cfg.pretrained_revision == "cli-sha"
     assert cfg.lr == 0.5
+
+
+@pytest.mark.parametrize("serialized_trust,caller_trust", [(True, False), (False, True)])
+@pytest.mark.parametrize(
+    ("config_cls", "subclass", "field"),
+    [
+        (PreTrainedConfig, _DummyBackfillConfig, "policy"),
+        (RewardModelConfig, _DummyRewardBackfillConfig, "reward_model"),
+    ],
+)
+def test_checkpoint_cannot_grant_code_consent(
+    monkeypatch, tmp_path, serialized_trust, caller_trust, config_cls, subclass, field
+):
+    observed = []
+    original = subclass.__post_init__
+
+    def post_init(self):
+        observed.append(self.trust_remote_code)
+        original(self)
+
+    monkeypatch.setattr(subclass, "__post_init__", post_init)
+    (tmp_path / "config.json").write_text(
+        json.dumps({"type": subclass.get_choice_name(subclass), "trust_remote_code": serialized_trust})
+    )
+    cfg = config_cls.from_pretrained(tmp_path, trust_remote_code=caller_trust)
+    assert observed == [caller_trust]
+    assert cfg.trust_remote_code is caller_trust
+    cfg.save_pretrained(tmp_path)
+    assert "trust_remote_code" not in json.loads((tmp_path / "config.json").read_text())
+    TrainPipelineConfig(dataset=DatasetConfig(repo_id="user/data"), **{field: cfg}).save_pretrained(tmp_path)
+    assert "trust_remote_code" not in json.loads((tmp_path / "train_config.json").read_text())[field]
+    assert cfg.trust_remote_code is caller_trust
+
+
+@pytest.mark.parametrize(
+    ("build", "field", "config_type"),
+    [
+        (_eval_config, "policy", "_dummy_backfill"),
+        (_train_config, "policy", "_dummy_backfill"),
+        (_train_config, "reward_model", "_dummy_reward_backfill"),
+    ],
+)
+def test_cli_consent_overrides_checkpoint(monkeypatch, tmp_path, build, field, config_type):
+    (tmp_path / "config.json").write_text(json.dumps({"type": config_type, "trust_remote_code": False}))
+    monkeypatch.setattr(
+        sys, "argv", ["lerobot", f"--{field}.path={tmp_path}", f"--{field}.trust_remote_code=true"]
+    )
+    cfg = build()
+    assert getattr(cfg, field).trust_remote_code is True
+    assert not getattr(cfg, "trust_remote_code", False)
+
+
+@pytest.mark.parametrize("source", ["hub", "directory", "checkpoint_file", "recipe"])
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+@pytest.mark.parametrize(
+    ("field", "subclass"),
+    [("policy", _DummyBackfillConfig), ("reward_model", _DummyRewardBackfillConfig)],
+)
+def test_training_checkpoint_consent_is_reset_before_construction(
+    monkeypatch, tmp_path, source, caller_trust, field, subclass
+):
+    import lerobot.configs.train as train_module
+
+    observed = []
+    original = subclass.__post_init__
+
+    def post_init(self):
+        observed.append(self.trust_remote_code)
+        original(self)
+
+    monkeypatch.setattr(subclass, "__post_init__", post_init)
+    path = tmp_path / ("recipe.json" if source == "recipe" else "train_config.json")
+    path.write_text(
+        json.dumps(
+            {
+                "dataset": {"repo_id": "user/data"},
+                field: {"type": subclass.get_choice_name(subclass), "trust_remote_code": True},
+            }
+        )
+    )
+    monkeypatch.setattr(train_module, "hf_hub_download", lambda **kwargs: str(path))
+    checkpoint = "user/checkpoint" if source == "hub" else tmp_path if source == "directory" else path
+    args = [] if caller_trust is None else [f"--{field}.trust_remote_code={str(caller_trust).lower()}"]
+
+    config = TrainPipelineConfig.from_pretrained(checkpoint, cli_args=args)
+
+    expected = source == "recipe" if caller_trust is None else caller_trust
+    assert observed == [expected]
+    assert getattr(config, field).trust_remote_code is expected
+
+
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+@pytest.mark.parametrize("filename", ["train_config.json", "recipe.json"])
+@pytest.mark.parametrize("field", ["policy", "reward_model"])
+def test_cli_path_extraction_cannot_restore_checkpoint_consent(
+    monkeypatch, tmp_path, caller_trust, filename, field
+):
+    config_cls = PreTrainedConfig if field == "policy" else RewardModelConfig
+    subclass = _DummyBackfillConfig if field == "policy" else _DummyRewardBackfillConfig
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(json.dumps({"type": subclass.get_choice_name(subclass)}))
+    path = tmp_path / filename
+    path.write_text(
+        json.dumps(
+            {"dataset": {"repo_id": "user/data"}, field: {"path": str(model), "trust_remote_code": True}}
+        )
+    )
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    args = [] if caller_trust is None else [f"--{field}.trust_remote_code={str(caller_trust).lower()}"]
+    monkeypatch.setattr(sys, "argv", ["lerobot-train", f"--config_path={path}", *args])
+
+    @parser.wrap()
+    def load(config: TrainPipelineConfig):
+        config._resolve_pretrained_from_cli()
+        return config
+
+    config = load()
+    expected = filename == "recipe.json" if caller_trust is None else caller_trust
+    assert isinstance(getattr(config, field), config_cls)
+    assert getattr(config, field).trust_remote_code is expected
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_training_export_omits_environment_classifier_consent(tmp_path, consent):
+    from lerobot.envs.configs import HILSerlProcessorConfig, HILSerlRobotEnvConfig, RewardClassifierConfig
+
+    classifier = RewardClassifierConfig(pretrained_path="user/classifier", trust_remote_code=consent)
+    config = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id="user/data"),
+        env=HILSerlRobotEnvConfig(processor=HILSerlProcessorConfig(reward_classifier=classifier)),
+    )
+    config.save_pretrained(tmp_path)
+
+    saved = json.loads((tmp_path / "train_config.json").read_text())
+    assert "trust_remote_code" not in saved["env"]["processor"]["reward_classifier"]
+    assert saved["env"]["processor"]["reward_classifier"]["pretrained_path"] == "user/classifier"
+    assert classifier.trust_remote_code is consent
+
+
+@pytest.mark.parametrize(
+    "source", ["hub", "directory", "checkpoint_file", "recipe", "cli_checkpoint", "cli_recipe"]
+)
+@pytest.mark.parametrize("caller_trust", [None, False, True])
+def test_training_environment_classifier_requires_fresh_consent(monkeypatch, tmp_path, source, caller_trust):
+    import lerobot.configs.train as train_module
+
+    is_recipe = source in ("recipe", "cli_recipe")
+    path = tmp_path / ("recipe.json" if is_recipe else "train_config.json")
+    payload = {
+        "dataset": {"repo_id": "user/data"},
+        # This also makes the CLI parser rewrite the checkpoint to a temporary file.
+        "policy": {"type": "_dummy_backfill", "trust_remote_code": True},
+        "env": {
+            "type": "gym_manipulator",
+            "processor": {
+                "reward_classifier": {"pretrained_path": "user/classifier", "trust_remote_code": True}
+            },
+        },
+    }
+    path.write_text(json.dumps(payload))
+    args = (
+        []
+        if caller_trust is None
+        else [f"--env.processor.reward_classifier.trust_remote_code={str(caller_trust).lower()}"]
+    )
+    if source.startswith("cli_"):
+        monkeypatch.setattr(parser, "_config_path_args", {})
+        monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+        monkeypatch.setattr(sys, "argv", ["lerobot-train", f"--config_path={path}", *args])
+
+        @parser.wrap()
+        def load(config: TrainPipelineConfig):
+            return config
+
+        config = load()
+    else:
+        monkeypatch.setattr(train_module, "hf_hub_download", lambda **kwargs: str(path))
+        checkpoint = "user/checkpoint" if source == "hub" else tmp_path if source == "directory" else path
+        config = TrainPipelineConfig.from_pretrained(checkpoint, cli_args=args)
+
+    classifier = config.env.processor.reward_classifier
+    assert classifier.trust_remote_code is (is_recipe if caller_trust is None else caller_trust)
+    assert classifier.pretrained_path == "user/classifier"
+    assert json.loads(path.read_text()) == payload

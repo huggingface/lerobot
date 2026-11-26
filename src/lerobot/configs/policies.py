@@ -84,6 +84,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     pretrained_path: str | Path | None = None
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
+    # Caller consent for custom policy processors/tokenizers; never inherited from a checkpoint.
+    trust_remote_code: bool = False
 
     def __post_init__(self) -> None:
         if self.dtype is not None and not isinstance(self.dtype, torch.dtype):
@@ -171,8 +173,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     def _save_pretrained(self, save_directory: Path) -> None:
         # Encode against the base class so draccus includes the choice "type" key,
         # which `from_pretrained` needs to resolve the concrete subclass.
+        config = draccus.encode(self, PreTrainedConfig)
+        config.pop("trust_remote_code", None)  # Runtime consent; absent from older checkpoint schemas.
         with open(save_directory / CONFIG_NAME, "w") as f:
-            json.dump(draccus.encode(self, PreTrainedConfig), f, indent=4)
+            json.dump(config, f, indent=4)
 
     @classmethod
     def from_pretrained(
@@ -186,6 +190,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
+        trust_remote_code: bool = False,
         **policy_kwargs: Any,
     ) -> T:
         model_id = str(pretrained_name_or_path)
@@ -217,6 +222,10 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
         with open(config_file) as f:
             config = json.load(f)
+
+        # A checkpoint cannot grant itself permission to execute code. Only the caller
+        # or explicit CLI/YAML overrides may opt in, including for a local cached copy.
+        config["trust_remote_code"] = trust_remote_code
 
         # Resolve the concrete config subclass from the serialized "type" tag, then parse
         # the config (with CLI overrides) directly for that class. The "type" key is
