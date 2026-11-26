@@ -285,9 +285,10 @@ def rollout(
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
-    max_steps = env.call("_max_episode_steps")[0]
+    episode_step_limits = np.asarray(env.call("_max_episode_steps"), dtype=np.int64)
     if max_episode_steps is not None:
-        max_steps = min(max_steps, max_episode_steps)
+        episode_step_limits = np.minimum(episode_step_limits, max_episode_steps)
+    max_steps = int(episode_step_limits.max())
     # Sim envs already return observations with LeRobot keys; other envs return their own format.
     prepare_observation = (
         prepare_canonical_observation
@@ -373,11 +374,9 @@ def rollout(
             else:
                 successes = [False] * env.num_envs
 
-            episode_ends = terminated | truncated
-            # The rollout can end before the simulator declares the episode over.
-            # Use the same boundary in the recorded datasets and returned transitions.
-            if step + 1 == max_steps:
-                episode_ends = np.ones_like(episode_ends, dtype=bool)
+            # Apply each slot's effective time limit even if the simulator does not report truncation.
+            # The same boundary ends recordings and returned transitions.
+            episode_ends = terminated | truncated | (step + 1 >= episode_step_limits)
 
             if recording_datasets is not None and raw_observation is not None:
                 for env_idx in range(env.num_envs):
