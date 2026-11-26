@@ -1,14 +1,25 @@
-"""Tests for task-conditioned consistency + cross-task diversity."""
+#!/usr/bin/env python
 
-import sys
-from pathlib import Path
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for task-conditioned consistency + cross-task diversity."""
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src" / "lerobot" / "scripts"))
-
-from goal_conditioned_quality import (  # noqa: E402
+from lerobot.scripts.goal_conditioned_quality import (
     _resample,
     cross_task_diversity,
     task_conditioned_quality,
@@ -225,9 +236,7 @@ def test_empty_dataset_is_not_confused_with_perfect_score():
 def test_dimension_mismatch_error_names_episode_and_dims():
     """Mixed D -> ValueError that names episode index, expected D, actual D."""
     with pytest.raises(ValueError) as exc:
-        task_conditioned_quality(
-            [np.zeros((5, 2)), np.zeros((5, 3)), np.zeros((5, 2))], [0, 1, 2]
-        )
+        task_conditioned_quality([np.zeros((5, 2)), np.zeros((5, 3)), np.zeros((5, 2))], [0, 1, 2])
     msg = str(exc.value)
     assert "feature dimension D" in msg
     assert "episode 1" in msg
@@ -246,8 +255,6 @@ def test_within_group_dimension_mismatch_raises_clear_error():
 def test_cross_task_dimension_mismatch_raises_clear_error():
     """Direct helper call with mixed D must also raise a descriptive error."""
     with pytest.raises(ValueError) as exc:
-        cross_task_diversity(
-            [np.zeros((5, 2)), np.zeros((5, 3))], task_ids=np.array([0, 1])
-        )
+        cross_task_diversity([np.zeros((5, 2)), np.zeros((5, 3))], task_ids=np.array([0, 1]))
     assert "episode 1" in str(exc.value)
     assert "D=3" in str(exc.value)

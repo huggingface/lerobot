@@ -1,15 +1,33 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Tests for the duck-typed LeRobot adapter (lerobot_data_quality.py).
 
 These tests use a lightweight fake dataset class that mimics the LeRobotDataset
 v3 surface (``.meta.episodes``, ``.meta.tasks``, and index-based frame access)
-without importing torch or lerobot.
+without importing torch or heavy lerobot extras.
 
-The script under test is loaded by absolute file path via ``importlib`` so this
-test file never imports the ``lerobot`` package (which would pull in torch and
-the repo's ``tests/conftest.py`` fixtures) and stays runnable in isolation.
+Both advertised entry modes are also smoke-tested:
+
+* package mode: ``python -m lerobot.scripts.lerobot_data_quality --demo``
+* standalone mode: ``python src/lerobot/scripts/lerobot_data_quality.py --demo``
 """
 
-import importlib.util
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -17,23 +35,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "lerobot"
-    / "scripts"
-    / "lerobot_data_quality.py"
-)
-sys.path.insert(0, str(_SCRIPT_PATH.parent))
-_spec = importlib.util.spec_from_file_location("lerobot_data_quality", _SCRIPT_PATH)
-if _spec is None or _spec.loader is None:
-    raise RuntimeError(f"could not load script module from {_SCRIPT_PATH}")
-_lerobot_data_quality = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_lerobot_data_quality)
+from lerobot.scripts.goal_conditioned_quality import task_conditioned_quality
+from lerobot.scripts.lerobot_data_quality import from_lerobot_dataset, make_demo_dataset
 
-from_lerobot_dataset = _lerobot_data_quality.from_lerobot_dataset
-make_demo_dataset = _lerobot_data_quality.make_demo_dataset
-task_conditioned_quality = _lerobot_data_quality.task_conditioned_quality
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO_ROOT / "src" / "lerobot" / "scripts" / "lerobot_data_quality.py"
 
 
 class FakeLeRobotDataset:
@@ -41,15 +47,19 @@ class FakeLeRobotDataset:
 
     def __init__(self, trajectories, task_ids, feature="action", features=None):
         dim = trajectories[0].shape[1] if trajectories else 1
-        self.features = features if features is not None else {
-            feature: {"dtype": "float32", "shape": (dim,)},
-            "observation.images.front": {"dtype": "video", "shape": (3, 48, 64)},
-            "language_instruction": {"dtype": "string", "shape": (1,)},
-        }
+        self.features = (
+            features
+            if features is not None
+            else {
+                feature: {"dtype": "float32", "shape": (dim,)},
+                "observation.images.front": {"dtype": "video", "shape": (3, 48, 64)},
+                "language_instruction": {"dtype": "string", "shape": (1,)},
+            }
+        )
         self._frames = []
         episodes = []
         offset = 0
-        for traj, tid in zip(trajectories, task_ids):
+        for traj, tid in zip(trajectories, task_ids, strict=False):
             for row in traj:
                 self._frames.append({feature: np.asarray(row, dtype=float), "task_index": int(tid)})
             episodes.append(
@@ -175,3 +185,39 @@ def test_demo_dataset_runs_end_to_end():
     report = task_conditioned_quality(out_trajs, out_tasks)
     assert "insufficient_data" not in report
     assert 0.0 <= report["generalizable_quality"] <= 1.0
+
+
+def _run_demo(command):
+    """Run a ``--demo`` invocation and return the completed process."""
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)  # make sure no scripts dir sneaks onto sys.path
+    return subprocess.run(
+        command,
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+
+
+def test_module_command_smoke_without_scripts_on_path():
+    """The advertised ``python -m lerobot.scripts.lerobot_data_quality --demo``
+    command must work in package mode, i.e. with the scripts directory *not* on
+    sys.path (the sibling module is imported relatively)."""
+    result = _run_demo([sys.executable, "-m", "lerobot.scripts.lerobot_data_quality", "--demo"])
+    assert result.returncode == 0, result.stderr[-2000:]
+    # The demo report must list the synthetic dataset shape.
+    assert '"num_episodes": 4' in result.stdout
+    assert '"num_tasks": 3' in result.stdout
+
+
+def test_standalone_script_execution_smoke():
+    """Direct file execution (``python src/lerobot/scripts/lerobot_data_quality.py --demo``)
+    must also work: the scripts directory lands on sys.path and the sibling
+    module is imported flat. This guards the ``else`` branch of the import
+    duality that package mode does not cover."""
+    result = _run_demo([sys.executable, _SCRIPT, "--demo"])
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert '"num_episodes": 4' in result.stdout
+    assert '"num_tasks": 3' in result.stdout

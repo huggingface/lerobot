@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Task-conditioned consistency + cross-task diversity for robot datasets.
 
 Why this exists
@@ -31,10 +47,12 @@ tested in isolation and dropped into either PR as an additional analyzer.
 
 Usage
 -----
->>> from goal_conditioned_quality import task_conditioned_quality
->>> task_conditioned_quality([np.zeros((50, 2)), np.ones((50, 2))],
-...                          task_ids=[0, 1])
+>>> from lerobot.scripts.goal_conditioned_quality import task_conditioned_quality
+>>> task_conditioned_quality([np.zeros((50, 2)), np.ones((50, 2))], task_ids=[0, 1])
 """
+
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -86,7 +104,7 @@ def _check_consistent_feature_dim(all_actions: list[np.ndarray], context: str = 
             )
 
 
-def within_group_consistency(episodes: list[np.ndarray], outlier_std: float = 2.0) -> dict:
+def within_group_consistency(episodes: list[np.ndarray], outlier_std: float = 2.0) -> dict[str, Any]:
     """Consistency of demonstrations *within one task*.
 
     Args:
@@ -121,10 +139,7 @@ def within_group_consistency(episodes: list[np.ndarray], outlier_std: float = 2.
     dists: list[float] = []
     if clean:
         mean_traj = np.mean(resampled[clean], axis=0)
-        dists = [
-            float(np.mean(np.linalg.norm(resampled[i] - mean_traj, axis=1)))
-            for i in clean
-        ]
+        dists = [float(np.mean(np.linalg.norm(resampled[i] - mean_traj, axis=1))) for i in clean]
 
     mean_dist = float(np.mean(dists)) if dists else 0.0
     std_dist = float(np.std(dists)) if dists else 0.0
@@ -194,9 +209,9 @@ def cross_task_diversity(all_actions: list[np.ndarray], task_ids: np.ndarray) ->
 
 def task_conditioned_quality(
     all_actions: list[np.ndarray],
-    task_ids,
+    task_ids: Sequence[int | str] | np.ndarray,
     outlier_std: float = 2.0,
-) -> dict:
+) -> dict[str, Any]:
     """Primary entry point: precision x diversity = generalizable quality.
 
     Args:
@@ -236,9 +251,7 @@ def task_conditioned_quality(
     task_ids = np.asarray(task_ids)
 
     if len(all_actions) != len(task_ids):
-        raise ValueError(
-            f"len(all_actions)={len(all_actions)} != len(task_ids)={len(task_ids)}"
-        )
+        raise ValueError(f"len(all_actions)={len(all_actions)} != len(task_ids)={len(task_ids)}")
 
     if len(all_actions) == 0:
         return {
@@ -256,7 +269,7 @@ def task_conditioned_quality(
     unique = np.unique(task_ids)
     group_to_idxs = {t: np.where(task_ids == t)[0].tolist() for t in unique}
 
-    groups: dict = {}
+    groups: dict[str, Any] = {}
     precisions: list[float] = []
     for t, idxs in group_to_idxs.items():
         eps = [all_actions[i] for i in idxs]

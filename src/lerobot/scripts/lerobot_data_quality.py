@@ -1,3 +1,19 @@
+#!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Standalone CLI + thin adapter for goal-conditioned data-quality scoring.
 
 This module measures a robot dataset's *generalizable quality* as the product of
@@ -37,11 +53,23 @@ import argparse
 import json
 import sys
 import types
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 
-from goal_conditioned_quality import _check_consistent_feature_dim, task_conditioned_quality
+try:
+    # Package mode (e.g. ``python -m lerobot.scripts.lerobot_data_quality``): the
+    # sibling module is importable as a relative import.
+    from .goal_conditioned_quality import _check_consistent_feature_dim, task_conditioned_quality
+except ImportError:
+    # Standalone execution (e.g. ``python src/lerobot/scripts/lerobot_data_quality.py --demo``):
+    # the scripts directory is on sys.path instead of the package, so fall back
+    # to a flat import.
+    from goal_conditioned_quality import (  # type: ignore[no-redef]
+        _check_consistent_feature_dim,
+        task_conditioned_quality,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +227,7 @@ class _SyntheticDataset:
         self._frames: list[dict[str, Any]] = []
         episodes: list[dict[str, int]] = []
         offset = 0
-        for traj, tid in zip(trajectories, task_ids):
+        for traj, tid in zip(trajectories, task_ids, strict=False):
             n = len(traj)
             for row in traj:
                 self._frames.append({"action": np.asarray(row, dtype=float), "task_index": int(tid)})
@@ -215,7 +243,7 @@ class _SyntheticDataset:
     def __len__(self) -> int:
         return len(self._frames)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int | slice) -> dict[str, Any] | list[dict[str, Any]]:
         if isinstance(idx, slice):
             return list(self._frames[idx])
         return self._frames[idx]
@@ -250,7 +278,7 @@ def make_demo_dataset() -> _SyntheticDataset:
     return _SyntheticDataset(trajectories, task_ids, dim)
 
 
-def _load_lerobot_dataset(dataset_id: str):
+def _load_lerobot_dataset(dataset_id: str) -> Any:
     """Lazily import and construct a LeRobotDataset (only for --dataset mode)."""
     try:
         from lerobot.datasets import LeRobotDataset
@@ -300,7 +328,7 @@ def _print_report(report: dict, trajectories: list[np.ndarray], task_ids: list[i
     return 0
 
 
-def main(argv=None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "LeRobot data-quality analyzer: task-conditioned consistency (precision) "
