@@ -99,6 +99,10 @@ class EnvDescriptor:
         )
 
 
+class NoRGBObservationError(ValueError):
+    """A step result has no RGB observation to use as a render frame."""
+
+
 @dataclass(frozen=True)
 class StepResult:
     """Result of one reset or step of a batch of envs. Arrays have the batch dimension first.
@@ -137,7 +141,7 @@ class StepResult:
         """Return one frame per env from the first RGB observation, including terminal frames."""
         key = next((k for k, v in self.obs.items() if v.dtype == np.uint8 and v.ndim == 4), None)
         if key is None:
-            raise ValueError("This environment exposes no RGB observation")
+            raise NoRGBObservationError("This environment exposes no RGB observation")
         return tuple(frame.copy() for frame in self.obs[key])
 
     def info(self) -> dict[str, Any]:
