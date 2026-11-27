@@ -49,7 +49,7 @@ Three client settings shape this behavior. `refill_seconds` decides how early to
 
 ### Supported policies and robots
 
-A checkpoint can be served when its saved processors predict an action chunk from a single current observation; ACT needs temporal ensembling disabled. ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have run on real robots through this path. Several other policies are supported at the contract level but have not been validated on hardware, and history-dependent policies need additional integration. The [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/README.md#policy-support) lists every policy's status and restrictions.
+A checkpoint can be served when its saved processors and `predict_action_chunk` predict an action chunk; the client sends the observation history the checkpoint declares with each request. ACT needs temporal ensembling disabled. ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have run on real robots through this path. Several other policies are supported at the contract level but have not been validated on hardware. The [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/README.md#policy-support) lists every policy's status and restrictions.
 
 The robot driver must declare position-hold support, because the client refreshes the last applied target while it waits for actions. SO, OMX, Koch, HopeJr, Rebot and YAM followers declare it; OpenArm, Reachy2 and bimanual wrappers depend on their configuration; the Unitree G1 declares it only with the SONIC controller, whose retained target is the last motion token; mobile bases do not. See the [hardware table](./integrate_hardware#waiting-between-predictions). Unsupported robot or policy contracts are rejected at admission, before any motion.
 
@@ -318,7 +318,7 @@ features:
 
 Use checkpoint-facing names. To map a robot camera named `scene` to the checkpoint's `front` view, set client `--rename_map='{"observation.images.scene":"observation.images.front"}'`. Renaming cannot change the view, resolution or calibration. Additional cameras can stay available for recording without being sent to the server.
 
-Supported policies use saved processors and direct chunk prediction from a current observation. History-dependent policies, latent-controller outputs and preparation available only through `select_action()` need additional integration. Successful synchronous inference or warmup alone does not prove remote task quality or language/RTC support.
+Supported policies use saved processors and direct chunk prediction. The client records every tick and sends the history the checkpoint declares (observation windows and past commands from its `inference_deltas`) with each request. Latent-controller outputs need additional integration. Successful synchronous inference or warmup alone does not prove remote task quality or language/RTC support.
 
 For a supported chunk-only checkpoint, server `--execution.n_action_steps=30` shortens its execution slice without editing the checkpoint. It cannot exceed the prediction horizon and is rejected for RTC deployments. Optional client `--inference.expected_artifact=...` pins the model/processor contents and effective inference settings; a deployment name alone is not a checkpoint identity.
 
@@ -329,7 +329,7 @@ For a supported chunk-only checkpoint, server `--execution.n_action_steps=30` sh
 
 Pair server `--deployment=arm-a` with client `--inference.deployment=arm-a`. Names must be single alphanumeric/underscore/dot/hyphen segments. Each server process still serves one active client. If several instances advertise the same name, select `--inference.instance=...` or use distinct names; discovery does not choose arbitrarily.
 
-Traffic is scoped beneath `lerobot/inference/v1/deployments/{deployment}`, then by server instance and session. Query/reply handles discovery, admission and control; pub/sub carries inference data; liveliness tracks presence. Explicit endpoints disable multicast/gossip discovery. Sequence/generation identities and client-local timing govern motion; synchronized host clocks are unnecessary.
+Traffic is scoped beneath `lerobot/inference/v2/deployments/{deployment}`, then by server instance and session. Query/reply handles discovery, admission and control; pub/sub carries inference data; liveliness tracks presence. Explicit endpoints disable multicast/gossip discovery. Sequence/generation identities and client-local timing govern motion; synchronized host clocks are unnecessary.
 
 Raw RGB is lossless and the default. Try `--inference.encoding=jpeg --inference.jpeg_quality=90` to reduce image bandwidth, then compare turnaround and task quality. Quality ranges from 1 to 100; arbitrary tensors are never JPEG encoded.
 

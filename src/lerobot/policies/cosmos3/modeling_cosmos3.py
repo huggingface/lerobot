@@ -21,7 +21,6 @@ observations and a language instruction.
 import itertools
 import logging
 import math
-from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
@@ -32,6 +31,7 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.common.vla_utils import pad_vector
@@ -225,7 +225,6 @@ class Cosmos3Policy(PreTrainedPolicy):
 
     def reset(self):
         """Reset internal state, called when the environment resets."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
         self.last_predicted_latents = None
 
     def prepare_state(self, batch: dict[str, Tensor]) -> Tensor | None:
@@ -266,7 +265,7 @@ class Cosmos3Policy(PreTrainedPolicy):
         return loss, {name: value.item() for name, value in losses.items()}
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """
         Sample the action chunk `[batch, chunk_size, original_action_dim]` with the sampling settings of the
         config. With `save_predicted_video` the video latents of the clip go to `last_predicted_latents`.
@@ -290,18 +289,7 @@ class Cosmos3Policy(PreTrainedPolicy):
         )
         if self.config.save_predicted_video:
             self.last_predicted_latents = video_latents.cpu()
-        return actions[:, :, : self.config.original_action_dim]
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Select a single action given environment observations."""
-        self.eval()
-
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
+        return PolicyOutput(action=actions[:, :, : self.config.original_action_dim])
 
     def chunk_inference_spec(self) -> ChunkPolicySpec:
         """

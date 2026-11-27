@@ -841,7 +841,7 @@ class InferenceEngine(abc.ABC):
         ``dispatch_allowed`` again before sending, including interpolation ticks.
         Like the policy itself: when the policy returned a prediction besides the action,
         the action comes back with it as an ``EnvTransition`` (see
-        ``PreTrainedPolicy.select_action``).
+        ``PreTrainedPolicy.predict_action_chunk``).
         """
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027

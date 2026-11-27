@@ -21,18 +21,16 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
     observation_to_transition,
-    policy_action_to_transition,
     robot_action_observation_to_transition,
     transition_to_batch,
     transition_to_observation,
-    transition_to_policy_action,
     transition_to_robot_action,
 )
 from .device_processor import DeviceProcessorStep
@@ -43,7 +41,6 @@ from .pipeline import (
     ProcessorStep,
     RobotProcessorPipeline,
 )
-from .relative_action_processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from .rename_processor import RenameObservationsProcessorStep
 
 
@@ -143,7 +140,7 @@ def make_policy_processor_pipelines(
     output_steps: list[ProcessorStep],
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Wrap pre/post step lists into the canonical policy pipeline pair.
 
@@ -155,11 +152,9 @@ def make_policy_processor_pipelines(
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
         ),
     )
 
@@ -171,7 +166,7 @@ def make_default_pre_post_processors(
     normalizer_device: torch.device | str | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """The pure-scaffold policy pipeline pair: Rename -> Batch -> Device -> Normalize,
     and Unnormalize -> Device(cpu). Policies with custom steps or a different step order
@@ -182,24 +177,6 @@ def make_default_pre_post_processors(
         input_steps=[s.rename_observations, s.add_batch_dim, s.to_device, s.normalize],
         output_steps=[s.unnormalize, s.to_cpu],
     )
-
-
-def _reconnect_relative_absolute_steps(
-    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
-) -> None:
-    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
-
-    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
-    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
-    the RelativeActionsProcessorStep so it can read the cached state at inference time.
-    That reference is not serializable, so we re-establish it here after loading.
-    """
-    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
-    if relative_step is None:
-        return
-    for step in postprocessor.steps:
-        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-            step.relative_step = relative_step
 
 
 def load_pretrained_policy_processors(
@@ -213,7 +190,7 @@ def load_pretrained_policy_processors(
     trust_remote_code: bool = False,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load a serialized policy pipeline pair and re-establish links that do not survive saving."""
     preprocessor = PolicyProcessorPipeline.from_pretrained(
@@ -229,10 +206,7 @@ def load_pretrained_policy_processors(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=postprocessor_config_filename,
         overrides=postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
         revision=revision,
         trust_remote_code=trust_remote_code,
     )
-    _reconnect_relative_absolute_steps(preprocessor, postprocessor)
     return preprocessor, postprocessor

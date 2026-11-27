@@ -55,7 +55,7 @@ from lerobot.policies.flux3.f3.wiring import (
     remap_shared_action_keys,
 )
 from lerobot.policies.flux3.utils import grid_shape
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE, RTC_INFERENCE_DELAY
 from lerobot.utils.import_utils import _peft_available
 from tests.policies.flux3.helpers import (
     DROID_CAMS,
@@ -307,7 +307,7 @@ def test_processors_identity_for_absolute_actions_and_relative_round_trip():
     out = pre(obs)
     assert torch.equal(out[OBS_STATE], torch.arange(8.0)[None])  # IDENTITY, batch dim added
     assert out[DROID_CAMS[0]].shape == (1, 3, 360, 640)
-    act = post(torch.ones(1, 32, 8) * 0.5)
+    act = post({ACTION: torch.ones(1, 32, 8) * 0.5})[ACTION]
     assert torch.allclose(act, torch.full((1, 32, 8), 0.5))
 
     rel = single_config(
@@ -327,7 +327,7 @@ def test_processors_identity_for_absolute_actions_and_relative_round_trip():
     rel_actions = out[ACTION].reshape(-1, 6)
     assert torch.allclose(rel_actions[0, :5], torch.full((5,), 0.5))  # deltas to the state
     assert abs(float(rel_actions[0, 5]) - 0.9) < 1e-5  # gripper stays absolute
-    back = post(out[ACTION])
+    back = post(out)[ACTION]
     assert torch.allclose(back.reshape(-1, 6), action)
 
 
@@ -585,7 +585,7 @@ def test_grouped_training_keeps_gradients_and_aggregates_metrics(fake_vae, monke
     assert len(group_metrics) == 2
 
 
-def test_policy_forward_predict_and_select_on_droid_layout(fake_vae):
+def test_policy_forward_and_predict_on_droid_layout(fake_vae):
     cfg = droid_config(n_action_steps=4)
     policy = Flux3Policy(cfg)
     assert set(policy.state_dict()) == {f"dit.{k}" for k in policy.dit.state_dict()}
@@ -606,15 +606,10 @@ def test_policy_forward_predict_and_select_on_droid_layout(fake_vae):
     # inference on single frames
     policy.eval()
     obs = droid_batch(b=2)
-    chunk = policy.predict_action_chunk(obs)
+    chunk = policy.predict_action_chunk(obs)[ACTION]
     assert chunk.shape == (2, 32, 8) and chunk.dtype == torch.float32 and torch.isfinite(chunk).all()
-    again = policy.predict_action_chunk(obs)
+    again = policy.predict_action_chunk(obs)[ACTION]
     assert torch.allclose(chunk, again)  # seeded noise: deterministic
-    first = policy.select_action(obs)
-    assert first.shape == (2, 8) and torch.allclose(first, chunk[:, 0])
-    assert len(policy._action_queue) == 3
-    policy.reset()
-    assert len(policy._action_queue) == 0
 
 
 def test_grid_layout_runs_any_camera_count_and_mixed_resolutions(fake_vae):
@@ -651,7 +646,7 @@ def test_grid_layout_runs_any_camera_count_and_mixed_resolutions(fake_vae):
     assert torch.isfinite(loss) and info["n_valid_windows"] == 1
     policy.eval()
     obs = {**frames(1), OBS_STATE: torch.rand(1, 6, generator=gen), "task": ["sort"]}
-    chunk = policy.predict_action_chunk(pre(obs))
+    chunk = policy.predict_action_chunk(pre(obs))[ACTION]
     assert chunk.shape == (1, 32, 6) and torch.isfinite(chunk).all()
     u8 = {k: (v * 255).to(torch.uint8) for k, v in frames(1).items()}
     assert policy._cameras(pre(u8)).dtype == torch.uint8  # mixed resolutions resized, uint8 stays uint8
@@ -668,7 +663,7 @@ def test_policy_single_layout_relative_actions_and_cfg_one(fake_vae):
         OBS_STATE: torch.rand(1, 6, generator=gen),
         "task": ["stack the cubes"],
     }
-    chunk = policy.predict_action_chunk(obs)
+    chunk = policy.predict_action_chunk(obs)[ACTION]
     assert chunk.shape == (1, 32, 6) and torch.isfinite(chunk).all()
     policy.train()
     batch = {
@@ -755,7 +750,7 @@ def test_compile_model_wraps_the_inference_dit_forward_only(fake_vae, monkeypatc
     assert torch.isfinite(loss) and compiled_fns == []  # training keeps the eager DiT forward
     policy.eval()
     obs = droid_batch(b=1)
-    chunk = policy.predict_action_chunk(obs)
+    chunk = policy.predict_action_chunk(obs)[ACTION]
     assert chunk.shape == (1, 32, 8) and torch.isfinite(chunk).all()
     assert len(compiled_fns) == 1 and compiled_fns[0].__self__ is policy.dit
     compiled = policy._compiled_dit
@@ -916,7 +911,7 @@ def test_peft_requires_saved_base_and_round_trips(fake_vae, tmp_path, monkeypatc
     # The trainer chooses processor files from the caller's config after loading the model.
     pre, post = make_pre_post_processors(cfg, pretrained_path=cfg.pretrained_path)
     torch.testing.assert_close(pre({OBS_STATE: torch.full((6,), 4.0)})[OBS_STATE], torch.ones(1, 6))
-    torch.testing.assert_close(post(torch.zeros(1, 32, 6)), torch.full((1, 32, 6), 2.0))
+    torch.testing.assert_close(post({ACTION: torch.zeros(1, 32, 6)})[ACTION], torch.full((1, 32, 6), 2.0))
     assert cfg.pretrained_path == str(adapter)
     assert restored.config.pretrained_path == str(base)
     assert restored.config is not cfg
@@ -926,18 +921,14 @@ def test_peft_requires_saved_base_and_round_trips(fake_vae, tmp_path, monkeypatc
     for name, parameter in wrapped.named_parameters():
         assert torch.equal(dict(restored.named_parameters())[name], parameter), name
     obs = {"observation.images.top": torch.rand(1, 3, 64, 96), OBS_STATE: torch.rand(1, 6)}
-    assert torch.equal(wrapped.predict_action_chunk(obs), restored.predict_action_chunk(obs))
+    assert torch.equal(wrapped.predict_action_chunk(obs)[ACTION], restored.predict_action_chunk(obs)[ACTION])
 
 
-def test_unsupported_relative_execution_and_rtc_arguments_fail_early(fake_vae):
-    policy = Flux3Policy(single_config(use_relative_actions=True))
+def test_unsupported_rtc_arguments_fail_early(fake_vae):
+    policy = Flux3Policy(single_config())
     assert not policy.supports_rtc()
-    with pytest.raises(NotImplementedError, match="relative-action execution requires RTC"):
-        policy.select_action({})
-    absolute = Flux3Policy(single_config())
-    for method in (absolute.select_action, absolute.predict_action_chunk):
-        with pytest.raises(NotImplementedError, match="RTC inference arguments"):
-            method({}, inference_delay=1, prev_chunk_left_over=None)
+    with pytest.raises(NotImplementedError, match="RTC inference arguments"):
+        policy.predict_action_chunk({RTC_INFERENCE_DELAY: 1})
 
 
 def test_lora_update_ema_resume_and_reload(tmp_path, fake_vae):
@@ -1048,7 +1039,7 @@ def _equivalent(p_a: Flux3Policy, p_b: Flux3Policy) -> None:
     obs = droid_batch(b=2)
     p_a.eval()
     p_b.eval()
-    assert torch.equal(p_a.predict_action_chunk(obs), p_b.predict_action_chunk(obs))
+    assert torch.equal(p_a.predict_action_chunk(obs)[ACTION], p_b.predict_action_chunk(obs)[ACTION])
     batch = droid_batch(b=2, frames=33)
     p_a.train()
     p_b.train()

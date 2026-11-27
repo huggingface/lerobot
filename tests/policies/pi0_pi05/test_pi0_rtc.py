@@ -31,6 +31,12 @@ pytestmark = pytest.mark.skipif(
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, make_pi0_pre_post_processors  # noqa: E402
 from lerobot.policies.rtc.configuration_rtc import RTCConfig  # noqa: E402
+from lerobot.utils.constants import (  # noqa: E402
+    NOISE,
+    RTC_EXECUTION_HORIZON,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+)
 from lerobot.utils.random_utils import set_seed  # noqa: E402
 from tests.utils import require_cuda  # noqa: E402
 
@@ -144,16 +150,18 @@ def test_pi0_rtc_inference_with_prev_chunk():
 
         # Test with RTC and previous chunk
         actions_with_rtc = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=prev_chunk,
-            inference_delay=4,
-            execution_horizon=10,
-        )
+            {
+                **batch,
+                NOISE: noise.clone(),
+                RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+                RTC_INFERENCE_DELAY: 4,
+                RTC_EXECUTION_HORIZON: 10,
+            }
+        )["action"]
 
         # Test without RTC for comparison
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})["action"]
         policy.config.rtc_config.enabled = True
 
     # Verify shapes
@@ -217,15 +225,11 @@ def test_pi0_rtc_inference_without_prev_chunk():
         noise = policy.model.sample_noise((1, config.chunk_size, 7), device)
 
         # Test with RTC enabled but no previous chunk
-        actions_with_rtc_no_prev = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=None,
-        )
+        actions_with_rtc_no_prev = policy.predict_action_chunk({**batch, NOISE: noise.clone()})["action"]
 
         # Test without RTC
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})["action"]
         policy.config.rtc_config.enabled = True
 
     # Without previous chunk, RTC should have no effect
@@ -292,16 +296,18 @@ def test_pi0_rtc_validation_rules():
 
         # Test with RTC
         actions_with_rtc = policy.predict_action_chunk(
-            batch,
-            noise=noise.clone(),
-            prev_chunk_left_over=prev_chunk,
-            inference_delay=inference_delay,
-            execution_horizon=execution_horizon,
-        )
+            {
+                **batch,
+                NOISE: noise.clone(),
+                RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+                RTC_INFERENCE_DELAY: inference_delay,
+                RTC_EXECUTION_HORIZON: execution_horizon,
+            }
+        )["action"]
 
         # Test without RTC
         policy.config.rtc_config.enabled = False
-        actions_without_rtc = policy.predict_action_chunk(batch, noise=noise.clone())
+        actions_without_rtc = policy.predict_action_chunk({**batch, NOISE: noise.clone()})["action"]
         policy.config.rtc_config.enabled = True
 
     assert not torch.allclose(actions_with_rtc, actions_without_rtc, rtol=1e-3)
@@ -366,12 +372,14 @@ def test_pi0_rtc_validation_rules():
         with torch.no_grad():
             noise = policy.model.sample_noise((1, config.chunk_size, 7), device)
             actions = policy.predict_action_chunk(
-                batch,
-                noise=noise,
-                prev_chunk_left_over=prev_chunk,
-                inference_delay=4,
-                execution_horizon=10,
-            )
+                {
+                    **batch,
+                    NOISE: noise,
+                    RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+                    RTC_INFERENCE_DELAY: 4,
+                    RTC_EXECUTION_HORIZON: 10,
+                }
+            )["action"]
 
         # Verify shape
         assert actions.shape == (1, config.chunk_size, 7)

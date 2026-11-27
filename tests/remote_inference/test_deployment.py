@@ -57,9 +57,9 @@ def test_server_loads_saved_act_and_processors_warms_and_resets(deployment):
     runner, identity = serving.load_deployment(deployment)
     assert identity.startswith("sha256:") and len(identity) == 71
     assert not runner.capabilities.language
-    assert not runner.policy._action_queue
     with torch.inference_mode():
-        expected = post(policy.predict_action_chunk(pre(runner._batch(observation()))))[0, :3]
+        prepared = pre(runner._batch(observation()))
+        expected = post({**prepared, **policy.predict_action_chunk(prepared)})["action"][0, :3]
     torch.testing.assert_close(runner.predict(observation()).canonical_actions, expected)
     changed, changed_identity = serving.load_deployment(replace(deployment, semantics="degrees-v1"))
     assert changed_identity != identity

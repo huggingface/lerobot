@@ -21,9 +21,8 @@ from __future__ import annotations
 import builtins
 import logging
 import os
-from collections import deque
 from pathlib import Path
-from typing import Any, Unpack, cast
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as torch_nn_functional
@@ -31,11 +30,12 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.utils.constants import ACTION
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.utils.constants import ACTION, NOISE
 from lerobot.utils.import_utils import require_package
 
 from ..common.vla_utils import pad_vector
-from ..pretrained import ActionSelectKwargs, PreTrainedPolicy, T
+from ..pretrained import PreTrainedPolicy, T
 from .configuration_dm05 import DM05Config
 from .core.adapter import (
     flatten_feature_names,
@@ -180,12 +180,6 @@ def _core_config_payload(model: Any) -> dict:
     payload = model.config.to_dict()
     payload["_name_or_path"] = "."
     return payload
-
-
-class DM05ActionSelectKwargs(ActionSelectKwargs, total=False):
-    """`predict_action_chunk` keywords: the shared ones plus a per-call denoising step count."""
-
-    diffusion_steps: int
 
 
 class DM05Policy(PreTrainedPolicy):
@@ -375,10 +369,6 @@ class DM05Policy(PreTrainedPolicy):
         )
         return policy
 
-    def reset(self):
-        """Reset the rollout action queue."""
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
-
     def to(self, *args, **kwargs):
         """Move the policy and keep the config device in sync."""
         policy = super().to(*args, **kwargs)
@@ -521,18 +511,14 @@ class DM05Policy(PreTrainedPolicy):
         return loss, {}
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[DM05ActionSelectKwargs]
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a full action chunk for one processed observation batch."""
         self.eval()
         model_inputs = self._prepare_model_inputs(batch, include_actions=False)
-        diffusion_steps = kwargs.get("diffusion_steps", self.config.diffusion_steps)
-        if diffusion_steps <= 0:
-            raise ValueError(f"diffusion_steps must be positive, got {diffusion_steps}")
+        diffusion_steps = self.config.diffusion_steps
         model_dtype = next((p.dtype for p in self.model.parameters() if p.is_floating_point()), torch.float32)
         initial_noise = self._prepare_initial_noise(
-            kwargs.get("noise"),
+            batch.get(NOISE),
             batch_size=int(model_inputs["input_ids"].shape[0]),
             dtype=model_dtype,
         )
@@ -557,13 +543,4 @@ class DM05Policy(PreTrainedPolicy):
             if action_feature is not None and action_feature.shape
             else int(self.config.max_action_dim)
         )
-        return actions[:, :, :action_dim]
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Return the next queued action slice for online DM05 inference."""
-        self.eval()
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
-            self._queues[ACTION].extend(actions.transpose(0, 1))
-        return self._queues[ACTION].popleft()
+        return PolicyOutput(action=actions[:, :, :action_dim])

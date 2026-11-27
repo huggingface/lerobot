@@ -43,7 +43,6 @@ NUM_VIDEO_FRAMES = 3
 QWEN_HIDDEN_SIZE = 16  # hidden size produced by _FakeQwenBackbone
 
 EXPECTED_ACTION_CHUNK_SHAPE = (BATCH_SIZE, ACTION_HORIZON, ACTION_DIM)
-EXPECTED_SELECT_ACTION_SHAPE = (BATCH_SIZE, ACTION_DIM)
 
 
 # ---------------------------------------------------------------------------

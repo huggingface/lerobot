@@ -41,11 +41,8 @@ from lerobot.processor import (
 )
 from lerobot.processor.converters import (
     batch_to_transition,
-    policy_action_to_transition,
     transition_to_batch,
-    transition_to_policy_action,
 )
-from lerobot.processor.relative_action_processor import to_relative_actions
 from lerobot.utils.constants import (
     ACTION,
     MESSAGES_RENDERED,
@@ -469,34 +466,13 @@ class G05RelativeJointActionsStep(RelativeActionsProcessorStep):
 
     num_obs_steps: int = 1
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        """Cache the latest proprio step, and convert the action to deltas when enabled."""
-        observation = transition.get(TransitionKey.OBSERVATION, {})
-        state = observation.get(OBS_STATE) if observation else None
-        if isinstance(state, torch.Tensor) and state.ndim >= 3:
-            state = state[..., -1, :]
-        elif (
-            isinstance(state, torch.Tensor)
-            and state.ndim == 2
-            and self.num_obs_steps > 1
-            and state.shape[-2] == self.num_obs_steps
-        ):
-            state = state[-1]
-        # Hold the anchor for as long as the policy is still serving the chunk that was
-        # generated against it; a fresh chunk re-anchors when the queue drains. Mirrors
-        # `RelativeActionsProcessorStep`: re-anchoring every tick makes each action in a
-        # chunk relative to the position the previous one already reached, so commands
-        # accumulate across the chunk and jump at the seam.
-        if state is not None and not self._chunk_in_flight():
-            self._last_state = state
-        if not self.enabled:
-            return transition
-        new_transition = transition.copy()
-        action = new_transition.get(TransitionKey.ACTION)
-        if isinstance(action, torch.Tensor) and state is not None:
-            mask = self._build_mask(action.shape[-1])
-            new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
-        return new_transition
+    def current_state(self, state: torch.Tensor) -> torch.Tensor:
+        """The latest proprio step of a stacked state."""
+        if state.ndim >= 3:
+            return state[..., -1, :]
+        if state.ndim == 2 and self.num_obs_steps > 1 and state.shape[-2] == self.num_obs_steps:
+            return state[-1]
+        return state
 
     def get_config(self) -> dict[str, Any]:
         """Return this step's serializable configuration."""
@@ -1156,7 +1132,7 @@ def make_g05_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load the serialized G0.5 pipelines and reconcile them with the live config.
 
@@ -1205,7 +1181,7 @@ def make_g05_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build serializable G0.5 pipelines from checkpoint-authoritative metadata."""
 
@@ -1336,16 +1312,14 @@ def make_g05_pre_post_processors(
     output_steps.extend(
         [
             DeviceProcessorStep(device="cpu"),
-            AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+            AbsoluteActionsProcessorStep(enabled=config.use_relative_actions),
             _joint_frame_output_step(config),
             G05ActionHistoryCropStep(num_obs_steps=config.n_obs_steps),
         ]
     )
-    postprocessor = PolicyProcessorPipeline[PolicyAction, PolicyAction](
+    postprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
         steps=output_steps,
         name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
     )
     return preprocessor, postprocessor
 

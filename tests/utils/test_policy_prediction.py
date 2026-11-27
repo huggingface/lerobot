@@ -14,22 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
+from types import SimpleNamespace
+
 import torch
 
-from lerobot.lerobot_types import PolicyOutput, TransitionKey
+from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     DataProcessorPipeline,
+    PolicyProcessorStep,
     ProcessorStep,
     batch_to_transition,
     create_transition,
-    policy_output_to_transition,
     transition_to_batch,
-    transition_to_policy_action,
-    transition_to_prediction,
 )
 from lerobot.utils.constants import ACTION, PREDICTION
-from tests.fixtures.dummy_checkpoint_policy import make_dummy_policy
 
 # A batched prediction for two environments.
 PREDICTION_B2 = {
@@ -44,32 +42,20 @@ PREDICTION_B2 = {
 }
 
 
-def test_bare_action_becomes_a_transition_without_prediction():
-    action = torch.ones(1, 4)
-    transition = policy_output_to_transition(action)
-
-    assert transition_to_policy_action(transition) is action
-    assert transition_to_prediction(transition) == {}
+def _policy(output):
+    return SimpleNamespace(predict_action_chunk=lambda batch: output, reset=lambda: None)
 
 
-def test_policy_output_becomes_a_transition_with_its_batched_prediction():
-    action = torch.ones(2, 4)
-    output: PolicyOutput = {ACTION: action, PREDICTION: PREDICTION_B2}
-    transition = policy_output_to_transition(output)
-
-    assert transition_to_policy_action(transition) is action
-    assert transition_to_prediction(transition) is PREDICTION_B2
-    assert transition[TransitionKey.OBSERVATION] is None
-
-
-def test_policy_output_without_prediction_has_an_empty_one():
-    transition = policy_output_to_transition({ACTION: torch.ones(1, 4)})
-    assert transition_to_prediction(transition) == {}
-
-
-def test_policy_output_action_must_be_a_tensor():
-    with pytest.raises(ValueError, match="PolicyAction"):
-        policy_output_to_transition({ACTION: [1.0, 2.0]})
+def test_the_policy_step_keeps_the_chunk_in_the_prediction_and_starts_the_command_from_a_copy():
+    action = torch.ones(2, 8, 4)
+    transition = PolicyProcessorStep(_policy({ACTION: action, PREDICTION: PREDICTION_B2}))(
+        create_transition(observation={"observation.state": torch.zeros(2, 3)})
+    )
+    prediction = transition[TransitionKey.PREDICTION]
+    assert prediction[ACTION] is action
+    assert all(prediction[key] is value for key, value in PREDICTION_B2.items())
+    assert torch.equal(transition[TransitionKey.ACTION], action)
+    assert transition[TransitionKey.ACTION] is not action  # postprocessing never touches the prediction
 
 
 def test_prediction_round_trips_through_the_batch_converters():
@@ -89,7 +75,7 @@ class _RecordPrediction(ProcessorStep):
         self.seen = []
 
     def __call__(self, transition):
-        self.seen.append(transition_to_prediction(transition))
+        self.seen.append(transition[TransitionKey.PREDICTION])
         return transition
 
     def transform_features(self, features):
@@ -107,11 +93,6 @@ def test_prediction_reaches_processor_steps_and_comes_back_out():
     assert output[PREDICTION] is PREDICTION_B2
 
 
-def test_policy_without_prediction_still_returns_a_bare_action():
-    policy = make_dummy_policy()
-    assert isinstance(policy.select_action({"observation.state": torch.ones(1, 4)}), torch.Tensor)
-
-
 def test_log_visualization_data_shows_the_step_prediction(monkeypatch):
     from lerobot.utils import visualization_utils
 
@@ -125,3 +106,20 @@ def test_log_visualization_data_shows_the_step_prediction(monkeypatch):
 
     assert logged[0]["prediction"] == prediction
     assert logged[1]["prediction"] is None
+
+
+def test_stacked_predicted_frames_play_back_at_their_actions():
+    from lerobot.utils.visualization_utils import PredictionPlayback
+
+    playback = PredictionPlayback()
+    frames = torch.arange(3.0)[None, :, None].expand(1, 3, 2)  # [B=1, F=3, ...], frame f holds f
+    chunk = {"observation": {"observation.images.top": frames}, "observation_steps": [0, 2, 3]}
+    chunk["language"] = {"subtask": ["reach"]}
+
+    shown = [playback(chunk)] + [playback(None) for _ in range(4)]
+    assert shown[0]["language"] == {"subtask": ["reach"]}
+    assert "observation_steps" not in shown[0]
+    indices = [None if s is None else s["observation"]["observation.images.top"][0, 0].item() for s in shown]
+    assert indices == [0.0, None, 1.0, 2.0, None]
+    assert playback({"language": {"subtask": ["grasp"]}}) == {"language": {"subtask": ["grasp"]}}
+    assert playback(None) is None  # a new chunk without frames ends the playback

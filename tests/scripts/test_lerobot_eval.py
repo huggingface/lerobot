@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
@@ -27,7 +28,7 @@ from lerobot.datasets.io_utils import load_info
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs import make_env
 from lerobot.lerobot_types import TransitionKey
-from lerobot.policies import PreTrainedPolicy
+from lerobot.policies import ChunkPolicySpec, PreTrainedPolicy
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
@@ -71,15 +72,26 @@ class _TwoStepEnv(gym.Env):
 
 
 class _RecordingPolicy(nn.Module):
+    """Plays one-action chunks; with a FLUX3 config, its inference deltas bring the previous command."""
+
+    def __init__(self, config=None):
+        super().__init__()
+        self.config = config or SimpleNamespace(input_features=None, output_features=None)
+        self.spec = ChunkPolicySpec(prediction_steps=1, execution_steps=1)
+        self.inputs = []
+
+    def chunk_inference_spec(self):
+        return self.spec
+
     def reset(self):
         self.inputs = []
 
-    def select_action(self, observation):
+    def predict_action_chunk(self, observation):
         self.inputs.append(
             {key: value.clone() for key, value in observation.items() if torch.is_tensor(value)}
         )
-        # A nonzero normalized delta updates the FLUX3 processor's command anchor each tick.
-        return torch.full((observation[OBS_STATE].shape[0], 6), 0.25)
+        # A nonzero normalized delta, integrated by the FLUX3 postprocessor from the last command.
+        return {ACTION: torch.full((observation[OBS_STATE].shape[0], 1, 6), 0.25)}
 
 
 class _AccumulatingStep(ProcessorStep):
@@ -130,16 +142,17 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
         )
         return result[ACTION], policy.inputs
 
+    config = task_config() if pipeline_kind == "flux3" else None
     env = gym.vector.SyncVectorEnv([_TwoStepEnv])
     try:
-        policy = _RecordingPolicy()
+        policy = _RecordingPolicy(config)
         pre, post = make_processors()
         run(env, policy, pre, post, seed=0)
         # Episode A's last FLUX3 joint command is 1.0; B starts at a distinct measured position, 2.0.
         reused_actions, reused_inputs = run(env, policy, pre, post, seed=2)
 
         fresh_pre, fresh_post = make_processors()
-        fresh_actions, fresh_inputs = run(env, _RecordingPolicy(), fresh_pre, fresh_post, seed=2)
+        fresh_actions, fresh_inputs = run(env, _RecordingPolicy(config), fresh_pre, fresh_post, seed=2)
     finally:
         env.close()
 
@@ -255,8 +268,8 @@ def test_eval_consent_is_the_env_own():
 
 def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
     class _Policy(_RecordingPolicy):
-        def select_action(self, observation):
-            return torch.tensor([[2.0, 0.0], [0.0, 0.0]])
+        def predict_action_chunk(self, observation):
+            return {ACTION: torch.tensor([[[2.0, 0.0]], [[0.0, 0.0]]])}
 
     env = make_env(ToyEnvConfig(), n_envs=2)["reach"][0]
     preprocessor, postprocessor = make_policy_processor_pipelines([], [])

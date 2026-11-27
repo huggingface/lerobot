@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 import json
 import sys
 from types import SimpleNamespace
@@ -55,7 +54,13 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    OBS_IMAGES,
+    OBS_STATE,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+)
 
 
 def _groot_features(
@@ -414,13 +419,6 @@ def test_groot_n1_7_can_be_selected_from_policy_config_factory_without_external_
     assert "gr00t" not in sys.modules
 
 
-def test_groot_predict_action_chunk_accepts_rtc_kwargs():
-    signature = inspect.signature(GrootPolicy.predict_action_chunk)
-
-    assert any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
-    signature.bind(object(), {}, inference_delay=2, prev_chunk_left_over=None)
-
-
 def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
     pytest.importorskip("transformers")
 
@@ -435,10 +433,12 @@ def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
     prev_chunk = torch.arange(8 * 7, dtype=torch.float32).view(8, 7)
 
     actions = policy.predict_action_chunk(
-        {"state": torch.zeros(1, 1, 132)},
-        inference_delay=3,
-        prev_chunk_left_over=prev_chunk,
-    )
+        {
+            "state": torch.zeros(1, 1, 132),
+            RTC_INFERENCE_DELAY: 3,
+            RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+        }
+    )[ACTION]
 
     assert actions.shape == (1, 40, 7)
     assert dummy_model.get_action_options == {
@@ -471,9 +471,11 @@ def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
     )
 
     policy.predict_action_chunk(
-        {"state": torch.zeros(1, 1, 132)},
-        inference_delay=5,
-        prev_chunk_left_over=prev_chunk,
+        {
+            "state": torch.zeros(1, 1, 132),
+            RTC_INFERENCE_DELAY: 5,
+            RTC_PREV_CHUNK_LEFT_OVER: prev_chunk,
+        }
     )
 
     assert dummy_model.get_action_options == {
@@ -516,7 +518,7 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
     )
     policy = GrootPolicy(config)
 
-    actions = policy.predict_action_chunk({"state": torch.zeros(1, 1, 132)})
+    actions = policy.predict_action_chunk({"state": torch.zeros(1, 1, 132)})[ACTION]
 
     assert actions.shape == (1, 16, 7)
     torch.testing.assert_close(actions[0, :, 0], torch.arange(16, dtype=torch.float32))
@@ -815,7 +817,18 @@ def test_converted_raw_n1_7_relative_action_processors_reconnect_after_load(tmp_
     assert relative_step.enabled is True
     assert relative_step.exclude_joints == ["gripper"]
     assert relative_step.action_names == action_names
-    assert absolute_step.relative_step is relative_step
+    assert absolute_step.enabled is True
+
+    # The reloaded pair still round-trips: the relative step's anchor travels in the batch.
+    state = torch.arange(6, dtype=torch.float32).view(1, 6) + 1.0
+    action = torch.full((1, 4, 6), 10.0)
+    relative = relative_step(
+        {TransitionKey.OBSERVATION: {OBS_STATE: state}, TransitionKey.ACTION: action.clone()}
+    )
+    expected_relative = action.clone()
+    expected_relative[..., :5] -= state[:, None, :5]
+    torch.testing.assert_close(relative[TransitionKey.ACTION], expected_relative)
+    torch.testing.assert_close(absolute_step(relative)[TransitionKey.ACTION], action)
 
 
 def test_groot_n1_7_pack_inputs_rejects_state_dim_above_core_max():
@@ -2782,15 +2795,7 @@ def test_groot_n1_7_libero_execution_horizon_uses_core_eight_action_cadence(tmp_
     assert infer_groot_n1_7_action_execution_horizon(model_path, "libero_sim") == 8
 
 
-def test_groot_select_action_rejects_relative_action_policies():
-    policy = object.__new__(GrootPolicy)
-    object.__setattr__(policy, "config", SimpleNamespace(use_relative_actions=True))
-
-    with pytest.raises(NotImplementedError, match="select_action does not support relative-action policies"):
-        policy.select_action({})
-
-
-def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkeypatch):
+def test_groot_n1_7_chunk_uses_checkpoint_valid_horizon(tmp_path, monkeypatch):
     pytest.importorskip("transformers")
 
     from lerobot.policies.groot.groot_n1_7 import GR00TN17
@@ -2799,6 +2804,10 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
+        def __init__(self):
+            super().__init__()
+            self.config.action_horizon = 40
+
         def get_action(self, inputs, *, noise=None):
             assert inputs["action_mask"].shape == (1, 40)
             assert inputs["action_mask"][0, :16].sum().item() == 16
@@ -2829,18 +2838,13 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
         "action_mask": torch.cat((torch.ones(1, 16), torch.zeros(1, 24)), dim=1),
     }
 
-    first_action = policy.select_action(batch)
+    chunk = policy.predict_action_chunk(batch)[ACTION]
+    spec = policy.chunk_inference_spec()
 
-    assert policy._action_queue_steps == 8
-    assert len(policy._action_queue) == 7
-    torch.testing.assert_close(first_action[0, 0], torch.tensor(0.0))
-
-    for expected_step in range(1, 8):
-        action = policy.select_action(batch)
-        torch.testing.assert_close(action[0, 0], torch.tensor(float(expected_step)))
-
-    refreshed_action = policy.select_action(batch)
-    torch.testing.assert_close(refreshed_action[0, 0], torch.tensor(0.0))
+    # The checkpoint's 16 valid steps are returned, of which its 8-step cadence executes.
+    assert (spec.prediction_steps, spec.execution_steps) == (16, 8)
+    assert chunk.shape == (1, 16, 7)
+    torch.testing.assert_close(chunk[0, :, 0], torch.arange(16, dtype=torch.float32))
 
 
 def test_qwen3_backbone_uses_nested_transformers_model_contract(monkeypatch):

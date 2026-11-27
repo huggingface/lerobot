@@ -238,26 +238,26 @@ def test_eval_loop_accepts_canonical_observations(sim_server):
 
     import torch
 
+    from lerobot.policies import ChunkPolicySpec
     from lerobot.processor import PolicyProcessorPipeline
-    from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
     from lerobot.scripts.lerobot_eval import rollout
 
     class Policy(torch.nn.Module):
-        config = SimpleNamespace(use_amp=False)
+        config = SimpleNamespace(use_amp=False, input_features=None, output_features=None)
 
         def reset(self):
             pass
 
-        def select_action(self, observation):
+        def chunk_inference_spec(self):
+            return ChunkPolicySpec(prediction_steps=1, execution_steps=1)
+
+        def predict_action_chunk(self, observation):
             assert observation["observation.state"].shape == (2, 2)
             assert observation["observation.image"].shape == (2, 3, 8, 8)
-            return torch.ones((2, 2), dtype=torch.float32) * 0.5
+            return {"action": torch.ones((2, 1, 2), dtype=torch.float32) * 0.5}
 
     env = RemoteVectorEnv(EnvClient(sim_server[1]), num_envs=2)
     identity = PolicyProcessorPipeline(steps=[])
-    action_identity = PolicyProcessorPipeline(
-        steps=[], to_transition=policy_action_to_transition, to_output=transition_to_policy_action
-    )
     try:
         result = rollout(
             env,
@@ -265,7 +265,7 @@ def test_eval_loop_accepts_canonical_observations(sim_server):
             identity,
             identity,
             identity,
-            action_identity,
+            identity,
             seeds=[10, 20],
             return_observations=True,
         )

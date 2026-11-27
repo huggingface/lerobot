@@ -26,6 +26,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.praxis.configuration_praxis import (
     BIMANUAL_CAMERA_KEYS,
@@ -124,7 +125,7 @@ def test_tile_step_follows_the_yam_fit_rule() -> None:
     np.testing.assert_array_equal(state, want)
 
 
-def test_select_action_matches_the_praxis_bimanual_session_bitwise() -> None:
+def test_inference_matches_the_praxis_bimanual_session_bitwise() -> None:
     """The two-arm glue (three views, pose16, the bimanual session, seeds) gives the praxis commands."""
     pipeline = pytest.importorskip("praxis.pipeline", reason="the praxis package gives the reference Session")
     policy = make_tiny_bimanual_policy(seed=1, n_action_steps=24, max_context_chunks=1)
@@ -138,16 +139,14 @@ def test_select_action_matches_the_praxis_bimanual_session_bitwise() -> None:
         control_mode="none",
         exec_horizon=24,
     )  # type: ignore[arg-type]
-    pre, post = make_pre_post_processors(policy.config, None)
+    engine = SyncInferenceEngine(policy, *make_pre_post_processors(policy.config, None))
     observations: list[dict] = []
-    policy.reset()
+    engine.reset()
     actions: list[torch.Tensor] = []
-    for step in range(22):
+    for step in range(22):  # 21 rows of the first chunk, then the first row of the second
         obs = fake_bimanual_observation(step)
         observations.append(obs)
-        command = policy.select_action(pre(obs))
-        assert command.shape == (1, 2 * PRAXIS_COMMAND_DIM)
-        actions.append(post(command)[0])
+        actions.append(engine.step(obs, float(step))[0])
     res0 = reference.step(_reference_obs(observations[:1]))
     res1 = reference.step(_reference_obs(observations[:22]))
     assert len(res0.commands) == 21 and len(res1.commands) == 24 and res1.depth == 1
@@ -198,7 +197,7 @@ def test_bimanual_out_of_range_grippers_match_the_praxis_session_bitwise() -> No
     pre, post = make_pre_post_processors(policy.config, None)
     obs = _out_of_range_grips(fake_bimanual_observation(0), 1.03, -0.02)
     policy.reset()
-    got = post(policy.select_action(pre(obs)))[0]
+    got = post(policy.predict_action_chunk(pre(obs)))[ACTION][0, 0]
     ref_obs = _reference_obs([obs])
     for i, side in enumerate(bimanual.SIDES):  # the rig reports the raw gripper value
         ref_obs[bimanual.grip_keys(side)[0]] = obs[OBS_STATE][:, 7 * i + 6].numpy()
@@ -211,16 +210,15 @@ def test_bimanual_raw_frames_match_the_pipeline_path() -> None:
     policy = make_tiny_bimanual_policy(seed=2)
     pre, post = make_pre_post_processors(policy.config, None)
     policy.reset()
-    through_pipeline = [post(policy.select_action(pre(fake_bimanual_observation(s))))[0] for s in range(3)]
+    through_pipeline = post(policy.predict_action_chunk(pre(fake_bimanual_observation(0))))[ACTION][0]
     policy.reset()
-    raw = []
-    for s in range(3):
-        cmd = policy.select_action(fake_bimanual_observation(s))[0].numpy()
-        raw.append(
-            np.concatenate(
-                [pose12_grip_to_droid7(cmd[13 * i : 13 * i + 12], float(cmd[13 * i + 12])) for i in range(2)]
-            )
+    raw = [
+        np.concatenate(
+            [pose12_grip_to_droid7(cmd[13 * i : 13 * i + 12], float(cmd[13 * i + 12])) for i in range(2)]
         )
+        for cmd in policy.predict_action_chunk(fake_bimanual_observation(0))[ACTION][0].numpy()
+    ]
+    assert len(raw) == len(through_pipeline) == 21
     for a, b in zip(through_pipeline, raw, strict=True):
         np.testing.assert_array_equal(a.numpy(), b)
 
@@ -228,14 +226,11 @@ def test_bimanual_raw_frames_match_the_pipeline_path() -> None:
 def test_bimanual_chunk_api_and_prediction_split() -> None:
     policy = make_tiny_bimanual_policy(seed=3, return_prediction=True)
     policy.reset()
-    chunk = policy.predict_action_chunk(fake_bimanual_observation(0))
-    assert chunk.shape == (1, 24, 2 * PRAXIS_COMMAND_DIM)
-    policy.reset()
-    out = policy.select_action(fake_bimanual_observation(0))
-    assert isinstance(out, dict)
+    out = policy.predict_action_chunk(fake_bimanual_observation(0))
+    assert out[ACTION].shape == (1, 21, 2 * PRAXIS_COMMAND_DIM)
     frames = out["prediction"]["observation"]
     assert set(frames) == set(BIMANUAL_CAMERA_KEYS)
-    assert all(f.shape == (1, 3, *TILE) for f in frames.values())
+    assert all(f.shape == (1, 21, 3, *TILE) for f in frames.values())
 
 
 def test_rel20_to_pose12_composes_each_arm_with_its_own_anchor() -> None:

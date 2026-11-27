@@ -33,8 +33,7 @@ class NATVLAConfig(PreTrainedConfig):
     vlm/ subfolder holds the VLM's config, tokenizer and image processor. vlm_config: the VLM's architecture,
     read from vlm/ when the policy is first built and kept in its checkpoints. action_tokenizer: Hub repository
     or folder of the NAT tokenizer. vlm_revision, action_tokenizer_revision: the Hub commits these are downloaded
-    from; change them together with the repositories. rtc_steps: actions of a chunk that run while the next chunk
-    is generated, which then starts with their tokens (0 turns this off)."""
+    from; change them together with the repositories."""
 
     vlm: str = "ahad-j/nat-vla-450m"
     vlm_revision: str | None = "a5c2e13d45832050e364265962f6ad536460e955"
@@ -46,7 +45,6 @@ class NATVLAConfig(PreTrainedConfig):
     dtype: torch.dtype | None = torch.bfloat16
     chunk_size: int = 32
     n_action_steps: int = 32
-    rtc_steps: int = 0
     state_bins: int = 256
     z_loss_scale: float = 1e-4
     vlm_config: dict[str, Any] | None = None
@@ -76,10 +74,6 @@ class NATVLAConfig(PreTrainedConfig):
             )
         if not 0 < self.n_action_steps <= self.chunk_size:
             raise ValueError(f"n_action_steps must be between 1 and chunk_size ({self.chunk_size})")
-        if self.rtc_steps and not self.rtc_steps <= self.n_action_steps <= self.chunk_size - self.rtc_steps:
-            raise ValueError(
-                "rtc_steps must be at most n_action_steps, and n_action_steps + rtc_steps at most chunk_size"
-            )
 
     def validate_features(self) -> None:
         if not self.image_features:

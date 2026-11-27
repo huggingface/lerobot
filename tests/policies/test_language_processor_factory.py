@@ -17,6 +17,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
 )
 from lerobot.transforms import ImageTransformsConfig
+from lerobot.utils.constants import ACTION_ANCHOR
 
 
 def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_are_present(monkeypatch):
@@ -165,7 +166,9 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     assert load.call_count == (2 if uses_checkpoint else 0)
     result = pre({"observation.state": torch.tensor([[22.0]])})
     torch.testing.assert_close(result["observation.state"], torch.tensor([[6.0 if resume else 1.0]]))
-    torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0 if resume else 22.0]]))
+    torch.testing.assert_close(
+        post({"action": torch.tensor([[1.0]])})["action"], torch.tensor([[12.0 if resume else 22.0]])
+    )
 
 
 @pytest.mark.dataset
@@ -238,7 +241,7 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
     torch.testing.assert_close(
         pre({"observation.state": torch.tensor([[32.0]])})["observation.state"], torch.tensor([[1.0]])
     )
-    torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[32.0]]))
+    torch.testing.assert_close(post({"action": torch.tensor([[1.0]])})["action"], torch.tensor([[32.0]]))
 
 
 def test_pipeline_without_recipe_preserves_training_inputs_and_renders_vqa():
@@ -269,7 +272,7 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     def linked_factory(config, dataset_stats):
         pre, post = original_factory(config, dataset_stats)
         relative = RelativeActionsProcessorStep(enabled=True)
-        absolute = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative)
+        absolute = AbsoluteActionsProcessorStep(enabled=True)
         pre.steps = [relative, *pre.steps]
         post.steps = [*post.steps, absolute]
         created.extend([relative, absolute])
@@ -290,12 +293,14 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
     assert not any("saved processors from" in record.getMessage() for record in caplog.records)
     assert pre.steps[0] is created[0]
     assert post.steps[-1] is created[1]
-    assert post.steps[-1].relative_step is pre.steps[0]
     processed = _preprocess_dataset_batch(
         {"observation.old_state": torch.tensor([[10.0]])}, [], cfg.rename_map, pre
     )
     torch.testing.assert_close(processed["observation.state"], torch.tensor([[5.0]]))
-    torch.testing.assert_close(post(torch.tensor([[1.0]])), torch.tensor([[12.0]]))
+    # The relative step anchors on the renamed raw state and the absolute step reads that anchor back.
+    torch.testing.assert_close(processed[ACTION_ANCHOR], torch.tensor([[10.0]]))
+    postprocessed = post({"action": torch.tensor([[1.0]]), ACTION_ANCHOR: processed[ACTION_ANCHOR]})
+    torch.testing.assert_close(postprocessed["action"], torch.tensor([[12.0]]))
 
 
 @pytest.mark.parametrize("consent,override", [(False, None), (True, None), (False, True), (True, False)])

@@ -17,7 +17,6 @@
 # limitations under the License.
 
 import warnings
-from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -28,10 +27,12 @@ import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy
-from ..utils import get_device_from_parameters, get_output_shape, populate_queues
+from ..utils import get_device_from_parameters, get_output_shape
 from .configuration_vqbet import VQBeTConfig
 from .vqbet_utils import GPT, ResidualVQ
 
@@ -106,56 +107,32 @@ class VQBeTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def reset(self):
-        """
-        Clear observation and action queues. Should be called on `env.reset()`
-        queues are populated during rollout of the policy, they contain the n latest observations and actions
-        """
-        self._queues = {
-            OBS_IMAGES: deque(maxlen=self.config.n_obs_steps),
-            OBS_STATE: deque(maxlen=self.config.n_obs_steps),
-            ACTION: deque(maxlen=self.config.action_chunk_size),
-        }
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Predict and execute one action chunk (``action_chunk_size`` actions) per call."""
+        steps = self.config.action_chunk_size
+        return ChunkPolicySpec(prediction_steps=steps, execution_steps=steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-        actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
-        return actions
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Predict the ``action_chunk_size`` actions that follow the current observation.
 
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
-
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        Observations come as their ``[B, n_obs_steps, ...]`` window, or as the current frame
+        when ``n_obs_steps`` is 1.
         """
-        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
-        if ACTION in batch:
-            batch.pop(ACTION)
-        batch = dict(batch)  # shallow copy so that adding a key doesn't modify the original
-        # NOTE: It's important that this happens after stacking the images into a single key.
-        batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
-        # NOTE: for offline evaluation, we have action in the batch, so we need to pop it out
-        if ACTION in batch:
-            batch.pop(ACTION)
-
-        self._queues = populate_queues(self._queues, batch)
-
         if not self.vqbet.action_head.vqvae_model.discretized.item():
             warnings.warn(
                 "To evaluate in the environment, your VQ-BeT model should contain a pretrained Residual VQ.",
                 stacklevel=1,
             )
-
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch)
-            # since the data in the action queue's dimension is (action_chunk_size, batch_size, action_dim), we transpose the action and fill the queue
-            self._queues[ACTION].extend(actions.transpose(0, 1))
-
-        action = self._queues[ACTION].popleft()
-        return action
+        state = batch[OBS_STATE]
+        images = [batch[key] for key in self.config.image_features]
+        inputs = {
+            OBS_STATE: state.unsqueeze(1) if state.ndim == 2 else state,
+            OBS_IMAGES: torch.stack(
+                [image.unsqueeze(1) if image.ndim == 4 else image for image in images], dim=-4
+            ),
+        }
+        return PolicyOutput(action=self.vqbet(inputs, rollout=True)[:, : self.config.action_chunk_size])
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""

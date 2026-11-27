@@ -23,7 +23,6 @@ the model applies training augmentation, composites its canvas and maps ``[0, 1]
 from __future__ import annotations
 
 import math
-from collections import deque
 from dataclasses import replace
 from typing import Any
 
@@ -35,9 +34,7 @@ from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.processor.converters import (
     batch_to_transition,
-    policy_action_to_transition,
     transition_to_batch,
-    transition_to_policy_action,
 )
 from lerobot.processor.factory import make_default_policy_processor_steps, make_policy_processor_pipelines
 from lerobot.processor.pipeline import (
@@ -52,6 +49,8 @@ from lerobot.processor.relative_action_processor import (
     RelativeActionsProcessorStep,
 )
 from lerobot.utils.constants import (
+    ACTION_ANCHOR,
+    OBS_ACTION,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
@@ -89,8 +88,6 @@ def make_flux3_pre_post_processors_from_pretrained(
         pretrained_model_name_or_path=pretrained_path,
         config_filename=postprocessor_config_filename,
         overrides=postprocessor_overrides,
-        to_transition=policy_action_to_transition,
-        to_output=transition_to_policy_action,
         revision=revision,
         trust_remote_code=config.trust_remote_code,
     )
@@ -163,7 +160,7 @@ def make_flux3_pre_post_processors(
     ]
     output_steps: list[ProcessorStep] = [
         steps.unnormalize,
-        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions),
         steps.to_cpu,
     ]
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
@@ -304,7 +301,7 @@ class _HistoryQuantiles(ProcessorStep):
 
 @ProcessorStepRegistry.register("flux3_observation_history_normalizer")
 class ObservationHistoryNormalizerProcessorStep(_HistoryQuantiles, ObservationProcessorStep):
-    """Prepare training windows or synchronous image/state/command history.
+    """Prepare training windows or the sampled inference image/state/command history.
 
     Commands are absolute at the pipeline boundary. Quantiles describe the selected
     representation: consecutive command deltas (with explicit absolute channels) or
@@ -331,13 +328,6 @@ class ObservationHistoryNormalizerProcessorStep(_HistoryQuantiles, ObservationPr
         self.condition_on_past_actions = condition_on_past_actions
         if n_obs_steps < 1 or chunk_size < 1:
             raise ValueError("Invalid history/chunk length")
-        self.reset()
-
-    def reset(self):
-        self.observations = deque(maxlen=self.n_obs_steps)
-        self.commands = deque(maxlen=self.n_obs_steps)
-        self.last_command = None
-        self.output_anchor = None
 
     def get_config(self):
         return {
@@ -358,54 +348,48 @@ class ObservationHistoryNormalizerProcessorStep(_HistoryQuantiles, ObservationPr
         if PAST_ACTIONS in obs:
             raise ValueError("History inputs have already been processed")
         state = obs[OBS_STATE].float()
-        actions = self.transition.get(TransitionKey.ACTION)
-        commands = obs.get("observation.command_history")
+        if state.ndim == 2:
+            # A one-frame window (n_obs_steps=1) arrives at inference as the current frame.
+            state = state[:, None]
+            for key in self.camera_keys:
+                if obs[key].ndim == 4:
+                    obs[key] = obs[key][:, None]
+        training = self.transition.get(TransitionKey.ACTION) is not None
+        commands = obs.get(OBS_ACTION)
         past = None
-        if actions is not None:
-            self._validate_command_window(actions)
-            past = self._past(actions.float()[:, : self.n_obs_steps])
+        if commands is None:
+            if self.condition_on_past_actions or self.action_representation == "delta":
+                raise ValueError(
+                    "History conditioning requires observation.action, the commands executed before"
+                )
         else:
-            if commands is None and (state.ndim == 2 or (state.ndim == 3 and state.shape[1] == 1)):
-                state = state[:, -1] if state.ndim == 3 else state
-                if state.shape[-1] != self.action_dim:
-                    raise ValueError(f"Expected {self.action_dim} measured state channels")
-                if self.last_command is None:
-                    self.last_command = state.clone()
-                current = {OBS_STATE: state.clone()}
-                for key in self.camera_keys:
-                    value = obs[key]
-                    if value.ndim == 5:
-                        if value.shape[1] != 1:
-                            raise ValueError("Synchronous input needs one image per tick")
-                        value = value[:, 0]
-                    current[key] = value.clone()
-                repeats = self.n_obs_steps if not self.observations else 1
-                for _ in range(repeats):
-                    self.observations.append(current)
-                    self.commands.append(self.last_command.clone())
-                for key in current:
-                    obs[key] = torch.stack([item[key] for item in self.observations], 1)
-                state = obs[OBS_STATE]
-                commands = torch.stack(list(self.commands), 1)
-            if commands is None:
-                if self.condition_on_past_actions or self.action_representation == "delta":
-                    raise ValueError("Offline prediction requires observation.command_history")
-            else:
-                commands = commands.float()
-                past = self._past(commands)
-                self.output_anchor = commands[:, -1].clone()
+            commands = commands.float()
+            padding = obs.get(f"{OBS_ACTION}_is_pad")
+            if not training and padding is not None and padding.any():
+                # Before the first command, the robot held the episode's first state.
+                first_state = state[:, 0] if state.ndim == 3 else state
+                commands = torch.where(padding[..., None].to(commands.device), first_state[:, None], commands)
+            past = self._past(commands)
+            # Predicted command deltas integrate from the last executed command.
+            complementary = dict(self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+            complementary[ACTION_ANCHOR] = commands[:, -1].clone()
+            self.transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         if state.ndim != 3 or state.shape[1:] != (self.n_obs_steps, self.action_dim):
             raise ValueError("History conditioning requires a complete state history")
         obs[OBS_STATE] = self.scale(state, "state")
         if self.condition_on_past_actions:
             obs[PAST_ACTIONS] = past
-        obs.pop("observation.command_history", None)
+        # observation.action stays for the action target step, which needs the last command.
         return obs
 
 
 @ProcessorStepRegistry.register("flux3_action_target_normalizer")
 class ActionTargetNormalizerProcessorStep(_HistoryQuantiles, ActionProcessorStep):
-    """Convert an absolute training command window into normalized action targets."""
+    """Convert absolute training commands into normalized action targets.
+
+    The targets follow the commands of ``observation.action``: deltas start from the last
+    executed command. Removes ``observation.action`` once the history step has used it.
+    """
 
     streams = ("action",)
 
@@ -429,13 +413,26 @@ class ActionTargetNormalizerProcessorStep(_HistoryQuantiles, ActionProcessorStep
 
     def __call__(self, transition):
         # Inference supplies observations without target actions.
-        if transition.get(TransitionKey.ACTION) is None:
-            return transition.copy()
-        return super().__call__(transition)
+        result = (
+            transition.copy()
+            if transition.get(TransitionKey.ACTION) is None
+            else super().__call__(transition)
+        )
+        observation = result.get(TransitionKey.OBSERVATION)
+        if observation is not None and OBS_ACTION in observation:
+            observation = dict(observation)
+            observation.pop(OBS_ACTION)
+            observation.pop(f"{OBS_ACTION}_is_pad", None)
+            result[TransitionKey.OBSERVATION] = observation
+        return result
 
     def action(self, action):
-        self._validate_command_window(action)
-        return self._normalized_commands(action.float())[:, self.n_obs_steps - 1 :]
+        past = (self.transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_ACTION)
+        if past is None:
+            raise ValueError("History training targets need observation.action, the commands before them")
+        commands = torch.cat([past.float(), action.float()], dim=1)
+        self._validate_command_window(commands)
+        return self._normalized_commands(commands)[:, self.n_obs_steps - 1 :]
 
 
 @ProcessorStepRegistry.register("flux3_action_history_unnormalizer")
@@ -448,32 +445,26 @@ class ActionHistoryUnnormalizerProcessorStep(_HistoryQuantiles, ActionProcessorS
         self, action_dim, action_representation="absolute", absolute_dims=None, normalization_clip=6.0
     ):
         super().__init__(action_dim, action_representation, absolute_dims, normalization_clip)
-        self.history = None
-
-    def reset(self):
-        if self.history is not None:
-            self.history.reset()
 
     def action(self, action):
         self.validate_statistics()
-        if self.history is None:
-            raise ValueError("History postprocessing requires the paired preprocessor")
         if action.ndim not in (2, 3) or action.shape[-1] != self.action_dim:
             raise ValueError(f"Predictions must be (B, {self.action_dim}) or (B, T, {self.action_dim})")
         values = self.scale(action.float(), "action", inverse=True)
         commands = values.clone()
         if self.action_representation == "delta":
-            if self.history.output_anchor is None:
-                raise ValueError("Delta postprocessing requires the preprocessor's command history")
-            anchor = self.history.output_anchor.to(values)
+            anchor = (self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}).get(ACTION_ANCHOR)
+            if anchor is None:
+                raise ValueError(
+                    "Delta postprocessing needs the action_anchor the history preprocessor writes"
+                )
+            anchor = anchor.to(values)
             absolute = {d % self.action_dim for d in self.absolute_dims}
             dims = [d for d in range(self.action_dim) if d not in absolute]
             if values.ndim == 3:
                 commands[..., dims] = values[..., dims].cumsum(1) + anchor[:, None, dims]
             else:
                 commands[..., dims] += anchor[..., dims]
-        if values.ndim == 2:
-            self.history.last_command = commands.clone()
         return commands
 
 
@@ -506,7 +497,6 @@ def connect_history_processors(config, pre, post):
                 raise ValueError("Pre/postprocessor action quantiles disagree")
     # Camera selection follows the policy, including overrides when adapting a saved base.
     history.camera_keys = list(config.camera_order)
-    output.history = history
     return pre, post
 
 
@@ -514,11 +504,6 @@ def connect_flux3_processors(config, pre, post):
     """Reconnect saved history state and apply the policy's current camera selection."""
     if config.conditioning == "history":
         connect_history_processors(config, pre, post)
-    else:
-        relative = next((step for step in pre.steps if isinstance(step, RelativeActionsProcessorStep)), None)
-        for step in post.steps:
-            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
-                step.relative_step = relative
     resizers = [step for step in pre.steps if isinstance(step, CameraResizeProcessorStep)]
     if len(resizers) != 1:
         raise ValueError("FLUX3 requires its saved camera processor; re-export the model package")

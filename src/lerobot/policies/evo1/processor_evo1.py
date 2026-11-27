@@ -36,37 +36,14 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
     load_pretrained_policy_processors,
 )
-from lerobot.processor.converters import (
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_policy_action,
-)
 from lerobot.utils.constants import (
     ACTION,
-    DONE,
-    INFO,
-    OBS_PREFIX,
     OBS_STATE,
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
-    REWARD,
-    TRUNCATED,
 )
 
 from .configuration_evo1 import Evo1Config
-
-
-def evo1_batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
-    transition = batch_to_transition(batch)
-    complementary_data = dict(transition[TransitionKey.COMPLEMENTARY_DATA] or {})
-    reserved = {ACTION, REWARD, DONE, TRUNCATED, INFO}
-    for key, value in batch.items():
-        if key in reserved or key.startswith(OBS_PREFIX):
-            continue
-        complementary_data.setdefault(key, value)
-    new_transition = transition.copy()
-    new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
-    return new_transition
 
 
 @dataclass
@@ -334,17 +311,12 @@ def reconcile_evo1_processors(
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
     """Reconcile checkpoint-loaded pipelines with the current EVO1 config.
 
-    Three things cannot be restored from a serialized pipeline alone: the EVO1 batch converter
-    (converters are plain functions and are never serialized), eval-time CLI overrides of the
+    Two things cannot be restored from a serialized pipeline alone: eval-time CLI overrides of the
     action postprocessing flags (`postprocess_action_dim`, `binarize_gripper`, `gripper_*`), and the
     (un)normalizer stats/features when the generic override path injects raw, unpadded dataset
-    stats. This restores the converter, re-pads the normalization stats to EVO1's fixed widths, and
-    rebuilds the action step from the current config so those overrides take effect.
+    stats. This re-pads the normalization stats to EVO1's fixed widths, and rebuilds the action
+    step from the current config so those overrides take effect.
     """
-    # Pipelines reloaded from a checkpoint come back with the default batch converter, which drops
-    # non-observation extras (embodiment_id, state_mask, custom task fields) needed by EVO1.
-    preprocessor.to_transition = evo1_batch_to_transition
-
     _refresh_evo1_normalization_steps(config, preprocessor, postprocessor)
 
     action_step = Evo1ActionProcessorStep(
@@ -385,7 +357,7 @@ def make_evo1_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load the serialized EVO1 pipelines and reconcile them with the current config."""
     # EVO1 stats reach the (un)normalizers through the overrides, then get re-padded by reconcile.
@@ -407,7 +379,7 @@ def make_evo1_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     normalization_features = _evo1_normalization_features(config)
     action_features = _evo1_action_features(config)
@@ -451,12 +423,9 @@ def make_evo1_pre_post_processors(
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=input_steps,
             name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-            to_transition=evo1_batch_to_transition,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
         ),
     )

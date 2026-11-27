@@ -33,12 +33,12 @@ import torch
 pytest.importorskip("transformers")
 pytest.importorskip("scipy")
 
-from lerobot.lerobot_types import PolicyAction  # noqa: E402
 from lerobot.policies.pi0_fast.configuration_pi0_fast import PI0FastConfig
 from lerobot.policies.pi0_fast.modeling_pi0_fast import PI0FastPolicy
 from lerobot.policies.pi0_fast.processor_pi0_fast import make_pi0_fast_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
 from lerobot.utils.constants import (
+    ACTION,
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_IMAGES,
@@ -94,7 +94,7 @@ def instantiate_lerobot_pi0_fast(
 ) -> tuple[
     Any,  # Policy
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Instantiate PI0Fast, explicitly trusting its FAST action tokenizer for these integration checks."""
     if from_pretrained:
@@ -192,7 +192,7 @@ def pi0_fast_components(
 ) -> tuple[
     PI0FastPolicy,
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Fixture to instantiate and provide all PI0Fast components for tests."""
     print(f"\nTesting with DEVICE='{DEVICE}'")
@@ -271,7 +271,7 @@ def test_pi0_fast_action_generation(policy: PI0FastPolicy, preprocessor: PolicyP
     observation = preprocessor(create_dummy_data())
 
     with torch.no_grad():
-        actions = policy.predict_action_chunk(observation)
+        actions = policy.predict_action_chunk(observation)[ACTION]
 
     assert tuple(actions.shape) == EXPECTED_ACTIONS_SHAPE
     assert actions.dtype == torch.float32
@@ -289,11 +289,11 @@ def test_pi0_fast_inference_reproducibility(
 
     set_seed_all(42)
     with torch.no_grad():
-        actions_1 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))
+        actions_1 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))[ACTION]
 
     set_seed_all(42)
     with torch.no_grad():
-        actions_2 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))
+        actions_2 = policy.predict_action_chunk(preprocessor(deepcopy(batch)))[ACTION]
 
     torch.testing.assert_close(actions_1, actions_2, rtol=0, atol=1e-6)
 

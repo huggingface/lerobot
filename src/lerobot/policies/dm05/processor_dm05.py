@@ -29,7 +29,6 @@ from lerobot.processor import (
     DeviceProcessorStep,
     NormalizerProcessorStep,
     ObservationProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -336,7 +335,7 @@ def make_dm05_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build the LeRobot processor pipeline for the OpenDM adapter."""
 
@@ -397,7 +396,6 @@ def make_dm05_pre_post_processors(
             unnormalizer,
             AbsoluteActionsProcessorStep(
                 enabled=config.use_relative_actions,
-                relative_step=relative_actions,
             ),
         ],
     )
@@ -416,7 +414,7 @@ def make_dm05_pre_post_processors_from_pretrained(
     postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Load the checkpoint's pipelines, re-pinning the settings the active config owns.
 

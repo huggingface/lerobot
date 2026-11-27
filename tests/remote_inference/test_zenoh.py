@@ -200,7 +200,7 @@ def tls_router(tmp_path):
 
 def test_documented_mtls_router_acl(tls_router):
     endpoint, configs, router = tls_router
-    prefix = "lerobot/inference/v1/deployments/manipulation"
+    prefix = "lerobot/inference/v2/deployments/manipulation"
     session = prefix + "/instances/test-instance/sessions/test-session"
     with (
         ZenohTransport(

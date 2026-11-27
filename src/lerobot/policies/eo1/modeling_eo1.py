@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -28,7 +27,8 @@ import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
 from torch import Tensor
 
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.utils.constants import ACTION, NOISE, OBS_STATE
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
@@ -97,9 +97,6 @@ class EO1Policy(PreTrainedPolicy):
         self.model.to(config.device)
         self.reset()
 
-    def reset(self):
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
-
     @staticmethod
     def _get_model_inputs(batch: dict[str, Tensor], excluded_keys: set[str]) -> dict[str, Tensor]:
         return {key: value for key, value in batch.items() if key not in excluded_keys}
@@ -129,19 +126,20 @@ class EO1Policy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict a chunk of actions.
 
         `noise` is the optional starting sample of the flow, shape `(batch_size, chunk_size, max_action_dim)`.
         When it is None, standard normal noise is drawn.
         """
+        noise = batch.get(NOISE)
         self.eval()
 
         states = self.prepare_state(batch[OBS_STATE])
         model_inputs = self._get_model_inputs(batch, {OBS_STATE})
         actions = self.model.sample_actions(states=states, noise=noise, **model_inputs).to(torch.float32)
 
-        return actions[:, :, : _original_action_dim(self.config)]
+        return PolicyOutput(action=actions[:, :, : _original_action_dim(self.config)])
 
     def prepare_state(self, state: Tensor) -> Tensor:
         return pad_vector(state, self.config.max_state_dim)
@@ -205,16 +203,6 @@ class EO1Policy(PreTrainedPolicy):
             )
         ]
         return require_single_text_output(outputs, policy_name="EO-1")
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        self.eval()
-
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-
-        return self._action_queue.popleft()
 
     def get_optim_params(self) -> dict:
         return self.parameters()

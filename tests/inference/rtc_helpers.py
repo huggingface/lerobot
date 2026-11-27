@@ -26,6 +26,7 @@ from lerobot.configs.types import Deltas, FeatureType, PolicyFeature
 from lerobot.inference import RTCInferenceEngine
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.utils.constants import ACTION, RTC_INFERENCE_DELAY, RTC_PREV_CHUNK_LEFT_OVER
 
 
 class Pipeline:
@@ -34,8 +35,8 @@ class Pipeline:
     def __init__(self, width: int | None = None):
         self.width = width
 
-    def __call__(self, value):
-        return value if self.width is None else value[..., : self.width]
+    def __call__(self, batch):
+        return batch if self.width is None else {**batch, ACTION: batch[ACTION][..., : self.width]}
 
     def reset(self):
         pass
@@ -43,8 +44,6 @@ class Pipeline:
 
 class ControlledPolicy:
     chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
-    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
-    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
 
     def __init__(self, width: int = 2):
         self.width = width
@@ -61,11 +60,11 @@ class ControlledPolicy:
         self.action_observations: list[torch.Tensor] = []
         self.text_observations: list[torch.Tensor] = []
 
-    def predict_action_chunk(self, batch, *, inference_delay=0, prev_chunk_left_over=None):
-        self.calls.append((prev_chunk_left_over, inference_delay))
+    def predict_action_chunk(self, batch):
+        self.calls.append((batch.get(RTC_PREV_CHUNK_LEFT_OVER), batch.get(RTC_INFERENCE_DELAY, 0)))
         self.action_observations.append(batch["observation.state"].clone())
         assert self.release.acquire(timeout=3), "test must release the model call"
-        return torch.ones(1, 20, self.width)
+        return {ACTION: torch.ones(1, 20, self.width)}
 
     def generate_text(self, batch):
         self.text_observations.append(batch["observation.state"].clone())

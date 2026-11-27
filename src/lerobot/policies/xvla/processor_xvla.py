@@ -24,7 +24,6 @@ from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ObservationProcessorStep,
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -52,7 +51,7 @@ def make_xvla_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Build the LeRobot processor pipelines for XVLA.
@@ -501,7 +500,7 @@ class XVLARotation6DToAxisAngleProcessorStep(ProcessorStep):
 
 def make_xvla_libero_pre_post_processors() -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """
     Build the LeRobot processor pipelines for XVLA with LIBERO environment.
@@ -516,7 +515,7 @@ def make_xvla_libero_pre_post_processors() -> tuple[
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=pre_processor_steps,
         ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
             steps=post_processor_steps,
         ),
     )

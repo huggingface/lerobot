@@ -74,6 +74,7 @@ horizontally. Keep camera order and action/state conventions aligned with the ch
 ## Inference
 
 ```python
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
 
@@ -84,17 +85,17 @@ preprocess, postprocess = make_pre_post_processors(
     pretrained_path=checkpoint,
     preprocessor_overrides={"device_processor": {"device": "cuda"}},
 )
-policy.reset()
+engine = SyncInferenceEngine(policy, preprocess, postprocess)
+engine.reset()
 # observation contains both current camera images, observation.state, and task.
-# Repeat on every control tick, including ticks that consume queued actions.
-action = postprocess(policy.select_action(preprocess(observation)))
+# Call on every control tick, with the step index as time.
+action = engine.step(observation, step)
 ```
 
-Call `select_action` on **every control tick**, including while an action chunk
-is executing, so the history stays current. `predict_action_chunk` returns
-`[batch, prediction_steps, action_dim]`; each call records the supplied current frame.
-`reset()` and `drop_queued_actions()` clear both history and queued actions.
-Generic async/RTC is not yet validated in this integration.
+The engine records every tick and passes each camera's strided past window,
+`[batch, T, 3, H, W]` with the current frame last, to `predict_action_chunk`, which
+returns `[batch, prediction_steps, action_dim]`. `reset()` clears the cached text
+encoding.
 
 By default, `inference_seed=1` restarts separate video/action noise generators
 with the same seed for each chunk, preserving released inference behavior.

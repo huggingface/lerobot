@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import inspect
 import time
 from copy import deepcopy
 from dataclasses import replace
@@ -46,6 +45,7 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
+from .history import HistoryInputs, apply_history, policy_history
 from .prediction import chunk_inference_context, predict_chunk
 
 
@@ -87,8 +87,6 @@ class PolicyRunner:
         if language_enabled is True and not supports_language:
             raise ValueError("Language is enabled but this policy has no text capability.")
         spec = self._policy_spec = policy.chunk_inference_spec()
-        if not spec.current_observation_only:
-            raise ValueError("The default runner does not implement temporal observation sampling.")
         modes = tuple(ExecutionMode(mode) for mode in modes)
         if any(mode not in spec.modes for mode in modes):
             raise ValueError(f"Unsupported execution mode; policy declares {spec.modes!r}.")
@@ -106,12 +104,8 @@ class PolicyRunner:
                 validate_trained_rtc_horizon(
                     rtc_config.execution_horizon, spec.prediction_steps, spec.training_max_delay
                 )
-            try:
-                inspect.signature(policy.predict_action_chunk).bind(
-                    {}, inference_delay=0, prev_chunk_left_over=None
-                )
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Declared RTC support requires the RTC chunk call interface.") from exc
+            if not policy.supports_rtc():
+                raise ValueError("RTC serving requires a policy that declares RTC support.")
         self.capabilities = PolicyCapabilities(
             modes=modes,
             prediction_steps=spec.prediction_steps,
@@ -123,6 +117,8 @@ class PolicyRunner:
             training_max_delay=spec.training_max_delay,
             rtc_horizon=rtc_config.execution_horizon if rtc_modes and rtc_config is not None else 0,
             retains_session_state=spec.retains_session_state,
+            complete_execution=spec.complete_execution,
+            history=policy_history(policy.config),
         )
         self._validate_feature_contract()
         self._validate_processor_pair(preprocessor, postprocessor)
@@ -137,10 +133,7 @@ class PolicyRunner:
         self._normalizer_step = next(
             (step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep)), None
         )
-        # Chunk callers never use select_action's private playback queue. A prior
-        # sync binding must not hold an old anchor across complete chunk calls.
         if self._relative_step is not None:
-            self._relative_step.bind_action_queue(None)
             action_names = self.capabilities.action_feature.names
             if action_names:
                 if (
@@ -174,12 +167,9 @@ class PolicyRunner:
                 raise ValueError(
                     "Canonical features are already mapped; the runner rename_map must be empty."
                 )
+        relative = any(isinstance(s, RelativeActionsProcessorStep) and s.enabled for s in preprocessor.steps)
         for step in postprocessor.steps:
-            if (
-                isinstance(step, AbsoluteActionsProcessorStep)
-                and step.enabled
-                and not any(step.relative_step is candidate for candidate in preprocessor.steps)
-            ):
+            if isinstance(step, AbsoluteActionsProcessorStep) and step.enabled and not relative:
                 raise ValueError("Relative action postprocessor must be paired with its preprocessor.")
 
     def _validate_feature_contract(self) -> None:
@@ -217,13 +207,51 @@ class PolicyRunner:
                 )
             if array.dtype.kind == "f" and not np.isfinite(array).all():
                 raise ValueError(f"Observation contains non-finite values: {feature.name}.")
-            tensor = torch.from_numpy(array.copy())
-            if feature.kind == "rgb":
-                tensor = tensor.permute(2, 0, 1).contiguous().to(torch.float32).div_(255)
-            batch[feature.name] = tensor.unsqueeze(0)
+            batch[feature.name] = self._tensor(feature, array)
         batch["task"] = [observation.task]
         batch["robot_type"] = self.robot_type
         return batch
+
+    @staticmethod
+    def _tensor(feature: FeatureSpec, array: np.ndarray) -> torch.Tensor:
+        tensor = torch.from_numpy(np.array(array, copy=True))
+        if feature.kind == "rgb":
+            tensor = tensor.permute(2, 0, 1).contiguous().to(torch.float32).div_(255)
+        return tensor.unsqueeze(0)
+
+    def _history_batch(self, observation: ObservationSnapshot, batch: dict[str, Any]) -> dict[str, Any]:
+        """Validate the request's history against the declaration and lay it out for the policy."""
+        declared = self.capabilities.history
+        history = observation.history or HistoryInputs()
+        features = {feature.name: feature for feature in self.capabilities.features}
+        action = self.capabilities.action_feature
+
+        def check(feature: FeatureSpec, values: tuple[Any, ...], count: int, what: str) -> None:
+            if len(values) != count:
+                raise ValueError(f"{what} for {feature.name} has {len(values)} values, expected {count}.")
+            for value in values:
+                if (
+                    not isinstance(value, np.ndarray)
+                    or value.shape != feature.shape
+                    or value.dtype != np.dtype(feature.dtype)
+                ):
+                    raise ValueError(f"{what} for {feature.name} differs from the serving contract.")
+                if value.dtype.kind == "f" and not np.isfinite(value).all():
+                    raise ValueError(f"{what} for {feature.name} contains non-finite values.")
+
+        if set(history.observations) != {window.feature for window in declared.observations}:
+            raise ValueError("History windows differ from the declared features.")
+        for window in declared.observations:
+            count = len(window.offsets) - 1
+            check(features[window.feature], history.observations[window.feature], count, "History")
+            if len(history.observation_padding.get(window.feature, ())) != count:
+                raise ValueError(f"History padding for {window.feature} differs from its window.")
+        check(action, history.actions, len(declared.actions), "Command history")
+        if len(history.action_padding) != len(declared.actions):
+            raise ValueError("Command history padding differs from its window.")
+        return apply_history(
+            batch, history, lambda name, value: self._tensor(features.get(name, action), value)
+        )
 
     def predict(
         self,
@@ -241,7 +269,8 @@ class PolicyRunner:
             raise ValueError(f"Execution mode {mode.value!r} was not enabled by this deployment.")
         started = time.perf_counter()
         with chunk_inference_context(mode):
-            prepared = self.preprocessor(self._batch(observation))
+            batch = self._history_batch(observation, self._batch(observation))
+            prepared = self.preprocessor(batch)
             preprocessed_at = time.perf_counter()
             prediction = predict_chunk(
                 self.policy,
@@ -256,14 +285,16 @@ class PolicyRunner:
                 inference_delay=inference_delay,
                 model_continuation=model_continuation,
                 canonical_continuation=canonical_continuation,
-                relative_step=self._relative_step,
+                relative=self._relative_step is not None,
                 normalizer_step=self._normalizer_step,
             )
-            self._model_action_dim = prediction.model_actions.shape[1]
+            # One robot per session: drop the batch axis.
+            model_actions, canonical_actions = prediction.model_actions[0], prediction.canonical_actions[0]
+            self._model_action_dim = model_actions.shape[1]
             self.capabilities = replace(self.capabilities, model_action_dim=self._model_action_dim)
-            canonical = prediction.canonical_actions.to(device="cpu", dtype=torch.float32).clone()
+            canonical = canonical_actions.to(device="cpu", dtype=torch.float32).clone()
             model = (
-                prediction.model_actions.to(device="cpu", dtype=torch.float32).clone()
+                model_actions.to(device="cpu", dtype=torch.float32).clone()
                 if mode != ExecutionMode.CHUNK
                 else None
             )
@@ -307,9 +338,12 @@ class PolicyRunner:
         return answer.strip()
 
     def reset(self, *, full: bool = True) -> None:
-        """Full run reset clears state; motion invalidation preserves planner memory."""
-        if not full:
-            self.policy.drop_queued_actions()
+        """Full run reset clears state; motion invalidation preserves planner memory.
+
+        A complete-execution policy cannot continue after an interrupted chunk, so any
+        invalidation resets its episode context.
+        """
+        if not full and not self._policy_spec.complete_execution:
             return
         self.policy.reset()
         self.preprocessor.reset()

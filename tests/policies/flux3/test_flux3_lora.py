@@ -31,6 +31,7 @@ from lerobot.configs.default import DatasetConfig, PeftConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.inference import SyncInferenceEngine
 from lerobot.optim.ema import ConstantEMAConfig
 from lerobot.policies import factory
 from lerobot.policies.factory import make_pre_post_processors
@@ -38,9 +39,10 @@ from lerobot.policies.flux3 import Flux3Config, Flux3Policy, make_flux3_pre_post
 from lerobot.policies.flux3.f3 import packing
 from lerobot.policies.flux3.f3.video_vae import VideoVAE
 from lerobot.policies.flux3.processor_flux3 import PAST_ACTIONS, ObservationHistoryNormalizerProcessorStep
+from lerobot.processor import make_inference_pipeline
 from lerobot.processor.device_processor import DeviceProcessorStep
 from lerobot.scripts.lerobot_train import make_dataloaders, train
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, ACTION_ANCHOR, OBS_ACTION, OBS_STATE
 from tests.policies.flux3.helpers import TaskVideoVAE, rich_task_config, single_config, task_config
 
 pytestmark = pytest.mark.dataset
@@ -80,10 +82,13 @@ def task_vae(monkeypatch, fake_text_encoder):
 
 
 def training_batch(cfg, b=1):
+    # The commands executed before the conditioning frame, then the target chunk.
+    commands = torch.rand(b, cfg.n_obs_steps + cfg.chunk_size, cfg.action_dim)
     return {
         "observation.images.top": torch.rand(b, cfg.window_frames, 3, 64, 96),
         OBS_STATE: torch.rand(b, cfg.n_obs_steps, cfg.action_dim),
-        ACTION: torch.rand(b, cfg.window_frames, cfg.action_dim),
+        OBS_ACTION: commands[:, : cfg.n_obs_steps],
+        ACTION: commands[:, cfg.n_obs_steps :],
         "task": ["pick up box"] * b,
     }
 
@@ -108,7 +113,8 @@ def test_history_config_and_indices(rich):
     assert cfg.window_frames == 32 + history
     assert list(cfg.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(1 - history, 33))
     assert list(cfg.training_sampler.deltas.observation[FeatureType.STATE]) == list(range(1 - history, 1))
-    assert list(cfg.training_sampler.deltas.action) == list(range(-history, 32))
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.ACTION]) == list(range(-history, 0))
+    assert list(cfg.training_sampler.deltas.action) == list(range(32))
     policy = Flux3Policy(cfg)
     assert policy.dit.in_channels["action_cond"] == (12 if rich else 6)
     pre, _ = make_flux3_pre_post_processors(cfg)
@@ -177,23 +183,24 @@ def test_loss_weight_is_rms_normalized():
 
 
 @pytest.mark.parametrize("rich", [False, True])
-def test_command_queue_keeps_anchor_and_records_every_tick(monkeypatch, rich):
+def test_executed_commands_anchor_every_chunk(monkeypatch, rich):
     cfg = rich_task_config() if rich else task_config()
     policy = Flux3Policy(cfg)
     pre, post = make_flux3_pre_post_processors(cfg)
     seen = []
 
-    def predict(batch, **kwargs):
+    def predict(batch):
         seen.append(batch)
         deltas = torch.ones(1, cfg.chunk_size, 6)
         deltas[..., -1] = 0.7
-        return reference_range(deltas, cfg, "action")
+        return {ACTION: reference_range(deltas, cfg, "action")}
 
     monkeypatch.setattr(policy, "predict_action_chunk", predict)
+    executor = SyncInferenceEngine(policy, pre, post)
     batch = {"observation.images.top": torch.rand(1, 3, 64, 96), OBS_STATE: torch.zeros(1, 6)}
     for i in range(cfg.n_action_steps + 1):
-        # Measured state stays behind: never re-anchor queued deltas to it.
-        result = post(policy.select_action(pre(batch)))
+        # Measured state stays behind: deltas integrate from the last dispatched command.
+        result = executor.step(dict(batch), float(i))
         assert torch.allclose(result[:, :-1], torch.full((1, 5), float(i + 1)))
         assert torch.allclose(result[:, -1], torch.tensor([0.7]))
     assert len(seen) == 2
@@ -202,10 +209,8 @@ def test_command_queue_keeps_anchor_and_records_every_tick(monkeypatch, rich):
     else:
         assert all(PAST_ACTIONS not in batch for batch in seen)
         assert all(batch[OBS_STATE].shape == (1, 1, 6) for batch in seen)
-    policy.reset()
-    pre.reset()
-    post.reset()
-    assert post(policy.select_action(pre(batch)))[0, 0] == 1
+    executor.reset()
+    assert executor.step(dict(batch), 0.0)[0, 0] == 1
 
 
 @pytest.mark.parametrize("pipeline_source", ["fresh", "saved"])
@@ -219,7 +224,7 @@ def test_command_queue_keeps_anchor_and_records_every_tick(monkeypatch, rich):
         ),
     ],
 )
-def test_history_processors_keep_device_across_ticks(tmp_path, pipeline_source, device):
+def test_history_processors_keep_device_on_sampled_history(tmp_path, pipeline_source, device):
     cfg = rich_task_config(device=device)
     if pipeline_source == "fresh":
         pre, post = make_flux3_pre_post_processors(cfg)
@@ -238,20 +243,23 @@ def test_history_processors_keep_device_across_ticks(tmp_path, pipeline_source, 
     normalizer = next(
         step for step in pre.steps if isinstance(step, ObservationHistoryNormalizerProcessorStep)
     )
-    raw = {"observation.images.top": torch.zeros(1, 3, 64, 96), OBS_STATE: torch.full((1, 6), 2.0)}
-    for tick in range(3):
-        batch = pre(raw)
-        assert all(value.device.type == device for value in batch.values() if isinstance(value, torch.Tensor))
-        if tick:
-            torch.testing.assert_close(batch[PAST_ACTIONS][:, -1], torch.full((1, 6), 0.25, device=device))
-        command = post(torch.full((1, 6), 0.25, device=device))
-        assert command.device.type == "cpu"
-        torch.testing.assert_close(command[:, :-1], torch.full((1, 5), 2.0 + 0.5 * (tick + 1)))
-        torch.testing.assert_close(command[:, -1], torch.tensor([0.5]))
-
-    assert all(value.device.type == device for value in normalizer.commands)
-    assert all(value.device.type == device for obs in normalizer.observations for value in obs.values())
-    assert normalizer.last_command.device.type == device
+    # The history a runner samples: windows on CPU, commands rising by 0.5 per frame.
+    commands = 2.0 + 0.5 * torch.arange(8.0)[None, :, None].repeat(1, 1, 6)
+    raw = {
+        "observation.images.top": torch.zeros(1, 8, 3, 64, 96),
+        OBS_STATE: torch.full((1, 8, 6), 2.0),
+        OBS_ACTION: commands,
+        f"{OBS_ACTION}_is_pad": torch.zeros(1, 8, dtype=torch.bool),
+    }
+    batch = pre(raw)
+    assert all(value.device.type == device for value in batch.values() if isinstance(value, torch.Tensor))
+    torch.testing.assert_close(batch[PAST_ACTIONS][:, -1, :5], torch.full((1, 5), 0.25, device=device))
+    assert batch[ACTION_ANCHOR].device.type == device
+    chunk = post({**batch, ACTION: torch.full((1, cfg.chunk_size, 6), 0.25, device=device)})[ACTION]
+    assert chunk.device.type == "cpu"
+    steps = torch.arange(1, cfg.chunk_size + 1).float()[None, :, None]
+    torch.testing.assert_close(chunk[..., :-1], (commands[:, -1, :5][:, None] + 0.5 * steps).expand(1, -1, 5))
+    torch.testing.assert_close(chunk[..., -1], torch.full((1, cfg.chunk_size), 0.5))
     transfer = next(step for step in pre.steps if isinstance(step, DeviceProcessorStep))
     assert pre.steps.index(transfer) < pre.steps.index(normalizer)
     assert raw[OBS_STATE].device.type == "cpu"
@@ -263,11 +271,12 @@ def test_offline_inference_history_required():
     batch = training_batch(cfg)
     batch["observation.images.top"] = batch["observation.images.top"][:, :8]
     pre, _ = make_flux3_pre_post_processors(cfg)
-    commands = batch.pop(ACTION)
-    with pytest.raises(ValueError, match="command_history"):
+    batch.pop(ACTION)
+    commands = batch.pop(OBS_ACTION)
+    with pytest.raises(ValueError, match="observation.action"):
         pre(batch)
-    batch["observation.command_history"] = commands[:, :8]
-    assert policy.predict_action_chunk(pre(batch)).shape == (1, 32, 6)
+    batch[OBS_ACTION] = commands
+    assert policy.predict_action_chunk(pre(batch))[ACTION].shape == (1, 32, 6)
 
 
 def test_separate_timesteps_and_conditioning_noise():
@@ -500,9 +509,9 @@ def test_custom_processor_training_matches_reference_and_preserves_stats(tmp_pat
     old_policy = Flux3Policy(legacy)
     pre, post = make_flux3_pre_post_processors(cfg)
     raw = training_batch(cfg)
-    raw[ACTION][:, :2, 0] = 100  # Exercise clipping and consecutive deltas.
+    raw[OBS_ACTION][:, :2, 0] = 100  # Exercise clipping and consecutive deltas.
     prepared = pre(raw)
-    targets, past = reference_training_actions(raw[ACTION], legacy)
+    targets, past = reference_training_actions(torch.cat([raw[OBS_ACTION], raw[ACTION]], 1), legacy)
     assert torch.equal(prepared[ACTION], targets)
     assert torch.equal(prepared[PAST_ACTIONS], past)
     assert torch.equal(prepared[OBS_STATE], reference_range(raw[OBS_STATE], legacy, "state"))
@@ -563,29 +572,26 @@ def test_custom_processors_preserve_robot_commands_history_and_reload(tmp_path, 
         seen.append(batch)
         delta = torch.ones(1, cfg.chunk_size, 6)
         delta[..., -1] = 0.7
-        return reference_range(delta, legacy, "action")
+        return {ACTION: reference_range(delta, legacy, "action")}
 
-    monkeypatch.setattr(new_policy, "predict_action_chunk", lambda b, **kw: predict(b, new_seen))
+    monkeypatch.setattr(new_policy, "predict_action_chunk", lambda b: predict(b, new_seen))
     raw = {"observation.images.top": torch.rand(1, 3, 64, 96), OBS_STATE: torch.zeros(1, 6)}
+    executor = SyncInferenceEngine(new_policy, pre, post)
     for tick in range(2 * cfg.n_action_steps + 2):  # three chunk predictions
-        actual = post(new_policy.select_action(pre(raw)))
+        actual = executor.step(dict(raw), float(tick))
         assert torch.equal(actual[:, :-1], torch.full((1, 5), float(tick + 1)))
         assert torch.allclose(actual[:, -1], torch.tensor([0.7]))
     assert len(new_seen) == 3
     assert torch.equal(new_seen[-1][PAST_ACTIONS][:, 1:, :5], torch.full((1, 7, 5), 0.5))
-    new_policy.reset()
-    pre.reset()
-    post.reset()
-    assert post(new_policy.select_action(pre(raw)))[0, 0] == 1
-    # Offline chunks use an explicit anchor and do not depend on online queue state.
+    executor.reset()
+    assert executor.step(dict(raw), 0.0)[0, 0] == 1
+    # Offline chunks are anchored on the command history they are given.
     offline = {
         "observation.images.top": torch.rand(1, 8, 3, 64, 96),
         OBS_STATE: torch.zeros(1, 8, 6),
-        "observation.command_history": torch.full((1, 8, 6), 10.0),
+        OBS_ACTION: torch.full((1, 8, 6), 10.0),
     }
-    pre.reset()
-    post.reset()
-    chunk = post(new_policy.predict_action_chunk(pre(offline)))
+    chunk = make_inference_pipeline(pre, new_policy, post)(offline)[ACTION]
     assert torch.equal(chunk[0, :, 0], torch.arange(11, 43).float())
     assert torch.allclose(chunk[0, :, -1], torch.full((32,), 0.7))
 
@@ -653,10 +659,9 @@ def test_two_camera_base_supports_scene_only_peft_and_reload(tmp_path, monkeypat
     obs = {scene: torch.rand(1, 3, 64, 96), OBS_STATE: torch.rand(1, 6)}
     policy.eval()
     restored.eval()
-    pre.reset()
-    post.reset()
     assert torch.equal(
-        post(policy.select_action(pre(obs))), restored_post(restored.select_action(restored_pre(obs)))
+        SyncInferenceEngine(policy, pre, post).step(obs, 0.0),
+        SyncInferenceEngine(restored, restored_pre, restored_post).step(obs, 0.0),
     )
     # Adapting a subset of cameras does not rewrite the original base package.
     base_cfg = Flux3Config.from_pretrained(base)
@@ -738,12 +743,12 @@ def test_history_supports_other_dimensions_and_action_representations(
         OBS_STATE: batch[OBS_STATE],
     }
     if condition_on_past_actions or representation == "delta":
-        obs["observation.command_history"] = torch.full((1, history, dim), 10.0)
+        obs[OBS_ACTION] = torch.full((1, history, dim), 10.0)
     prepared = pre(obs)
-    predicted = restored.predict_action_chunk(prepared)
-    assert post(predicted).shape == (1, 32, dim)
+    predicted = restored.predict_action_chunk(prepared)[ACTION]
+    assert post({**prepared, ACTION: predicted})[ACTION].shape == (1, 32, dim)
     # A normalized value of 0.5 means +1 under these quantiles.
-    commands = post(torch.full((1, 32, dim), 0.5))
+    commands = post({**prepared, ACTION: torch.full((1, 32, dim), 0.5)})[ACTION]
     if representation == "delta":
         assert torch.equal(commands[0, :, 0], torch.arange(11, 43).float())
         assert torch.equal(commands[0, :, 1], torch.ones(32))

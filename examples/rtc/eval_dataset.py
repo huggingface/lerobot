@@ -110,7 +110,7 @@ except ImportError:
     plt = None
 
 from lerobot.configs import DatasetConfig, PreTrainedConfig, RTCAttentionSchedule, parser
-from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata, resolve_delta_timestamps
+from lerobot.datasets import LeRobotDataset
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
@@ -244,21 +244,9 @@ class RTCEvaluator:
         self.cfg = cfg
         self.device = cfg.device
 
-        # Load dataset with proper delta_timestamps based on policy configuration
-        # Calculate delta_timestamps using the same logic as make_dataset factory
+        # Load the dataset with the samples the policy trains on, as the make_dataset factory does
         logging.info(f"Loading dataset: {cfg.dataset.repo_id}")
-
-        # Get dataset metadata to extract FPS
-        ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id)
-
-        # Calculate delta_timestamps from policy's delta_indices
-        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
-
-        # Create dataset with calculated delta_timestamps
-        self.dataset = LeRobotDataset(
-            cfg.dataset.repo_id,
-            delta_timestamps=delta_timestamps,
-        )
+        self.dataset = LeRobotDataset(cfg.dataset.repo_id, sampler=cfg.policy.training_sampler)
         logging.info(f"Dataset loaded: {len(self.dataset)} samples, {self.dataset.num_episodes} episodes")
 
         # Create preprocessor/postprocessor

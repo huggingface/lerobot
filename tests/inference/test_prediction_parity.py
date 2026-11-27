@@ -22,8 +22,11 @@ import torch
 pytest.importorskip("datasets", reason="local rollout imports the dataset integration")
 
 from lerobot.inference import ExecutionMode, predict_chunk
+from lerobot.lerobot_types import TransitionKey
+from lerobot.policies.pretrained import rtc_inputs
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.processor import transition_to_prediction
+from lerobot.processor import PolicyProcessorPipeline, ProcessorStep, make_inference_pipeline
+from lerobot.utils.constants import ACTION
 from tests.inference.policy_helpers import (
     ConformingPolicy,
     local_engine_for,
@@ -44,10 +47,10 @@ class ObservedPolicy(ConformingPolicy):
         self.context = None
         self.output = torch.arange(24, dtype=torch.float32).reshape(1, 8, 3)
 
-    def predict_action_chunk(self, batch, **kwargs):
-        self.last_kwargs = kwargs
+    def predict_action_chunk(self, batch):
+        self.last_kwargs = rtc_inputs(batch)
         self.context = (torch.is_inference_mode_enabled(), torch.is_grad_enabled())
-        return self.output.clone() if isinstance(self.output, torch.Tensor) else self.output
+        return {ACTION: self.output.clone()} if isinstance(self.output, torch.Tensor) else self.output
 
 
 def local_prediction(monkeypatch, policy, *, relative=False, previous=None, canonical_previous=None):
@@ -138,7 +141,7 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
     policy = ObservedPolicy(tiny_config())
     prediction = predict_chunk(
         policy,
-        lambda actions: actions.add_(10),
+        lambda batch: {**batch, ACTION: batch[ACTION].add_(10)},
         {},
         spec=policy.chunk_inference_spec(),
         mode=ExecutionMode.CHUNK,
@@ -146,7 +149,7 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
         model_action_dim=None,
         device="cpu",
     )
-    expected = torch.arange(9, dtype=torch.float32).reshape(3, 3)
+    expected = torch.arange(9, dtype=torch.float32).reshape(1, 3, 3)  # batched [B, T, A]
     torch.testing.assert_close(prediction.model_actions, expected)
     torch.testing.assert_close(prediction.canonical_actions, expected + 10)
     assert not prediction.model_actions.requires_grad
@@ -159,7 +162,7 @@ def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
     policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["pick"]}}}
     prediction = predict_chunk(
         policy,
-        lambda actions: actions,
+        lambda batch: batch,
         {},
         spec=policy.chunk_inference_spec(),
         mode=ExecutionMode.CHUNK,
@@ -167,7 +170,9 @@ def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
         model_action_dim=None,
         device="cpu",
     )
-    torch.testing.assert_close(prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(3, 3))
+    torch.testing.assert_close(
+        prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(1, 3, 3)
+    )
     assert prediction.prediction == {"language": {"subtask": ["pick"]}}
 
 
@@ -201,7 +206,7 @@ def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action(monke
     engine = _rtc_engine_after_one_chunk(monkeypatch)
 
     first = engine.get_action(None)
-    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+    assert first[TransitionKey.PREDICTION] == {"language": {"subtask": ["reach"]}}
     assert isinstance(engine.get_action(None), torch.Tensor)  # the rest of the chunk is bare
 
 
@@ -231,3 +236,60 @@ def test_rtc_engine_reset_right_after_acceptance_drops_the_prediction(monkeypatc
     engine = _rtc_engine_after_one_chunk(monkeypatch, after_accept=reset_concurrently)
     resets[0].join(timeout=3)
     assert engine._runtime.take_prediction() is None
+
+
+class AddPrivateInputStep(ProcessorStep):
+    """A preprocessor step handing its policy and postprocessor a key of its own."""
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        complementary["private_offset"] = torch.tensor(100.0)
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+class OffsetByPrivateInputStep(ProcessorStep):
+    """A postprocessor step reading the preprocessor's key."""
+
+    def __call__(self, transition):
+        transition = transition.copy()
+        offset = transition[TransitionKey.COMPLEMENTARY_DATA]["private_offset"]
+        transition[TransitionKey.ACTION] = transition[TransitionKey.ACTION] + offset
+        return transition
+
+    def transform_features(self, features):
+        return features
+
+
+def test_every_preprocessed_key_reaches_the_policy_and_the_postprocessor():
+    policy = ObservedPolicy(tiny_config())
+    seen = {}
+    predict = policy.predict_action_chunk
+
+    def record(batch):
+        seen.update(batch)
+        return predict(batch)
+
+    policy.predict_action_chunk = record
+    preprocessor = PolicyProcessorPipeline(steps=[AddPrivateInputStep()])
+    postprocessor = PolicyProcessorPipeline(steps=[OffsetByPrivateInputStep()])
+    raw = {"observation.state": torch.zeros(1, 3)}
+    prediction = predict_chunk(
+        policy,
+        postprocessor,
+        preprocessor(raw),
+        spec=policy.chunk_inference_spec(),
+        mode=ExecutionMode.CHUNK,
+        canonical_action_dim=3,
+        model_action_dim=None,
+        device="cpu",
+    )
+    assert seen["private_offset"] == 100
+    torch.testing.assert_close(prediction.canonical_actions, prediction.model_actions + 100)
+    # The single pipeline gives the same command.
+    command = make_inference_pipeline(preprocessor, policy, postprocessor)(raw)[ACTION]
+    torch.testing.assert_close(command[:, :3], prediction.canonical_actions)

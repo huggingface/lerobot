@@ -18,8 +18,9 @@ One policy call denoises the next chunk of video (6 latents) and the next
 24 robot commands at 15 Hz. The policy keeps, per environment of the batch,
 the praxis session: a ring buffer of the last 25 observations (the executed
 chunk plus the current frame), the encoded context latents and the sampler
-seed. ``select_action`` pushes the incoming observation, refills the command
-queue when it is empty and returns one command per call.
+seed. ``predict_action_chunk`` pushes the frames executed since the previous call
+and returns the next chunk; runners feed the executed frames back (see
+``PraxisPolicy.chunk_inference_spec``).
 
 The model code is the vendored praxis core (``praxis_core``); this module only
 translates LeRobot batches to the praxis observation contract and the praxis
@@ -37,7 +38,7 @@ import os
 from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, ClassVar, TypeVar, Unpack
+from typing import Any, ClassVar, TypeVar
 
 import numpy as np
 import torch
@@ -49,13 +50,12 @@ from torch.utils.checkpoint import checkpoint
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
-from lerobot.policies.pretrained import ActionSelectKwargs, PreTrainedPolicy
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
-    PREDICTION,
 )
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import require_package
@@ -443,7 +443,7 @@ def _finish_chunk(
 
 
 class _EnvState:
-    """The per-environment state: the frame history, the praxis session, the instruction and the queues."""
+    """The per-environment state: the frame history, the praxis session, and the instruction."""
 
     def __init__(self, stack_rows: int) -> None:
         # (the frames of each camera in canvas order, the pose row) per tick
@@ -452,11 +452,9 @@ class _EnvState:
         self.seed = 0
         self.task = ""
         self.text: Tensor | None = None  # the instruction embedding from the tokenizer step's tokens
-        self.actions: deque[np.ndarray] = deque()
-        self.frames: deque[np.ndarray] = deque()
         self.scene_seed: int = 0
-        # The real commands of the last `predict_action_chunk` row block (21 for the first chunk of a
-        # context window, padded to `chunk_size`): the frames handed over after it count up to there.
+        # The commands of the last chunk (21 for the first chunk of a context window): the frames
+        # handed over after it count up to there.
         self.chunk_rows: int | None = None
 
 
@@ -751,32 +749,20 @@ class PraxisPolicy(PreTrainedPolicy):
         return [p for p in self.model.parameters() if p.requires_grad]
 
     def reset(self) -> None:
-        """Start a new episode: drop the frame histories, the sessions and the queues."""
+        """Start a new episode: drop the frame histories and the sessions."""
         self._envs = []
 
-    def drop_queued_actions(self) -> None:
-        """Drop the commands not yet executed and restart the temporal context of those sessions.
-
-        The model conditions the next chunk on the whole previous chunk having been executed, so a
-        session whose chunk is cut short (a new instruction mid-rollout, for example) starts the
-        next call cold, at depth 0, like the first call of an episode.
-        """
-        for env in self._envs:
-            if env.actions and env.state is not None:
-                env.state.restart()
-            env.actions.clear()
-            env.frames.clear()
-
-    def count_queued_actions(self) -> int:
-        return sum(len(env.actions) for env in self._envs)
-
     def chunk_inference_spec(self) -> ChunkPolicySpec:
-        """Praxis conditions on the executed chunk, so it keeps session state between calls."""
+        """Every chunk executes completely; it holds at most ``n_action_steps`` commands.
+
+        The next call reads the cameras and the state observed after each executed command
+        (the config's ``inference_deltas``), so it is conditioned on them as in a call-per-tick
+        rollout (see :meth:`predict_action_chunk`).
+        """
         return ChunkPolicySpec(
             prediction_steps=self.config.chunk_size,
-            execution_steps=self.config.n_action_steps,
-            current_observation_only=False,
-            retains_session_state=True,
+            execution_steps=self.config.chunk_size,
+            complete_execution=True,
         )
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict | None]:
@@ -988,66 +974,44 @@ class PraxisPolicy(PreTrainedPolicy):
         return windows
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Return the action chunk ``(B, chunk_size, 13)`` of the current observations, on the CPU.
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> PolicyOutput:
+        """Return the action chunk ``(B, rows, 13)`` of the current observations, on the CPU.
 
-        The first call of a context window gives 21 commands (its first latent is the window's
-        uncompressed anchor frame, which gives one command instead of four); the chunk is padded with
-        its last command to ``chunk_size`` rows, the fixed ``[B, chunk_size, A]`` shape of
-        LeRobot's chunk contract, which holds the last pose for the last 3 steps. The later
-        calls of the window give 24 commands, the full chunk. The call advances the sessions like
-        ``select_action`` does, without queueing the commands. The next chunk is conditioned
-        on the executed frames only when the call receives them: pass the frames executed since
-        the previous call as a stack ``(B, T, 3, H, W)`` with their states ``(B, T, 7 | 8)``
-        (oldest first); a call with one frame after a chunk starts the context again. Frames past
-        the real commands of the previous chunk (those of its padded rows) are dropped: the
-        context is the one of a caller that executed the real commands only.
+        The commands are the praxis wire pose and the gripper (the command processor step converts
+        them to the DROID 7 values). The first call of a context window gives 21 commands (its
+        first latent is the window's uncompressed anchor frame, which gives one command instead of
+        four), the later calls of the window 24, the full chunk; at most ``n_action_steps`` of
+        them are returned, and executed. The cameras and the state hold the last frames,
+        ``(B, T, ...)``, oldest first and the current one last (the config's ``inference_deltas``):
+        the frames after the commands of the previous chunk are context, and the first call of an
+        episode reads the current frame only.
+
+        With ``return_prediction`` the output also holds the predicted frame of every command
+        per camera, ``(B, rows, 3, tile_h, tile_w)`` uint8.
         """
         self.eval()
         self._push_observations(batch)
-        rows = []
+        rows: list[np.ndarray] = []
+        predicted: list[np.ndarray] = []  # (rows, 3, h, w) per environment
         for env in self._envs:
-            actions, _frames = self._sample_chunk(env)
+            actions, frames = self._sample_chunk(env)
+            actions = actions[: self.config.n_action_steps]
             env.chunk_rows = len(actions)
-            if len(actions) < self.config.chunk_size:
-                actions = actions + [actions[-1]] * (self.config.chunk_size - len(actions))
-            rows.append(np.stack(actions[: self.config.chunk_size]))
-        return torch.from_numpy(np.stack(rows)).to(torch.float32)
-
-    @torch.no_grad()
-    def select_action(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
-    ) -> Tensor | PolicyOutput:
-        """Return one command per environment, sampling a new chunk when the queue is empty.
-
-        The commands are ``(B, 13)`` float32 on the CPU: the praxis wire pose and the gripper
-        (the command processor step converts them to the DROID 7 values). They are numpy rows
-        of the session, so nothing is uploaded to the device for them.
-        """
-        self.eval()
-        self._push_observations(batch)
-        out: list[np.ndarray] = []
-        frames: list[np.ndarray | None] = []
-        for env in self._envs:
-            if not env.actions:
-                actions, predicted = self._sample_chunk(env)
-                env.actions.extend(actions)
-                env.frames.clear()
-                if predicted is not None:
-                    env.frames.extend(predicted)
-            out.append(env.actions.popleft())
-            frames.append(env.frames.popleft() if env.frames else None)
-        action = torch.from_numpy(np.stack(out)).to(torch.float32)
-        if not self.config.return_prediction or any(f is None for f in frames):
-            return action
-        canvas = torch.from_numpy(np.stack(frames))  # (B, 3, tile_h, n_views * tile_w) uint8
+            rows.append(np.stack(actions))
+            if frames is not None:
+                predicted.append(np.stack(frames[: len(actions)]))
+        if len({len(r) for r in rows}) != 1:
+            raise RuntimeError("the environments of a batch must be at the same depth of their context")
+        action = torch.from_numpy(np.stack(rows)).to(torch.float32)
+        if not self.config.return_prediction or len(predicted) != len(rows):
+            return PolicyOutput(action=action)
+        canvas = torch.from_numpy(np.stack(predicted))  # (B, F, 3, h, w)
         width = canvas.shape[-1] // len(self._camera_keys)
-        prediction = {
-            "observation": {
-                key: canvas[..., v * width : (v + 1) * width] for v, key in enumerate(self._camera_keys)
-            }
-        }
-        return {ACTION: action, PREDICTION: prediction}
+        views = {key: canvas[..., v * width : (v + 1) * width] for v, key in enumerate(self._camera_keys)}
+        return PolicyOutput(
+            action=action,
+            prediction={"observation": views, "observation_steps": list(range(canvas.shape[1]))},
+        )
 
     # ------------------------------------------------------------------
     # Session mechanics
@@ -1095,9 +1059,9 @@ class PraxisPolicy(PreTrainedPolicy):
         """Append the observations of the call to the frame history of every environment.
 
         The cameras hold one frame per environment ``(B, 3, H, W)``, or a stack ``(B, T, 3, H, W)``
-        of the ``T`` observations since the previous call, oldest first, with the state of every
-        frame ``(B, T, 7 | 8)``: a caller that executes whole chunks hands over the executed frames
-        this way, and the next chunk is conditioned on them as in a call-per-frame rollout.
+        of the last ``T`` observations, oldest first, with the state of every frame
+        ``(B, T, 7 | 8)``: the frames after the commands of the previous chunk are kept, so the
+        next chunk is conditioned on them as in a call-per-frame rollout.
         The tiles of the preprocessor stay on their device (the autoencoder reads them there);
         raw frames of a policy called without the pipeline become CPU bytes for the canvas rule.
         The instruction comes as the tokenizer step's token ids, or as the ``task`` string.
@@ -1132,10 +1096,10 @@ class PraxisPolicy(PreTrainedPolicy):
             )
         for i, env in enumerate(self._envs):
             poses = _state_rows(batch, i, n_frames, self._n_arms)
-            # After a padded chunk, the frames of its padded rows are not context.
-            kept = n_frames if env.chunk_rows is None else min(n_frames, env.chunk_rows)
+            # The frames after the commands of the previous chunk; the current one on a first call.
+            kept = min(n_frames, env.chunk_rows or 1)
             env.chunk_rows = None
-            for t in range(kept):
+            for t in range(n_frames - kept, n_frames):
                 frames = tuple(cam[i, t] if cam.ndim == 5 else cam[i] for cam in cameras)
                 env.history.append((tuple(_frame_for_history(f, self._tile_hw) for f in frames), poses[t]))
             env.task = _task_of(batch, i)

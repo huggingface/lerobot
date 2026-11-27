@@ -61,6 +61,7 @@ from .chunk_contract import (
     validate_chunk_contract,
 )
 from .codec import CodecLimits, decode_message, encode_message
+from .history_wire import capabilities_to_wire, decode_history
 from .protocol import (
     IDENTITY_KEYS,
     Envelope,
@@ -235,6 +236,7 @@ class SessionWorker:
         capabilities = asdict(self.runner.capabilities)
         if capabilities["model_action_dim"] in (None, self.runner.capabilities.action_feature.shape[0]):
             capabilities.pop("model_action_dim")
+        capabilities = capabilities_to_wire(capabilities)
         return {
             "deployment": self.deployment,
             "instance_id": self.instance_id,
@@ -515,6 +517,7 @@ class SessionWorker:
             model, canonical = body.get("model_continuation"), body.get("canonical_continuation")
             if model is not None and canonical is not None and len(model) != len(canonical):
                 raise ProtocolError(ErrorCode.MALFORMED, "Continuation spaces must cover identical steps")
+            body["history"] = decode_history(body.get("history"), caps)
 
     def _reset_runner(self, *, full: bool) -> None:
         """A failed reset leaves model state unknown; only a server restart recovers it."""
@@ -580,7 +583,12 @@ class SessionWorker:
             return message.error(ErrorCode.STALE, "Motion generation invalidated")
         body = message.body
         observation = ObservationSnapshot(
-            body["features"], body["capture_time"], body["task"], body["task_version"], body["observation_id"]
+            body["features"],
+            body["capture_time"],
+            body["task"],
+            body["task_version"],
+            body["observation_id"],
+            history=body.get("history"),
         )
         started = time.monotonic()
         identity = {key: body[key] for key in IDENTITY_KEYS}

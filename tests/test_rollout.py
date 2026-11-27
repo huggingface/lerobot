@@ -33,7 +33,6 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 # Hoisted rather than re-imported inside each test: the module-scoped `importorskip`
 # above already guards everything below it.
 from lerobot.inference import SyncInferenceEngine, sync  # noqa: E402
-from lerobot.processor import transition_to_prediction  # noqa: E402
 from lerobot.rollout import BaseStrategyConfig, status  # noqa: E402
 from lerobot.rollout.strategies import BaseStrategy  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
@@ -266,6 +265,7 @@ def test_build_rollout_context_uses_resolved_device(
     monkeypatch: pytest.MonkeyPatch, checkpoint_device: str, runtime_device: str | None
 ) -> None:
     import lerobot.rollout.context as rollout_context
+    from lerobot.policies import ChunkPolicySpec
     from lerobot.policies.act.configuration_act import ACTConfig
     from lerobot.processor import (
         DeviceProcessorStep,
@@ -284,6 +284,9 @@ def test_build_rollout_context_uses_resolved_device(
     cfg = RolloutConfig(robot=robot_config, policy=policy_config, device=runtime_device, tf32=None)
     robot = MockRobot(robot_config)
     policy = torch.nn.Linear(3, 3)
+    # Just enough of the chunk contract for the sync engine to wrap it.
+    policy.config = SimpleNamespace(input_features=None, output_features=None, use_amp=False)
+    policy.chunk_inference_spec = lambda: ChunkPolicySpec(prediction_steps=1, execution_steps=1)
 
     def load_policy(config: ACTConfig) -> torch.nn.Linear:
         # Check at construction time: synchronizing after the load would be too late.
@@ -715,12 +718,11 @@ def test_create_inference_engine_sync():
 
     engine = create_inference_engine(
         SyncInferenceConfig(),
-        policy=MagicMock(),
+        policy=_chunk_policy(1, lambda batch: torch.zeros(1, 1, 1)),
         preprocessor=MagicMock(),
         postprocessor=MagicMock(),
         robot_wrapper=MagicMock(robot_type="mock"),
         dataset_features={},
-        ordered_action_keys=["k"],
         task="test",
         fps=30.0,
         device="cpu",
@@ -740,7 +742,6 @@ def test_create_inference_engine_remote_explains_session_construction():
             postprocessor=MagicMock(),
             robot_wrapper=MagicMock(),
             dataset_features={},
-            ordered_action_keys=[],
             task="test",
             fps=30.0,
             device="cpu",
@@ -1512,92 +1513,54 @@ _REL_ACTION_DIM = len(_REL_ACTION_NAMES)
 
 
 def _relative_pre_post():
-    """Pre/post processors wrapping the real relative (caches anchor) and absolute
-    (relative + cached state) steps, mirroring what the sync engine feeds them."""
-    from lerobot.processor import (
-        AbsoluteActionsProcessorStep,
-        RelativeActionsProcessorStep,
-        TransitionKey,
-        create_transition,
-    )
-    from lerobot.utils.constants import OBS_STATE
+    """Pre/post processors holding the real relative (writes the anchor into the batch) and
+    absolute (relative + the batch's anchor) steps, which the sync engine runs."""
+    from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 
     relative_step = RelativeActionsProcessorStep(enabled=True, action_names=list(_REL_ACTION_NAMES))
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True)
 
-    class _Pre:
-        steps = [relative_step]
+    from lerobot.processor import PolicyProcessorPipeline
 
-        def __call__(self, observation):
-            # Run the relative step so it caches the anchor, then pass the batch through.
-            transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
-            relative_step(transition)
-            return observation
+    return PolicyProcessorPipeline(steps=[relative_step]), PolicyProcessorPipeline(steps=[absolute_step])
 
-        def reset(self):
-            pass
 
-    class _Post:
-        def __call__(self, action):
-            transition = create_transition(action=action)
-            return absolute_step(transition)[TransitionKey.ACTION]
+def _chunk_policy(steps, predict_action_chunk):
+    """A policy double: ``steps``-action chunks from ``predict_action_chunk``, nothing else."""
+    from lerobot.policies import ChunkPolicySpec
 
-        def reset(self):
-            pass
-
-    return _Pre(), _Post(), relative_step
+    policy = MagicMock()
+    policy.config = SimpleNamespace(use_amp=False, input_features=None, output_features=None)
+    policy.chunk_inference_spec.return_value = ChunkPolicySpec(prediction_steps=steps, execution_steps=steps)
+    policy.predict_action_chunk.side_effect = predict_action_chunk
+    return policy
 
 
 def _fake_relative_policy(chunk_rel, n_action_steps):
-    """Fake chunking relative-action policy for the sync engine (pi0/fastwam/lingbot/act shape).
+    """Fake chunking relative-action policy (pi0/fastwam/lingbot/act shape) for the sync engine."""
+    from lerobot.utils.constants import ACTION, ACTION_ANCHOR
 
-    Buffers a chunk and serves it one action per tick, computing a fresh chunk only on refill.
-    ``count_queued_actions()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
-    queue ``select_action`` drains, so the bound step sees an accurate depth *before* this
-    tick's call runs.
-    """
-    from collections import deque
+    state = {"predict_calls": 0, "anchor": None}
 
-    policy = MagicMock()
-    policy.config.use_amp = False
-    policy.config.action_feature_names = list(_REL_ACTION_NAMES)
-    state = {"predict_calls": 0}
-    queue = deque(maxlen=n_action_steps)
-
-    def predict_action_chunk(_batch=None, **_kwargs):
+    def predict_action_chunk(batch):
         state["predict_calls"] += 1
-        return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
+        state["anchor"] = batch.get(ACTION_ANCHOR)
+        return {ACTION: chunk_rel.unsqueeze(0)}  # [B=1, n, dim]
 
-    def select_action(_observation):
-        if len(queue) == 0:
-            actions = policy.predict_action_chunk(_observation)
-            queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
-        return queue.popleft()
-
-    policy.predict_action_chunk.side_effect = predict_action_chunk
-    policy.select_action.side_effect = select_action
-    policy.reset.side_effect = queue.clear
-    policy.count_queued_actions.side_effect = lambda: len(queue)
+    policy = _chunk_policy(n_action_steps, predict_action_chunk)
     policy._predict_state = state
     return policy
 
 
 def _build_sync_engine(policy, pre, post):
-    """Build the engine the way ``build_rollout_context`` does.
-
-    The engine itself knows nothing about relative actions; the anchor hold lives in
-    ``RelativeActionsProcessorStep`` and is armed once, here, by ``bind_relative_anchor``.
-    """
+    """Build the engine the way ``build_rollout_context`` does."""
     from lerobot.inference import SyncInferenceEngine
-    from lerobot.processor import bind_relative_anchor
 
-    bind_relative_anchor(policy, pre)
     return SyncInferenceEngine(
         policy=policy,
         preprocessor=pre,
         postprocessor=post,
         dataset_features={"action": {"names": list(_REL_ACTION_NAMES)}},
-        ordered_action_keys=list(_REL_ACTION_NAMES),
         task="test",
         device="cpu",
         robot_type="mock",
@@ -1615,11 +1578,9 @@ def test_sync_relative_holds_anchor_across_chunk():
     n = 4
     # A distinct relative offset per chunk step so a wrong anchor would be visible.
     chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
-    pre, post, relative_step = _relative_pre_post()
+    pre, post = _relative_pre_post()
     policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
     engine = _build_sync_engine(policy, pre, post)
-
-    assert relative_step._count_queued_actions == policy.count_queued_actions  # binding wired up
 
     s0 = [1.0, 2.0, 3.0, 4.0]
     outputs = []
@@ -1640,17 +1601,7 @@ def test_sync_relative_holds_anchor_across_chunk():
     assert policy._predict_state["predict_calls"] == 2
     torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
     # The anchor now reflects the fresh-chunk state, not the held one.
-    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
-
-
-def test_sync_engine_without_a_relative_step_binds_nothing():
-    """A pipeline with no enabled relative step has nothing to bind, and the engine still runs."""
-    from lerobot.processor import bind_relative_anchor
-
-    policy = MagicMock()
-    policy.config.use_amp = False
-    assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
-    _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+    torch.testing.assert_close(policy._predict_state["anchor"], torch.tensor([s_next]))
 
 
 # ---------------------------------------------------------------------------
@@ -1661,26 +1612,35 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
 def test_sync_engine_returns_the_prediction_with_the_action():
     from lerobot.inference import SyncInferenceEngine
     from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
     from lerobot.utils.constants import ACTION, PREDICTION
 
     returned = {"subtask": None}
-    policy = MagicMock()
-    policy.config.use_amp = False
 
-    def select_action(_obs):
-        action = torch.zeros(1, 2)
+    def predict_action_chunk(_obs):
+        action = torch.zeros(1, 1, 2)
         if returned["subtask"] is None:
-            return action
+            return {ACTION: action}
         return {ACTION: action, PREDICTION: {"language": {"subtask": [returned["subtask"]]}}}
 
-    policy.select_action.side_effect = select_action
-    postprocessor = MagicMock(side_effect=lambda action: action + 1)
+    class _AddOne(ProcessorStep):
+        def __init__(self):
+            self.seen = []
+
+        def __call__(self, transition):
+            self.seen.append(transition)
+            return {**transition, TransitionKey.ACTION: transition[TransitionKey.ACTION] + 1}
+
+        def transform_features(self, features):
+            return features
+
+    add_one = _AddOne()
+    policy = _chunk_policy(1, predict_action_chunk)
     engine = SyncInferenceEngine(
         policy=policy,
-        preprocessor=MagicMock(side_effect=lambda obs: obs),
-        postprocessor=postprocessor,
+        preprocessor=_Identity(),
+        postprocessor=PolicyProcessorPipeline(steps=[add_one]),
         dataset_features={},
-        ordered_action_keys=[],
         task="test",
         device="cpu",
         robot_type="mock",
@@ -1692,9 +1652,10 @@ def test_sync_engine_returns_the_prediction_with_the_action():
     # With a prediction: a transition carrying the postprocessed action and the prediction.
     returned["subtask"] = "reach"
     step = engine.get_action({})
-    assert isinstance(postprocessor.call_args.args[0], torch.Tensor)  # only the action is postprocessed
+    # Only the action is postprocessed: the step gets the model chunk, the prediction passes through.
+    torch.testing.assert_close(add_one.seen[-1][TransitionKey.ACTION], torch.zeros(1, 1, 2))
     torch.testing.assert_close(step[TransitionKey.ACTION], torch.ones(2))
-    assert transition_to_prediction(step) == {"language": {"subtask": ["reach"]}}
+    assert step[TransitionKey.PREDICTION] == {"language": {"subtask": ["reach"]}}
 
 
 class _Identity:
@@ -1725,13 +1686,13 @@ def test_send_next_action_returns_the_step_with_the_prediction():
 
     first = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
     assert first[TransitionKey.ACTION] == {"m.pos": 1.0}
-    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+    assert first[TransitionKey.PREDICTION] == {"language": {"subtask": ["reach"]}}
 
     # The next policy step returned a bare action, and the interpolated tick in between
     # pulled nothing from the engine: neither carries a prediction.
     for _ in range(2):
         step = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
-        assert transition_to_prediction(step) == {}
+        assert not step[TransitionKey.PREDICTION]
 
 
 def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
@@ -1810,17 +1771,17 @@ def test_disabled_and_interactive_skip_measurements(probes, clock, caplog, inter
 
 def test_sync_latency_excludes_precomputed_actions(monkeypatch, clock):
     monkeypatch.setattr(sync, "time", SimpleNamespace(monotonic=clock.perf_counter))
-    policy = Mock()
-    policy.count_queued_actions.return_value = 0
 
-    def select(_obs):
+    def predict_action_chunk(_obs):
         clock.advance(0.02)
-        return torch.zeros(1, 2)
+        return {"action": torch.zeros(1, 2, 2)}
 
-    policy.select_action.side_effect = select
-    engine = SyncInferenceEngine(policy, lambda x: x, lambda x: x, {}, [], "test", "cpu", "mock")
+    identity = MagicMock(side_effect=lambda x: x)
+    policy = _chunk_policy(2, predict_action_chunk)
+    engine = SyncInferenceEngine(
+        policy, identity, identity, dataset_features={}, task="test", device="cpu", robot_type="mock"
+    )
     engine.latency.configure(1)
-    engine.get_action({})
-    policy.count_queued_actions.return_value = 3
-    engine.get_action({})
+    engine.get_action({})  # predicts the chunk
+    engine.get_action({})  # plays its second action back
     assert engine.latency.recent(clock.now) == pytest.approx([0.02])

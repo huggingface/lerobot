@@ -62,7 +62,7 @@ class Flux3Config(PreTrainedConfig):
         n_obs_steps: Observation timesteps used at inference. The PEFT default uses the current images
             and measured state only, encoded as one snapshot with no past-action conditioning.
         chunk_size: Actions predicted per call (the model's action chunk; 32 for the reference recipe).
-        n_action_steps: Actions executed per ``select_action`` cycle before the next prediction.
+        n_action_steps: Actions executed per chunk before the next prediction.
         fps: Control / video frame rate the checkpoint was trained at.
         camera_layout: How the cameras are composited onto the canvas: ``"droid"`` (three 360x640 cameras
             [wrist, left, right]: wrist full-res on top, exteriors half-res below, reflect-padded) or
@@ -394,9 +394,9 @@ class Flux3Config(PreTrainedConfig):
                     FeatureType.VISUAL: images,
                     FeatureType.STATE: range(1 - self.n_obs_steps, 1),
                     FeatureType.ENV: images,
+                    FeatureType.ACTION: range(-self.n_obs_steps, 0),
                 },
-                # The commands before the current frame are history inputs; the first anchors the deltas.
-                action=range(-self.n_obs_steps, self.chunk_size),
+                action=range(self.chunk_size),
             ),
             drop_first=self.drop_n_first_frames,
             drop_last=self.drop_n_last_frames,
@@ -407,6 +407,8 @@ class Flux3Config(PreTrainedConfig):
         if self.conditioning != "history":
             return Deltas()
         window = range(1 - self.n_obs_steps, 1)
-        return Deltas(
-            observation={FeatureType.VISUAL: window, FeatureType.STATE: window, FeatureType.ENV: window}
-        )
+        observation = {FeatureType.VISUAL: window, FeatureType.STATE: window, FeatureType.ENV: window}
+        if self.condition_on_past_actions or self.action_representation == "delta":
+            # Command deltas are integrated from the last executed command.
+            observation[FeatureType.ACTION] = range(-self.n_obs_steps, 0)
+        return Deltas(observation=observation)

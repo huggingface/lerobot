@@ -36,6 +36,15 @@ OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
 OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
 
 ACTION = "action"
+# What predicted actions are expressed against, written by a preprocessor step for its postprocessor counterpart.
+ACTION_ANCHOR = "action_anchor"
+# Sampling inputs a runner hands predict_action_chunk in the batch: the starting noise, and the
+# Real-Time Chunking continuation (the previous chunk's unexecuted tail, in model coordinates).
+NOISE = "noise"
+VIDEO_NOISE = "video_noise"  # the starting video latent of world models
+RTC_INFERENCE_DELAY = "rtc.inference_delay"
+RTC_PREV_CHUNK_LEFT_OVER = "rtc.prev_chunk_left_over"
+RTC_EXECUTION_HORIZON = "rtc.execution_horizon"
 ACTION_PREFIX = ACTION + "."
 # Batch key of a policy's prediction (see ``PolicyOutput``), and the prefix naming what it predicts:
 # ``observation.images.top`` predicted is ``prediction.images.top``.

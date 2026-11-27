@@ -27,7 +27,6 @@ from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
-    PolicyOutput,
     PolicyPrediction,
     RobotAction,
     RobotObservation,
@@ -37,11 +36,8 @@ from lerobot.utils.constants import (
     ACTION,
     DONE,
     INFO,
-    MESSAGES_RENDERED,
     OBS_PREFIX,
     PREDICTION,
-    QUERY_KIND,
-    QUERY_TEXT,
     REWARD,
     TRUNCATED,
 )
@@ -172,35 +168,26 @@ def from_tensor_to_numpy(x: torch.Tensor | Any) -> np.ndarray | float | int | An
     return x
 
 
-_COMPLEMENTARY_KEYS = (
-    "task",
-    "index",
-    "task_index",
-    "episode_index",
-    "frame_index",
-    "timestamp",
-    "language_persistent",
-    "language_events",
-    MESSAGES_RENDERED,
-    "message_streams",
-    "target_message_indices",
-    # Text-generation request keys: carried into complementary_data so a prompt-formatting
-    # processor step can read the kind and rewrite QUERY_TEXT.
-    QUERY_KIND,
-    QUERY_TEXT,
+# The batch keys that are a transition's own fields, not complementary data. The field names
+# themselves are reserved too, so a transition read as a batch does not nest into itself.
+_TRANSITION_BATCH_KEYS = frozenset(
+    {ACTION, REWARD, DONE, TRUNCATED, INFO, PREDICTION}
+    | {value for name, value in vars(TransitionKey).items() if name.isupper()}
 )
 
 
 def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
-    """Extract complementary data from a batch dictionary.
+    """Every batch key that is neither an observation nor a transition field.
 
-    Includes padding flags (any key containing ``_is_pad``) plus the fixed
-    set of metadata / language keys defined in ``_COMPLEMENTARY_KEYS`` —
-    each only when present in ``batch``.
+    Whatever a processor step adds (an anchor, tokens, a policy's private inputs) reaches the next
+    step, the policy and the postprocessor, so `transition_to_batch` and this conversion are exact
+    inverses.
     """
-    pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
-    extras = {k: batch[k] for k in _COMPLEMENTARY_KEYS if k in batch}
-    return {**pad_keys, **extras}
+    return {
+        key: value
+        for key, value in batch.items()
+        if key not in _TRANSITION_BATCH_KEYS and not key.startswith(OBS_PREFIX)
+    }
 
 
 def create_transition(
@@ -353,28 +340,6 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
-
-
-def policy_output_to_transition(output: PolicyAction | PolicyOutput) -> EnvTransition:
-    """
-    Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
-
-    A policy returns a bare `PolicyAction`, or a `PolicyOutput` batch carrying the action and its
-    prediction (see `transition_to_prediction`).
-    """
-    if isinstance(output, torch.Tensor):
-        return policy_action_to_transition(output)
-    return batch_to_transition(dict(output))
-
-
-def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
-    """
-    Extract what a policy predicted besides its action.
-
-    Returns an empty `PolicyPrediction` when the transition carries none.
-    """
-    prediction = transition.get(TransitionKey.PREDICTION)
-    return prediction if prediction is not None else PolicyPrediction()
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:

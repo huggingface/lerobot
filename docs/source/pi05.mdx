@@ -301,8 +301,8 @@ once the last such layer has run, keeping the downstream language/action prefix
 length unchanged.
 
 Unavailable history at the beginning of an episode is padded and masked. At
-inference, Pi05 maintains the same strided image history internally and clears
-it whenever the policy is reset.
+inference, the runner records every control tick and passes the same strided
+window, padded and masked the same way.
 
 Historical proprioception is an independent option:
 
@@ -322,12 +322,10 @@ checkpoint learned memory behavior.
 Under PEFT, `proprio_history_proj` is trained and saved in full via
 `modules_to_save`, since it has no pretrained weights to adapt.
 
-At inference, MEM keeps one batched history queue and assumes every batch row
-shares episode boundaries. `lerobot-eval` satisfies this by calling
-`policy.reset()` before each batched rollout and before resetting the vector
-environment. Independently autoresetting rows in an asynchronous vector batch
-is not supported; start a new rollout so the complete policy and action queues
-are reset together.
+At inference, the history is recorded for the whole batch, so every batch row
+shares episode boundaries. `lerobot-eval` starts a new record for each batched
+rollout. Independently autoresetting rows in an asynchronous vector batch is not
+supported; start a new rollout instead.
 
 ## Relative Actions
 

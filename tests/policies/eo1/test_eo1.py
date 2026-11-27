@@ -228,12 +228,10 @@ def test_lerobot_eo1_inference(monkeypatch):
 
     monkeypatch.setattr(policy.model, "sample_actions", fake_sample_actions)
 
-    batch = make_policy_batch(include_action=False)
-    action_0 = policy.select_action(batch)
-    action_1 = policy.select_action(batch)
+    chunk = policy.predict_action_chunk(make_policy_batch(include_action=False))[ACTION]
 
-    torch.testing.assert_close(action_0, fixed_chunk[:, 0, :ACTION_DIM])
-    torch.testing.assert_close(action_1, fixed_chunk[:, 1, :ACTION_DIM])
+    # The chunk is cropped from the padded model action dim to the dataset's.
+    torch.testing.assert_close(chunk, fixed_chunk[:, :, :ACTION_DIM])
     assert sample_calls["count"] == 1
 
 

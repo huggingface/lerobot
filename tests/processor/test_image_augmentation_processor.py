@@ -242,8 +242,8 @@ def test_trainer_path_keeps_unprefixed_camera_keys_and_custom_columns(cpu_genera
     assert out["task"] == batch["task"]
 
 
-def test_pipeline_wrapper_would_drop_those_keys():
-    """Why the trainer does not wrap the step in a pipeline: the conversion loses un-prefixed keys."""
+def test_pipeline_wrapper_would_skip_unprefixed_images():
+    """Why the trainer does not wrap the step in a pipeline: an un-prefixed key is not an observation."""
     batch = {
         "image": torch.full((2, 3, 8, 8), 0.5),
         CAM_A: torch.full((2, 2, 3, 8, 8), 0.5),
@@ -251,8 +251,9 @@ def test_pipeline_wrapper_would_drop_those_keys():
         "action": torch.ones(2, 4),
     }
     out = _pipeline(ImageAugmentationProcessorStep(config=_config(), image_keys=["image", CAM_A]))(batch)
-    assert CAM_A in out and "action" in out
-    assert "image" not in out and "custom.column" not in out
+    assert set(batch) <= set(out)
+    torch.testing.assert_close(out[CAM_A], torch.full_like(batch[CAM_A], 0.25))
+    torch.testing.assert_close(out["image"], batch["image"])
 
 
 def test_train_config_rejects_gpu_backend_on_cpu_policy(tmp_path):

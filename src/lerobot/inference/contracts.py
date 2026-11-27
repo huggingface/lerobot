@@ -37,6 +37,8 @@ from lerobot.policies import (
     FeatureSpec as FeatureSpec,
 )
 
+from .history import ChunkHistory, HistoryInputs
+
 DEFAULT_MAX_TEXT_INPUT_CHARS = 4096
 DEFAULT_MAX_TEXT_OUTPUT_CHARS = 8192
 
@@ -64,19 +66,27 @@ class PolicyCapabilities:
     language: bool = False
     training_max_delay: int = 0
     rtc_horizon: int = 0
-    current_observation_only: bool = True
     retains_session_state: bool = True
     action_representation: str = "canonical"
     model_action_dim: int | None = None
+    complete_execution: bool = False
+    history: ChunkHistory = field(default_factory=ChunkHistory)
 
     def __post_init__(self) -> None:
-        """Validate lengths, interval, and feature identity."""
+        """Validate lengths, interval, feature identity and the declared history."""
         if not math.isfinite(self.action_interval) or self.action_interval <= 0:
             raise ValueError("Policy action interval must be finite and positive.")
         if not self.modes or not 0 < self.execution_steps <= self.prediction_steps:
             raise ValueError("A valid mode and execution length are required.")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation feature names.")
+        names = {feature.name for feature in self.features}
+        if missing := set(self.history.recorded_features) - names:
+            raise ValueError(f"History features are not served observations: {sorted(missing)}.")
+        if self.complete_execution and (
+            self.modes != (ExecutionMode.CHUNK,) or self.execution_steps != self.prediction_steps
+        ):
+            raise ValueError("Complete execution runs whole plain chunks.")
         if self.model_action_dim is not None and (
             type(self.model_action_dim) is not int or self.model_action_dim <= 0
         ):
@@ -94,6 +104,8 @@ class ObservationSnapshot:
     observation_id: str = ""
     action_cursor: int | None = None
     execution_generation: int | None = None
+    # Sampled from immutable recorded captures; never mutated after sampling.
+    history: HistoryInputs | None = None
 
     def __post_init__(self) -> None:
         """Copy camera buffers so asynchronous encoding sees a stable frame."""

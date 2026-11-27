@@ -31,7 +31,6 @@ import logging
 import os
 import re
 import types
-from collections import deque
 from collections.abc import Iterator
 from contextlib import nullcontext, suppress
 from dataclasses import replace
@@ -45,8 +44,9 @@ from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import PreTrainedPolicy, rtc_inputs
+from lerobot.utils.constants import ACTION, NOISE
 from lerobot.utils.import_utils import (
     _peft_available,
     _scipy_available,
@@ -653,7 +653,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.config.validate_features()
         del inputs, kwargs, dataset_stats, dataset_meta
         self._checkpoint_action_mode = _saved_policy_action_mode(self.config)
-        self._action_queue: deque[Tensor] = deque(maxlen=self.config.n_action_steps)
         self._rollout_action_generator: torch.Generator | None = None
         self._rollout_task_key: tuple[Any, ...] | None = None
         self._rollout_index_for_task = -1
@@ -738,8 +737,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.train(self.training)
 
     def reset(self) -> None:
-        """Clear the action queue and rollout generator between episodes."""
-        self._action_queue = deque(maxlen=self.config.n_action_steps)
+        """Clear the rollout generator between episodes."""
         self._rollout_action_generator = None
 
     def _set_inference_cuda_graph_enabled(self, enabled: bool) -> None:
@@ -1981,24 +1979,20 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Generate an action chunk via continuous flow matching or discrete AR decoding.
 
-        ``noise`` is the optional starting sample of continuous flow matching, shaped
-        ``(batch_size, chunk_size, max_action_dim)`` with ``max_action_dim`` from the model
-        config. When None, the policy draws it as usual. Discrete decoding ignores it.
+        The batch's ``noise`` is the optional starting sample of continuous flow matching,
+        shaped ``(batch_size, chunk_size, max_action_dim)`` with ``max_action_dim`` from the
+        model config. When absent, the policy draws it as usual. Discrete decoding ignores it.
+        The action mode and step count come from the config.
         """
-        if "action_mode" in kwargs:
-            raise TypeError(
-                "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
-                "use 'inference_action_mode'."
-            )
+        noise = batch.get(NOISE)
+        kwargs = rtc_inputs(batch)
         model_inputs = self._model_inputs(batch)
-        inference_action_mode = self._resolve_inference_action_mode(kwargs.get("inference_action_mode"))
-        num_steps = kwargs.get("num_steps", getattr(self.config, "num_inference_steps", None))
-        generator = kwargs.get("generator")
+        inference_action_mode = self._resolve_inference_action_mode(None)
+        num_steps = getattr(self.config, "num_inference_steps", None)
+        generator = None
         device = next(self.parameters()).device
         batch_size = int(next(iter(model_inputs.values())).shape[0])
         if generator is None:
@@ -2051,18 +2045,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     noise=noise,
                     **generation_kwargs,
                 )
-        return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs) -> Tensor:
-        """Pop one action step from the queue, regenerating the chunk when empty."""
-        if self._rtc_enabled():
-            raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
-        self.eval()
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise, **kwargs)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+        return PolicyOutput(
+            action=actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
+        )
 
     def _get_default_peft_targets(self) -> dict[str, Any]:
         target_modules = self._lora_target_modules(

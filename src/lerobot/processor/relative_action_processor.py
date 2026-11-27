@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION_ANCHOR, OBS_STATE
 
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
-from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
-
-if TYPE_CHECKING:  # a runtime import would be circular: ``pretrained`` imports from this package
-    from lerobot.policies.pretrained import PreTrainedPolicy
+from .pipeline import ProcessorStep, ProcessorStepRegistry
 
 # Re-export for backward compatibility
 __all__ = [
@@ -35,7 +32,6 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "RelativeActionsProcessorStep",
     "AbsoluteActionsProcessorStep",
-    "bind_relative_anchor",
     "to_relative_actions",
     "to_absolute_actions",
 ]
@@ -99,15 +95,27 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
+def shift_actions(actions: Tensor, anchor: Tensor, *, sign: int) -> Tensor:
+    """Add ``sign * anchor`` to the leading dimensions of ``(B, A)`` or ``(B, T, A)`` actions."""
+    anchor = anchor.to(device=actions.device, dtype=actions.dtype)
+    dims = min(actions.shape[-1], anchor.shape[-1])
+    offset = anchor[..., :dims]
+    if actions.ndim == 3:
+        offset = offset.unsqueeze(-2)
+    shifted = actions.clone()
+    shifted[..., :dims] += sign * offset
+    return shifted
+
+
 @ProcessorStepRegistry.register("relative_actions_processor")
 @dataclass
 class RelativeActionsProcessorStep(ProcessorStep):
     """Converts absolute actions to relative actions (action -= state) for masked dimensions.
 
     Mirrors OpenPI's DeltaActions transform. Applied during preprocessing so the model
-    trains on relative offsets instead of absolute positions.
-    Caches the last seen state so a paired AbsoluteActionsProcessorStep can reverse
-    the conversion during postprocessing.
+    trains on relative offsets instead of absolute positions. Writes the offset it subtracts,
+    the masked current state, under ``action_anchor`` in the complementary data, where the
+    paired AbsoluteActionsProcessorStep reads it back during postprocessing.
 
     Attributes:
         enabled: Whether to apply the relative conversion.
@@ -119,8 +127,6 @@ class RelativeActionsProcessorStep(ProcessorStep):
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
-    _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
-    _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
     def _build_mask(self, action_dim: int) -> list[bool]:
         if not self.exclude_joints or self.action_names is None:
@@ -141,43 +147,35 @@ class RelativeActionsProcessorStep(ProcessorStep):
 
         return mask
 
+    def current_state(self, state: torch.Tensor) -> torch.Tensor:
+        """The state frame actions are relative to: frame 0 of a stacked ``(B, T, S)`` state."""
+        return state[:, 0] if state.ndim == 3 else state
+
+    def anchor(self, state: torch.Tensor) -> torch.Tensor:
+        """The offset subtracted from actions: the current state on the converted dimensions."""
+        current = self.current_state(state)
+        mask = torch.tensor(self._build_mask(current.shape[-1]), dtype=current.dtype, device=current.device)
+        return current * mask
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        observation = transition.get(TransitionKey.OBSERVATION, {})
-        state = observation.get(OBS_STATE) if observation else None
-
-        # Cache state for the paired AbsoluteActionsProcessorStep -- but hold it for as long
-        # as the policy is still serving the chunk that was generated against it. A fresh
-        # chunk re-anchors on the tick the queue runs dry.
-        if state is not None and not self._chunk_in_flight():
-            self._last_state = state
-
         if not self.enabled:
             return transition
-
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        state = observation.get(OBS_STATE)
+        if not isinstance(state, torch.Tensor):
+            return transition
+        anchor = self.anchor(state)
         new_transition = transition.copy()
+        complementary = dict(new_transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        complementary[ACTION_ANCHOR] = anchor
+        new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         action = new_transition.get(TransitionKey.ACTION)
-        if action is None or state is None:
+        if action is None:
             return new_transition
         if not isinstance(action, torch.Tensor):
             raise ValueError(f"RelativeActionsProcessorStep expects a tensor action, got {type(action)}")
-
-        mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = shift_actions(action, anchor, sign=-1)
         return new_transition
-
-    def reset(self) -> None:
-        self._last_state = None
-
-    def _chunk_in_flight(self) -> bool:
-        """Whether the policy still holds actions generated against the cached anchor."""
-        return self._count_queued_actions is not None and self._count_queued_actions() > 0
-
-    def bind_action_queue(self, count_queued_actions: Callable[[], int] | None) -> None:
-        self._count_queued_actions = count_queued_actions
-
-    def get_cached_state(self) -> torch.Tensor | None:
-        """Return the cached ``observation.state`` used as the reference point for relative/absolute action conversions."""
-        return self._last_state
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -195,46 +193,34 @@ class RelativeActionsProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register("absolute_actions_processor")
 @dataclass
 class AbsoluteActionsProcessorStep(ProcessorStep):
-    """Converts relative actions back to absolute actions (action += state) for all dimensions.
+    """Converts relative actions back to absolute actions (action += anchor).
 
     Mirrors OpenPI's AbsoluteActions transform. Applied during postprocessing so
     predicted relative offsets are converted back to absolute positions for execution.
-    Reads the cached state from its paired RelativeActionsProcessorStep.
+    Reads the ``action_anchor`` its paired RelativeActionsProcessorStep wrote into the batch.
 
     Attributes:
         enabled: Whether to apply the absolute conversion.
-        relative_step: Reference to the paired RelativeActionsProcessorStep that caches state.
     """
 
     enabled: bool = False
-    relative_step: RelativeActionsProcessorStep | None = field(default=None, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         if not self.enabled:
             return transition
-
-        if self.relative_step is None:
+        anchor = (transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}).get(ACTION_ANCHOR)
+        if anchor is None:
             raise RuntimeError(
-                "AbsoluteActionsProcessorStep requires a paired RelativeActionsProcessorStep "
-                "but relative_step is None. Ensure relative_step is set when constructing the postprocessor."
+                "AbsoluteActionsProcessorStep needs the action_anchor a RelativeActionsProcessorStep writes; "
+                "postprocess the batch the preprocessor and the policy returned."
             )
-
-        cached_state = self.relative_step.get_cached_state()
-        if cached_state is None:
-            raise RuntimeError(
-                "AbsoluteActionsProcessorStep requires state from RelativeActionsProcessorStep "
-                "but no state has been cached. Ensure the preprocessor runs before the postprocessor."
-            )
-
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
             return new_transition
         if not isinstance(action, torch.Tensor):
             raise ValueError(f"AbsoluteActionsProcessorStep expects a tensor action, got {type(action)}")
-
-        mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        new_transition[TransitionKey.ACTION] = shift_actions(action, anchor, sign=1)
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
@@ -244,24 +230,3 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
-
-
-def bind_relative_anchor(
-    policy: "PreTrainedPolicy", pipeline: PolicyProcessorPipeline[Any, Any]
-) -> RelativeActionsProcessorStep | None:
-    """Let ``pipeline``'s relative-action step hold a chunk's anchor until the chunk drains.
-
-    Call once wherever a policy and its preprocessor are built together; a disabled step counts
-    as absent. Returns the step that was bound, or ``None`` if the pipeline has no enabled one.
-    """
-    step = next(
-        (
-            s
-            for s in getattr(pipeline, "steps", ())
-            if isinstance(s, RelativeActionsProcessorStep) and s.enabled
-        ),
-        None,
-    )
-    if step is not None:
-        step.bind_action_queue(policy.count_queued_actions)
-    return step

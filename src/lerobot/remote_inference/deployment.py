@@ -27,7 +27,7 @@ import torch
 from huggingface_hub import snapshot_download
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
+from lerobot.inference import ExecutionMode, HistoryInputs, ObservationSnapshot, PolicyRunner
 from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
 from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import RenderRuntimeMessagesStep
@@ -179,16 +179,36 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
     if execution_steps is not None and runner.capabilities.execution_steps != execution_steps:
         raise ValueError("Loaded policy does not honor the requested execution.n_action_steps slice")
     identity = artifact_identity(artifacts, _inference_identity(cfg, policy_cfg))
+    zeros: dict[str, np.ndarray] = {
+        feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features
+    }
+    caps = runner.capabilities
+    action_zeros: np.ndarray = np.zeros(caps.action_feature.shape, dtype=np.float32)
     warmup = ObservationSnapshot(
-        {feature.name: np.zeros(feature.shape, dtype=feature.dtype) for feature in cfg.features},
+        zeros,
         0.0,
         "warmup",
         observation_id="warmup",
+        # A fully padded history: the shapes of a request at an episode's first tick.
+        history=None
+        if caps.history.empty
+        else HistoryInputs(
+            observations={
+                w.feature: (zeros[w.feature],) * (len(w.offsets) - 1) for w in caps.history.observations
+            },
+            observation_padding={
+                w.feature: (True,) * (len(w.offsets) - 1) for w in caps.history.observations
+            },
+            actions=(action_zeros,) * len(caps.history.actions),
+            action_padding=(True,) * len(caps.history.actions),
+        ),
     )
     try:
         for mode in runner.capabilities.modes:
             previous = None
             for _ in range(cfg.execution.warmup_calls):
+                if caps.complete_execution:
+                    runner.reset(full=True)  # each warmup call is an episode's first chunk
                 previous = runner.predict(
                     warmup,
                     mode=mode,

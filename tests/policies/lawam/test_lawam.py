@@ -279,13 +279,15 @@ def test_unused_state_stats_are_excluded_from_eval_processors() -> None:
     }
     processed_batch = preprocessor(batch)
     processed_action = postprocessor(
-        torch.tensor(
-            [
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-            ]
-        )
-    )
+        {
+            ACTION: torch.tensor(
+                [
+                    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                ]
+            )
+        }
+    )[ACTION]
 
     assert torch.equal(processed_batch["state"], torch.zeros(1, 32))
     assert not processed_batch["state_mask"].any()
@@ -357,7 +359,7 @@ def test_lawam_postprocessor_matches_libero_gripper_convention(
     action = torch.zeros(2, 7)
     action[:, -1] = torch.tensor([0.0, 1.0])
 
-    processed = postprocessor(action)
+    processed = postprocessor({ACTION: action})[ACTION]
 
     assert processed[:, -1].tolist() == [-1.0, 1.0]
 
@@ -400,7 +402,7 @@ def test_lawam_gripper_processing_is_opt_in() -> None:
     assert cfg.clip_normalized_actions is False
     assert cfg.pre_snap_gripper_action is False
     assert cfg.binarize_gripper_action is False
-    assert torch.equal(postprocessor(action), action)
+    assert torch.equal(postprocessor({ACTION: action})[ACTION], action)
 
 
 def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
@@ -434,8 +436,8 @@ def test_lawam_postprocessor_config_round_trip(tmp_path) -> None:
     action = torch.tensor([[2.0, -2.0, 0.1, 0.25], [-2.0, 2.0, 0.2, 0.24]])
     original = action.clone()
     expected = torch.tensor([[1.0, -1.0, 0.1, 1.0], [-1.0, 1.0, 0.2, -1.0]])
-    torch.testing.assert_close(postprocessor(action), expected)
-    torch.testing.assert_close(loaded_postprocessor(action), expected)
+    torch.testing.assert_close(postprocessor({ACTION: action})[ACTION], expected)
+    torch.testing.assert_close(loaded_postprocessor({ACTION: action})[ACTION], expected)
     torch.testing.assert_close(action, original)
 
 
@@ -545,7 +547,7 @@ def test_resume_loads_serialized_lawam_processors(tmp_path) -> None:
     assert preprocessor.steps[0].get_config() == {
         "rename_map": {"observation.images.raw_wrist": "observation.images.wrist"}
     }
-    assert torch.equal(postprocessor(torch.zeros(1, 7)), torch.ones(1, 7))
+    assert torch.equal(postprocessor({ACTION: torch.zeros(1, 7)})[ACTION], torch.ones(1, 7))
 
 
 def test_processor_frequency_is_used_without_dataset_metadata() -> None:
@@ -913,14 +915,11 @@ def test_preprocessor_keeps_inference_inputs_as_tensors() -> None:
     assert all(torch.is_tensor(item["image"]) for item in image_items)
 
 
-def test_select_action_uses_action_queue_before_refill() -> None:
+def test_predict_action_chunk_crops_the_native_chunk_to_the_action_features() -> None:
     policy, native_model = make_policy()
-    batch = make_prepared_batch(batch_size=1)
 
-    first = policy.select_action(batch)
-    second = policy.select_action(batch)
+    chunk = policy.predict_action_chunk(make_prepared_batch(batch_size=1))[ACTION]
 
     assert native_model.predict_calls == 1
-    assert first.shape == (1, 7)
-    assert second.shape == (1, 7)
-    assert not torch.equal(first, second)
+    native = torch.arange(4 * 32, dtype=torch.float32).reshape(1, 4, 32)
+    torch.testing.assert_close(chunk, native[..., :7])

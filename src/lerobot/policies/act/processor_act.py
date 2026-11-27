@@ -18,7 +18,6 @@ from typing import Any
 import torch
 
 from lerobot.processor import (
-    PolicyAction,
     PolicyProcessorPipeline,
     make_default_pre_post_processors,
 )
@@ -31,7 +30,7 @@ def make_act_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Creates the pre- and post-processing pipelines for the ACT policy.
 
@@ -44,7 +43,7 @@ def make_act_pre_post_processors(
             statistics (e.g., mean and std) used for normalization. Defaults to None.
 
     Returns:
-        tuple[PolicyProcessorPipeline[dict[str, Any], dict[str, Any]], PolicyProcessorPipeline[PolicyAction, PolicyAction]]: A tuple containing the
+        tuple[PolicyProcessorPipeline[dict[str, Any], dict[str, Any]], PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]]: A tuple containing the
         pre-processor pipeline and the post-processor pipeline.
     """
     return make_default_pre_post_processors(config, dataset_stats, normalizer_device=config.device)

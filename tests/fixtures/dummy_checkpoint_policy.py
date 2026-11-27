@@ -16,6 +16,7 @@
 """A minimal real PreTrainedPolicy for checkpoint/publish unit tests (CPU, tiny)."""
 
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -23,6 +24,7 @@ from torch import Tensor, nn
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.sampling import FrameSampler
 from lerobot.configs.types import Deltas
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import AdamConfig, OptimizerConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -68,11 +70,8 @@ class DummyCheckpointPolicy(PreTrainedPolicy):
         out = self.net(batch["observation.state"])
         return out.mean(), None
 
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        return self.net(batch["observation.state"])
-
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        return self.net(batch["observation.state"])
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        return PolicyOutput(action=self.net(batch["observation.state"]).unsqueeze(1))
 
 
 def make_dummy_policy(repo_id: str | None = None) -> DummyCheckpointPolicy:

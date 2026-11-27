@@ -33,6 +33,7 @@ from lerobot.robots import Robot, RobotConfig, make_robot_from_config
 from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 from lerobot.robots.utils import episode_ended, start_episode
 from lerobot.transport.zenoh import ZenohConfig
+from lerobot.utils.constants import ACTION
 from tests.fixtures.sim_server import free_port
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig
 
@@ -372,7 +373,6 @@ def test_rollout_checks_a_sim_robot_with_its_env_processors(tmp_path, monkeypatc
 @pytest.mark.parametrize("mode", ["sync", "rtc"])
 def test_sim_robot_local_inference_engines(tmp_path, mode):
     pytest.importorskip("datasets", reason="lerobot.rollout imports the dataset integration")
-    import torch
 
     from lerobot.inference import RTCInferenceEngine
     from lerobot.inference.sync import SyncInferenceEngine
@@ -391,10 +391,10 @@ def test_sim_robot_local_inference_engines(tmp_path, mode):
         "action": {"dtype": "float32", "shape": (2,), "names": names},
     }
     policy = ControlledPolicy()
-    policy.select_action = lambda batch: torch.tensor([[0.25, 0]], dtype=torch.float32)
-    policy.drop_queued_actions = lambda: None
     if mode == "sync":
-        engine = SyncInferenceEngine(policy, Pipeline(), Pipeline(), features, names, "reach", "cpu", "sim")
+        engine = SyncInferenceEngine(
+            policy, Pipeline(), Pipeline(), task="reach", dataset_features=features, robot_type="sim"
+        )
     else:
         engine = RTCInferenceEngine(
             policy,
@@ -414,6 +414,7 @@ def test_sim_robot_local_inference_engines(tmp_path, mode):
         engine.resume()
         observation = wrapper.get_observation()
         if mode == "sync":
+            policy.release.release()
             action = engine.get_action(build_dataset_frame(features, observation, prefix="observation"))
         else:
             engine.notify_observation(observation)
@@ -462,7 +463,7 @@ def test_sim_robot_remote_inference_engine(sim_server, tmp_path):
         FeatureType.ACTION: NormalizationMode.IDENTITY,
     }
     policy = ConformingPolicy(config)
-    policy.predict_action_chunk = lambda batch, **kwargs: torch.zeros(1, 8, 2)
+    policy.predict_action_chunk = lambda batch: {ACTION: torch.zeros(1, 8, 2)}
     runner = PolicyRunner(
         policy,
         *make_act_pre_post_processors(config),
@@ -642,7 +643,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
         robot.connect()
         for _ in range(5):
             observation = robot.get_observation()
-            action = policy.select_action(
+            action = policy.predict_action_chunk(
                 {
                     "observation.state": torch.tensor([[observation["state_0"], observation["state_1"]]]),
                     "observation.images.image": torch.from_numpy(observation["image"])
@@ -652,7 +653,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
                     / 255,
                 }
             )
-            robot.send_action(dict(zip(robot.action_features, action[0].tolist(), strict=True)))
+            robot.send_action(dict(zip(robot.action_features, action[ACTION][0, 0].tolist(), strict=True)))
     finally:
         robot.disconnect()
 

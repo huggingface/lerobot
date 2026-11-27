@@ -36,7 +36,6 @@ lerobot-train \
 
 import logging
 import math
-from collections import deque
 from os import PathLike
 from typing import TYPE_CHECKING, Any, Self, cast
 
@@ -49,7 +48,8 @@ from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
-from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, NOISE
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import (
     _wallx_deps_available,
@@ -66,7 +66,7 @@ from ..common.flow_matching import (
     sample_noise,
 )
 from ..pretrained import PreTrainedPolicy
-from ..utils import log_model_loading_keys, populate_queues
+from ..utils import log_model_loading_keys
 from .configuration_wall_x import WallXConfig
 from .constant import WALL_X_GENERATION_PROMPT_IDS
 from .qwen_model import Qwen2_5_VLConfig
@@ -1836,12 +1836,6 @@ class WallXPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def reset(self):
-        """Reset action queue."""
-        self._queues = {
-            ACTION: deque(maxlen=self.config.n_action_steps),
-        }
-
     def get_optim_params(self):
         """Get parameters for optimization."""
         return self.parameters()
@@ -1980,14 +1974,14 @@ class WallXPolicy(PreTrainedPolicy):
         return require_single_text_output(outputs, policy_name="WALL-X")
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Predict action chunk for evaluation.
 
         `noise` is the optional starting sample of the diffusion mode, shape
         `(batch_size, chunk_size, max_action_dim)`. It is not used by the fast mode.
         """
+        noise = batch.get(NOISE)
         self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         generation_prompt_ids = batch.get(WALL_X_GENERATION_PROMPT_IDS)
         batch = self._pretokenized_inputs(batch)
@@ -2027,17 +2021,4 @@ class WallXPolicy(PreTrainedPolicy):
         # Unpad actions to actual action dimension
         actions = actions[:, :, :action_dim]
 
-        return actions
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Select single action for environment execution."""
-        self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-
-        # Use action queue
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
-
-        return self._queues[ACTION].popleft()
+        return PolicyOutput(action=actions)

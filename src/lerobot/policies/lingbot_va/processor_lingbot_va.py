@@ -25,7 +25,6 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.processor import (
-    PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     UnnormalizerProcessorStep,
@@ -41,7 +40,7 @@ def make_lingbot_va_pre_post_processors(
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Build the pre/post processor pipelines for LingBot-VA."""
     if config.output_features is None:

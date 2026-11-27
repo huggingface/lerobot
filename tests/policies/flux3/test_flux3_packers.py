@@ -168,12 +168,12 @@ def test_custom_packer_controls_heads_training_sampling_and_reload(tmp_path, mon
     loss, _ = policy(batch)
     loss.backward()
     assert torch.isfinite(loss) and "train_video" in calls
-    prediction = policy.predict_action_chunk(batch)
+    prediction = policy.predict_action_chunk(batch)[ACTION]
     assert {"actions", "infer_video", "sample_video_times", "sample_action_times"} <= set(calls)
     policy.save_pretrained(tmp_path)
     restored = Flux3Policy.from_pretrained(tmp_path)
     assert restored.config.packer == "wide_frame" and restored.packer is custom
-    assert torch.equal(restored.predict_action_chunk(batch), prediction)
+    assert torch.equal(restored.predict_action_chunk(batch)[ACTION], prediction)
     with pytest.raises(ValueError, match="already registered"):
         packing.register_packer("wide_frame", custom)
     monkeypatch.delitem(packing.PACKERS, "wide_frame")

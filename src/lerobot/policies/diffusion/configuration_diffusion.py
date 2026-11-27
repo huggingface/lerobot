@@ -45,9 +45,9 @@ class DiffusionConfig(PreTrainedConfig):
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
-        n_action_steps: The number of action steps to run in the environment for one invocation of the policy.
-            See `DiffusionPolicy.select_action` for more details.
+        horizon: Diffusion model action prediction size, starting at the oldest observation step.
+        n_action_steps: The number of action steps, from the current one, `predict_action_chunk` returns
+            and the environment runs for one invocation of the policy.
         input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
             the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
         output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents

@@ -63,7 +63,7 @@ onto these slots, as JSON:
 - Relative actions are off by default. `--policy.use_relative_actions=true` subtracts the current state from the
   action, except for dims whose name contains an entry of `--policy.relative_exclude_joints` (default `["gripper"]`).
 
-The postprocessor inverts the mapping, so `select_action` returns actions in your robot's raw action space.
+The postprocessor inverts the mapping, so the actions it returns are in your robot's raw action space.
 Fine-tuned checkpoints save the slot mappings and dataset statistics with their processors.
 
 ### Cameras
@@ -165,7 +165,7 @@ upstream numbers, not measured through this port.
 
 ## Inference speed-ups
 
-Four flags, all off by default, speed up `select_action`. They need CUDA and fixed input shapes, and no extra
+Four flags, all off by default, speed up `predict_action_chunk`. They need CUDA and fixed input shapes, and no extra
 dependencies:
 
 - `--policy.use_cudagraph_denoise=true`: capture the denoising loop as one CUDA graph.

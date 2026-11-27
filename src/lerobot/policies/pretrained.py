@@ -21,7 +21,7 @@ import os
 import warnings
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_INDEX_FILE, SAFETENSORS_SINGLE_FILE
@@ -30,10 +30,9 @@ from safetensors.torch import load_file, load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
-from lerobot.configs.sampling import FrameSampler
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import RTC_EXECUTION_HORIZON, RTC_INFERENCE_DELAY, RTC_PREV_CHUNK_LEFT_OVER
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.hub import HubMixin
@@ -83,16 +82,24 @@ def _missing_keys(model: nn.Module, loaded_keys: set[str]) -> list[str]:
     return [key for key in state_dict if key not in filled]
 
 
-class ActionSelectKwargs(TypedDict, total=False):
-    noise: Tensor | None
-
-
 class RTCActionSelectKwargs(TypedDict, total=False):
-    """Keyword arguments Real-Time Chunking passes to `predict_action_chunk`."""
+    """The Real-Time Chunking continuation, as a policy's sampling code takes it."""
 
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+
+
+def rtc_inputs(batch: dict[str, Any]) -> RTCActionSelectKwargs:
+    """The Real-Time Chunking continuation a runner put in ``batch``, as keyword arguments."""
+    inputs = RTCActionSelectKwargs()
+    if (delay := batch.get(RTC_INFERENCE_DELAY)) is not None:
+        inputs["inference_delay"] = delay
+    if (left_over := batch.get(RTC_PREV_CHUNK_LEFT_OVER)) is not None:
+        inputs["prev_chunk_left_over"] = left_over
+    if (horizon := batch.get(RTC_EXECUTION_HORIZON)) is not None:
+        inputs["execution_horizon"] = horizon
+    return inputs
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -112,16 +119,12 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
     # Non-`forward` entry points that must trigger FSDP2 unshard/reshard hooks when called on a
     # sharded policy (registered post-prepare via `torch.distributed.fsdp
     # .register_fsdp_forward_method`); calling them unregistered crashes on mixed Tensor/DTensor.
-    _fsdp_forward_methods: ClassVar[tuple[str, ...]] = ("select_action", "predict_action_chunk")
+    _fsdp_forward_methods: ClassVar[tuple[str, ...]] = ("predict_action_chunk",)
     # Capability gate for the (future) activation-checkpointing wiring.
     supports_gradient_checkpointing: ClassVar[bool] = False
     # Declarative context-parallel plan (diffusers `ContextParallelModelPlan` semantics:
     # module FQN -> sequence split/gather spec). Reserved for the CP engine round.
     _cp_plan: ClassVar[dict[str, Any] | None] = None
-    # Attribute names `drop_queued_actions` clears: a `populate_queues`-style `_queues` dict
-    # and a bare `_action_queue` deque. A chunking policy using another name must extend this
-    # ClassVar (or override the method), otherwise dropping the queue silently does nothing.
-    _action_queue_attrs: ClassVar[tuple[str, ...]] = ("_queues", "_action_queue")
 
     def __init__(self, config: PreTrainedConfig, *inputs, **kwargs):
         super().__init__()
@@ -370,48 +373,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
-    def reset(self):
-        """To be called whenever the environment is reset.
+    def reset(self) -> None:
+        """Clear what calls carry from one to the next, at the start of each episode.
 
-        Does things like clearing caches.
+        Most policies keep nothing between ``predict_action_chunk`` calls; the default does nothing.
         """
-        raise NotImplementedError
-
-    def drop_queued_actions(self) -> None:
-        """Discard actions precomputed by earlier ``select_action`` calls.
-
-        Forces a fresh forward pass on the next ``select_action`` so a mid-episode conditioning
-        change (e.g. a new instruction) takes effect at once instead of after the queue drains.
-        Unlike :meth:`reset`, the rest of the episode state is kept.  Call it from the thread
-        that calls ``select_action``.  Clears the queues named in :attr:`_action_queue_attrs`;
-        a policy that keeps no action queue inherits a no-op.
-        """
-        for attr in self._action_queue_attrs:
-            queue = getattr(self, attr, None)
-            if isinstance(queue, dict):
-                # populate_queues-style dict: clear only ACTION, not the observation history.
-                if ACTION in queue:
-                    queue[ACTION].clear()
-            elif queue is not None:
-                queue.clear()
-
-    def count_queued_actions(self) -> int:
-        """Number of actions already computed and waiting to be served.
-
-        0 for a policy that keeps no action queue (never chunks) or whose queue is
-        currently empty (about to compute a fresh chunk). Reads the same queues
-        :meth:`drop_queued_actions` clears, named in :attr:`_action_queue_attrs`.
-        """
-        total = 0
-        for attr in self._action_queue_attrs:
-            queue = getattr(self, attr, None)
-            if isinstance(queue, dict):
-                action_queue = queue.get(ACTION)
-                total += len(action_queue) if action_queue is not None else 0
-            elif queue is not None:
-                total += len(queue)
-        return total
 
     def supports_rtc(self) -> bool:
         """Whether this policy implements Real-Time Chunking inference semantics."""
@@ -442,40 +408,20 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def chunk_inference_spec(self) -> ChunkPolicySpec:
-        """Declare the default current-observation chunk-serving author contract.
+        """How runners drive :meth:`predict_action_chunk`; the default reads the config.
 
-        Inheriting this implementation declares that ``predict_action_chunk`` does
-        every preparation needed by direct callers, accepts the complete current
-        observation, and returns ``[B, chunk_size, A]`` in model coordinates. Its
-        canonical processor pair must support whole chunks. ``n_action_steps`` is
-        the ordinary playback slice; RTC retains the full prediction horizon.
-
-        A policy requiring select_action-only preparation, other action layouts,
-        or temporal sampling must override this method and reject unsupported
-        configurations or provide a custom runner. Method presence or a successful
-        warmup is not evidence for this contract. Policy/processor state is allowed
-        only within an exclusive session and reset() must clear it for a new run.
+        Predicts ``chunk_size`` actions and executes ``n_action_steps`` of them (all when the
+        config has no ``n_action_steps``). Observation windows are never declared here: they
+        follow the config's ``inference_deltas`` (see :class:`~lerobot.policies.ChunkPolicySpec`).
+        Override to return another chunk length or to execute every chunk completely.
         """
         config = self.config
-        if config.n_obs_steps != 1:
-            raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
-        sampler = config.training_sampler
-        if not isinstance(sampler, FrameSampler) or any(
-            offsets != (0,) for offsets in sampler.deltas.observation.values()
-        ):
-            raise ValueError("Chunk inference cannot sample temporal history (training_sampler).")
-        if getattr(config, "temporal_ensemble_coeff", None) is not None:
-            raise ValueError("Chunk inference does not support temporal ensembling.")
-        if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
-            raise ValueError(
-                "Chunk inference cannot sample observation memory at the required control cadence."
-            )
         prediction_steps = getattr(config, "chunk_size", None)
         if not isinstance(prediction_steps, int) or prediction_steps <= 0:
             raise ValueError(
-                "The default chunk runner requires a positive chunk_size; provide a custom runner."
+                f"{type(self).__name__} has no positive chunk_size; override chunk_inference_spec()."
             )
-        execution_steps = getattr(config, "n_action_steps", prediction_steps)
+        execution_steps = getattr(config, "n_action_steps", None) or prediction_steps
         modes = [ExecutionMode.CHUNK]
         training_max_delay = int(getattr(config, "rtc_training_max_delay", 0))
         if self.supports_rtc():
@@ -484,7 +430,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 modes.append(ExecutionMode.RTC_TRAINED)
         return ChunkPolicySpec(
             prediction_steps=prediction_steps,
-            execution_steps=execution_steps,
+            execution_steps=min(execution_steps, prediction_steps),
             modes=tuple(modes),
             training_max_delay=training_max_delay,
         )
@@ -499,7 +445,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         The request rides on ``batch`` as complementary data (:data:`~lerobot.utils.constants.QUERY_KIND`
         / ``QUERY_TEXT``); a ``next_subtask`` reply is fed straight into ``set_task``, so it must be
         exactly one subtask, not a plan or a numbered list.  Returns the generated text, and must not
-        mutate action-producing state (queues, observation history).
+        mutate state kept between action calls.
         """
         raise NotImplementedError(
             f"{type(self).__name__} has no text head — it cannot answer questions or plan subtasks."
@@ -520,44 +466,33 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
-    ) -> Tensor | PolicyOutput:
-        """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Predict the next actions: the one inference entry point, batch in and batch out.
 
-        Child classes using action chunking should use this method within `select_action` to form the action chunk
-        cached for selection.
+        ``batch`` is the preprocessor's output, in the training layout: every observation
+        the config's ``inference_deltas`` declare arrives as ``[B, T, ...]`` with
+        ``{key}_is_pad`` (past executed commands as ``observation.action``), the others as the
+        current frame. Runners also put the sampling inputs there: ``noise`` (the starting
+        sample, shaped as the policy would draw it) and, for Real-Time Chunking, the previous
+        chunk's continuation (see :func:`rtc_inputs`). :meth:`chunk_inference_spec` sets the
+        chunk length ``H``.
 
-        A policy that supports a `noise` keyword starts its sampling from that tensor, shaped as the policy would
-        draw it. When `noise` is None, the policy draws it as usual.
+        Returns a `PolicyOutput`, the batch of what the policy produced:
 
-        May return a `PolicyOutput` carrying the chunk and its prediction, as for `select_action`.
-        """
-        raise NotImplementedError
+        - ``"action"``: the chunk ``[B, H, A]`` in model coordinates. The postprocessor turns
+          it into the command to execute (see `lerobot.processor.PolicyProcessorStep`).
+        - ``"prediction"`` (optional): what the policy expects or believes besides it, one value
+          per environment and one per chunk (a `PolicyPrediction`): predicted frames by the
+          observation key they predict, language by annotation style ("subtask", "plan",
+          "memory"), boxes (annotation VQA schema) by the camera they are drawn on. Frames
+          predicted for several actions of the chunk are stacked ``[B, F, C, H, W]`` with the
+          chunk index of each frame under ``"observation_steps"``. Predicting is opt-in through
+          a config field of the policy's choosing and must not change the actions; text that
+          should steer the policy goes through `generate_text`.
 
-    @abc.abstractmethod
-    def select_action(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
-    ) -> Tensor | PolicyOutput:
-        """Return one action to run in the environment (potentially in batch mode).
-
-        When the model uses a history of observations, or outputs a sequence of actions, this method deals
-        with caching.
-
-        Returns a bare action tensor, or a `PolicyOutput`: a batch, keyed like the input batch, holding
-        the action under ``"action"`` and what the policy expects or believes besides it under
-        ``"prediction"`` (a `PolicyPrediction`). The prediction is batched like the action, one value
-        per environment, and each entry is keyed by what it refers to: predicted frames by the
-        observation key they predict, language by annotation style ("subtask", "plan", "memory"),
-        boxes (annotation VQA schema) by the camera they are drawn on. Callers normalize the two
-        return types with `lerobot.processor.policy_output_to_transition`; `--display_data` shows
-        the prediction of the first environment.
-
-        A prediction holds values for this step: one spanning a chunk (e.g. an imagined clip) is
-        returned piece by piece, with the action each piece belongs to. Each entry stays displayed
-        until it is returned again. Predicting is opt-in through a config field of the policy's
-        choosing, and must not change the actions; text that should steer the policy goes
-        through `generate_text`.
+        Runners record observations, build these batches, call this method when the previous
+        chunk has executed and play the actions back; a policy never queues actions itself.
+        State a policy keeps between calls is cleared by :meth:`reset`.
         """
         raise NotImplementedError
 

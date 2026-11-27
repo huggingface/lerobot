@@ -16,7 +16,7 @@
 
 ``dataset_features["observation.state"]["names"]`` must equal ``ordered_action_keys``:
 ``send_next_action`` labels the action tensor positionally, and for relative actions
-``AbsoluteActionsProcessorStep`` adds the cached state positionally too.
+``AbsoluteActionsProcessorStep`` adds the batch's action anchor positionally too.
 
 These drive the real engines and ``send_next_action`` against a bimanual stub whose
 hardware order is the reverse of the checkpoint's, and are parameterized over the wiring
@@ -25,7 +25,6 @@ variants so the broken ones are reproduced rather than merely absent.
 
 from __future__ import annotations
 
-from collections import deque
 from types import SimpleNamespace
 
 import pytest
@@ -40,7 +39,6 @@ from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
-    bind_relative_anchor,
 )
 from lerobot.utils.feature_utils import (  # noqa: E402
     build_dataset_frame,
@@ -123,24 +121,15 @@ class _StubRelativePolicy:
         )
         self.observed_states: list[list[float]] = []
 
-    def predict_action_chunk(self, batch, **kwargs):
-        return self.select_action(batch).unsqueeze(1)
-
-    def select_action(self, batch, **kwargs):
-        state = batch["observation.state"]
-        self.observed_states.append(state.squeeze(0).tolist())
-        return torch.tensor([[_delta(i) for i in range(self.action_dim)]], dtype=torch.float32)
+    def predict_action_chunk(self, batch):
+        self.observed_states.append(batch["observation.state"].squeeze(0).tolist())
+        row = torch.tensor([[_delta(i) for i in range(self.action_dim)]], dtype=torch.float32)
+        return {"action": row.unsqueeze(1).expand(1, self.config.chunk_size, self.action_dim)}
 
     def reset(self):
         pass
 
-    # Borrow the real queue accounting rather than restate it: the relative-action step keys the
-    # anchor hold off ``count_queued_actions``, so a stub that answered it by hand could
-    # drift from ``PreTrainedPolicy`` and hide a wiring break. This policy keeps no queue
-    # attribute at all, so it reports 0 (fresh prediction every tick).
-    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
-    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
-    count_queued_actions = PreTrainedPolicy.count_queued_actions
+    # Borrow the real declaration rather than restate it.
     chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
 
     def supports_rtc(self):
@@ -159,32 +148,28 @@ class _AnchorPipeline:
         self._is_preprocessor = is_preprocessor
 
     def __call__(self, data):
-        from lerobot.lerobot_types import TransitionKey
+        from lerobot.processor import batch_to_transition, transition_to_batch
 
+        batch = dict(data)
         if self._is_preprocessor:
-            batch = dict(data)
             state = batch["observation.state"]
             if not isinstance(state, torch.Tensor):
                 state = torch.as_tensor(state, dtype=torch.float32)
             if state.ndim == 1:
                 state = state.unsqueeze(0)
             batch["observation.state"] = state
-            self._step({TransitionKey.OBSERVATION: batch})
-            return batch
-
-        transition = self._step({TransitionKey.ACTION: data})
-        return transition[TransitionKey.ACTION]
+        return transition_to_batch(self._step(batch_to_transition(batch)))
 
     def reset(self):
         pass
 
 
 def _make_pipelines():
-    """A wired relative/absolute pair, sharing the anchor by reference as in production."""
+    """A relative/absolute pair, passing the anchor through the batch as in production."""
     relative = RelativeActionsProcessorStep(
         enabled=True, exclude_joints=["gripper"], action_names=list(CKPT_ORDER)
     )
-    absolute = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative)
+    absolute = AbsoluteActionsProcessorStep(enabled=True)
     return (
         _AnchorPipeline(relative, is_preprocessor=True),
         _AnchorPipeline(absolute, is_preprocessor=False),
@@ -273,7 +258,6 @@ def _run_sync_tick(*, align_state, align_action, remap):
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
         task="fold the t-shirt",
         device="cpu",
         robot_type="bi_openarm_follower",
@@ -411,37 +395,24 @@ def test_sync_anchor_is_pinned_across_a_chunk():
     preprocessor, postprocessor = _make_pipelines()
 
     class _ChunkingPolicy(_StubRelativePolicy):
-        """Serves a 3-step chunk out of ``_action_queue``, the deque name the base class reads."""
-
-        chunk_len = 3
+        """Predicts 3-action chunks."""
 
         def __init__(self):
             super().__init__()
-            self._action_queue: deque[torch.Tensor] = deque()
+            self.config.chunk_size = self.config.n_action_steps = 3
             self.predictions = 0
 
-        def predict_action_chunk(self, batch, **kwargs):
+        def predict_action_chunk(self, batch):
             self.predictions += 1
-            self.observed_states.append(batch["observation.state"].squeeze(0).tolist())
-            row = torch.tensor([[_delta(i) for i in range(self.action_dim)]], dtype=torch.float32)
-            return row.unsqueeze(1).expand(1, self.chunk_len, self.action_dim)
-
-        def select_action(self, batch, **kwargs):
-            if not self._action_queue:
-                self._action_queue.extend(self.predict_action_chunk(batch).squeeze(0))
-            return self._action_queue.popleft().unsqueeze(0)
+            return super().predict_action_chunk(batch)
 
     policy = _ChunkingPolicy()
-    # The engine knows nothing about anchoring: the hold lives in
-    # ``RelativeActionsProcessorStep`` and is armed where a policy and its preprocessor are
-    # built together. ``build_rollout_context`` does this in production.
-    bind_relative_anchor(policy, preprocessor)
+    # The whole chunk is postprocessed against the state it was predicted from.
     engine = SyncInferenceEngine(
         policy=policy,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
         task="fold the t-shirt",
         device="cpu",
         robot_type="bi_openarm_follower",
@@ -541,37 +512,3 @@ def test_rtc_and_sync_agree_on_the_shipped_wiring():
     assert rtc_action_dict.keys() == sync_action_dict.keys()
     for joint in sync_action_dict:
         assert rtc_action_dict[joint] == pytest.approx(sync_action_dict[joint]), joint
-
-
-def test_sync_task_change_resets_the_postprocessor():
-    """Dropping a chunk must also rewind postprocessor steps that track a position in it"""
-    from lerobot.inference import SyncInferenceEngine
-
-    dataset_features, ordered_action_keys = _build_features(align_state=True, align_action=True)
-    preprocessor, postprocessor = _make_pipelines()
-    resets = []
-    original_reset = postprocessor.reset
-    postprocessor.reset = lambda: (resets.append(1), original_reset())[1]
-
-    policy = _StubRelativePolicy()
-    bind_relative_anchor(policy, preprocessor)
-    engine = SyncInferenceEngine(
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
-        task="fold the t-shirt",
-        device="cpu",
-        robot_type="bi_openarm_follower",
-    )
-
-    frame = build_dataset_frame(dataset_features, _observation(), "observation")
-    for _ in range(3):
-        engine.get_action(frame)
-    before = len(resets)
-
-    engine.set_task("pick up the mug")
-    engine.get_action(frame)
-
-    assert len(resets) == before + 1, "a task change must rewind the postprocessor"

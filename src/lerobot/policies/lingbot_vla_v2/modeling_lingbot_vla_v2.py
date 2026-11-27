@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -31,11 +30,19 @@ from transformers.cache_utils import Cache
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.constants import (
+    ACTION,
+    NOISE,
+    OBS_LANGUAGE_ATTENTION_MASK,
+    OBS_LANGUAGE_TOKENS,
+    OBS_STATE,
+    RTC_INFERENCE_DELAY,
+    RTC_PREV_CHUNK_LEFT_OVER,
+)
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import require_package
 
@@ -2030,7 +2037,7 @@ class DistillationTeachers:
 # ============================================================================
 # The classes above are vendored/adapted from the upstream LingBot-VLA 2.0 repo
 # (Robbyant/lingbot-vla-v2). The wrapper below exposes them through LeRobot's
-# ``PreTrainedPolicy`` interface (train ``forward`` + rolling ``select_action``),
+# ``PreTrainedPolicy`` interface (train ``forward`` + ``predict_action_chunk``),
 # mirroring the v1 ``lingbot_vla`` policy. The LeRobot dataclass config carries
 # every field ``FlowMatchingV2`` reads, so it is passed straight through.
 
@@ -2091,10 +2098,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         model = getattr(self, "model", None)
         if model is not None:
             model.rtc_processor = self.rtc_processor
-
-    def reset(self):
-        """Reset the rolling action queue used by select_action."""
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> list[dict]:
         """Param groups with a separate LR for the MoE experts (standard AdamW).
@@ -2244,13 +2247,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         return True
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict,
-        noise: Tensor | None = None,
-        inference_delay: int = 0,
-        prev_chunk_left_over: Tensor | None = None,
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """Run flow-matching denoising and return the canonical action chunk (B, chunk, max_action_dim).
 
         The output stays in the normalized canonical space; the policy postprocessor
@@ -2262,6 +2259,9 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         execution horizon); ``inference_delay`` is the chunk's reaction lag in action
         steps. Passing ``None`` (default) reproduces the plain unguided sampling.
         """
+        noise = batch.get(NOISE)
+        inference_delay = batch.get(RTC_INFERENCE_DELAY, 0)
+        prev_chunk_left_over = batch.get(RTC_PREV_CHUNK_LEFT_OVER)
         self.eval()
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
         actions = self.model.sample_actions(
@@ -2275,14 +2275,4 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             inference_delay=inference_delay,
             prev_chunk_left_over=prev_chunk_left_over,
         )
-        return actions
-
-    @torch.no_grad()
-    def select_action(self, batch: dict, noise: Tensor | None = None) -> Tensor:
-        """Select a single action for environment execution, buffering chunks in a queue."""
-        self.eval()
-        self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-        if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
-        return self._queues[ACTION].popleft()
+        return PolicyOutput(action=actions)

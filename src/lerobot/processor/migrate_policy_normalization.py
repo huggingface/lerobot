@@ -725,10 +725,10 @@ preprocessor = PolicyProcessorPipeline.from_pretrained("your-model-repo", config
 postprocessor = PolicyProcessorPipeline.from_pretrained("your-model-repo", config_filename="postprocessor_config.json")
 policy = get_policy_class("your-policy-type").from_pretrained("your-model-repo")
 
-# Process data through the pipeline
+# Process data through the pipeline: batch in, batch out at every stage
 processed_batch = preprocessor(raw_batch)
-action = policy(processed_batch)
-final_action = postprocessor(action)
+predicted = policy.predict_action_chunk(processed_batch)
+final_action = postprocessor({**processed_batch, **predicted})["action"]
 ```
 
 *Generated automatically by the LeRobot policy migration script*"""

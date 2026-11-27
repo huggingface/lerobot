@@ -31,13 +31,11 @@ from .converters import (
     identity_transition,
     observation_to_transition,
     policy_action_to_transition,
-    policy_output_to_transition,
     robot_action_observation_to_transition,
     robot_action_to_transition,
     transition_to_batch,
     transition_to_observation,
     transition_to_policy_action,
-    transition_to_prediction,
     transition_to_robot_action,
 )
 from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorToDeltaActionDictStep
@@ -96,10 +94,11 @@ from .policy_robot_bridge import (
     PolicyActionToRobotActionProcessorStep,
     RobotActionToPolicyActionProcessorStep,
 )
+from .policy_step import PolicyProcessorStep, make_inference_pipeline
 from .relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
-    bind_relative_anchor,
+    shift_actions,
     to_absolute_actions,
     to_relative_actions,
 )
@@ -119,12 +118,10 @@ __all__ = [
     "identity_transition",
     "observation_to_transition",
     "policy_action_to_transition",
-    "policy_output_to_transition",
     "robot_action_observation_to_transition",
     "robot_action_to_transition",
     "transition_to_observation",
     "transition_to_policy_action",
-    "transition_to_prediction",
     "transition_to_robot_action",
     "DeviceProcessorStep",
     "DoneProcessorStep",
@@ -149,8 +146,10 @@ __all__ = [
     "make_default_robot_observation_processor",
     "make_policy_processor_pipelines",
     "AbsoluteActionsProcessorStep",
+    "PolicyProcessorStep",
     "RelativeActionsProcessorStep",
-    "bind_relative_anchor",
+    "make_inference_pipeline",
+    "shift_actions",
     "MapDeltaActionToRobotActionStep",
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",

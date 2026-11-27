@@ -25,7 +25,8 @@ from safetensors.torch import load_file, load_model
 from torch import Tensor
 from torch.nn import functional
 
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.pretrained import PreTrainedPolicy, rtc_inputs
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
 
@@ -45,8 +46,6 @@ class NATVLAPolicy(PreTrainedPolicy):
     config_class = NATVLAConfig
     name = "nat_vla"
     _fsdp_wrap_modules = ["Lfm2DecoderLayer", "Siglip2EncoderLayer"]
-    _stream: "ActionStreamHook | None"
-    _next_stream: "ActionStreamHook | None"
 
     def __init__(self, config: NATVLAConfig, **kwargs: Any) -> None:
         require_package("transformers", extra="nat_vla")
@@ -73,12 +72,6 @@ class NATVLAPolicy(PreTrainedPolicy):
         tokenizer = self.action_tokenizer
         if config.chunk_size != tokenizer.time_horizon:
             raise ValueError(f"chunk_size must be the NAT tokenizer's time horizon, {tokenizer.time_horizon}")
-        if config.rtc_steps and config.rtc_steps not in tokenizer.prefix_token_counts:
-            raise ValueError(
-                f"rtc_steps must be one of {sorted(tokenizer.prefix_token_counts)} (whole latents)"
-            )
-        if config.rtc_steps and self.action_dim > tokenizer.group_width:
-            raise ValueError(f"rtc_steps needs actions of at most {tokenizer.group_width} columns")
 
         starts_from_pretrained = config.vlm_config is None and config.pretrained_path is None
         if config.vlm_config is None:
@@ -110,14 +103,6 @@ class NATVLAPolicy(PreTrainedPolicy):
     @property
     def device(self) -> torch.device:
         return self.vlm.device
-
-    def reset(self) -> None:
-        for stream in (getattr(self, "_stream", None), getattr(self, "_next_stream", None)):
-            if stream is not None:
-                stream.thread.join()
-
-        self._stream = self._next_stream = None
-        self._chunk_step = self._chunk_end_step = 0
 
     def supports_rtc(self) -> bool:
         """Real-time chunking through the tokens: the executing actions start the next chunk as a token prefix."""
@@ -170,18 +155,14 @@ class NATVLAPolicy(PreTrainedPolicy):
         return cross_entropy + z_loss, {"cross_entropy": cross_entropy.item(), "z_loss": z_loss.item()}
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self,
-        batch: dict[str, Tensor],
-        steps: int | None = None,
-        inference_delay: int | None = None,
-        prev_chunk_left_over: Tensor | None = None,
-    ) -> Tensor:
-        """Actions for the first `steps` steps (the whole chunk by default), rounded up to whole NAT latents. With
-        real-time chunking, the chunk starts with the tokens of the previous chunk's actions that run during
-        inference_delay steps, rounded up to whole latents."""
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> PolicyOutput:
+        """The chunk's `chunk_size` actions, generated as whole NAT latents. With real-time chunking (the
+        batch's RTC inputs), the chunk starts with the tokens of the previous chunk's actions that run during
+        the inference delay, rounded up to whole latents."""
         tokenizer = self.action_tokenizer
-        steps = tokenizer.token_count(steps or self.config.chunk_size, self.action_dim)[1]
+        rtc = rtc_inputs(batch)
+        inference_delay, prev_chunk_left_over = rtc.get("inference_delay"), rtc.get("prev_chunk_left_over")
+        steps = tokenizer.token_count(self.config.chunk_size, self.action_dim)[1]
         executing_actions = None
         if inference_delay and prev_chunk_left_over is not None and self.supports_rtc():
             left_over = prev_chunk_left_over.reshape(-1, *prev_chunk_left_over.shape[-2:])
@@ -193,34 +174,8 @@ class NATVLAPolicy(PreTrainedPolicy):
         stream.thread.join()
         if stream.error is not None:
             raise stream.error
-        return tokenizer.decode(stream.decoder.tokens, self.action_dim)[:, :steps]
-
-    @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """The next action of the streamed chunk; a new chunk starts every n_action_steps actions. With
-        rtc_steps, the next chunk is generated while the current chunk's last rtc_steps actions run, starting
-        with their tokens."""
-        steps_per_chunk, rtc_steps = self.config.n_action_steps, self.config.rtc_steps
-        if self._stream is None or self._chunk_step == self._chunk_end_step:
-            if self._stream is None or self._next_stream is None:
-                self.reset()
-                self._stream = self.stream_action_chunk(batch, steps_per_chunk)
-            else:
-                self._stream.thread.join()
-                self._stream, self._next_stream, self._chunk_step = self._next_stream, None, rtc_steps
-            self._chunk_end_step = self._chunk_step + steps_per_chunk
-        stream = self._stream
-
-        if rtc_steps and self._chunk_step == self._chunk_end_step - rtc_steps:
-            executing_steps = range(self._chunk_step, self._chunk_end_step)
-            executing_actions = torch.stack([stream.action(step) for step in executing_steps], 1)
-            stream.thread.join()
-            self._next_stream = self.stream_action_chunk(
-                batch, rtc_steps + steps_per_chunk, executing_actions
-            )
-
-        self._chunk_step += 1
-        return stream.action(self._chunk_step - 1)
+        actions = tokenizer.decode(stream.decoder.tokens, self.action_dim)[:, : self.config.chunk_size]
+        return PolicyOutput(action=actions)
 
     def stream_action_chunk(
         self, batch: dict[str, Tensor], steps: int, executing_actions: Tensor | None = None

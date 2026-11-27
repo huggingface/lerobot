@@ -22,6 +22,7 @@ frozen parts and the same observations, and require bitwise equal commands.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,7 @@ import pytest
 import torch
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.praxis.configuration_praxis import (
     PRAXIS_ACTION_DIM,
@@ -190,7 +192,7 @@ def test_processors_are_identity(tmp_path: Path) -> None:
         None
     ]
     want = pose12_grip_to_droid7(command[0, :12].numpy(), 0.25)
-    np.testing.assert_array_equal(post(command)[0].numpy(), want)
+    np.testing.assert_array_equal(post({ACTION: command})[ACTION][0].numpy(), want)
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     assert (tmp_path / "policy_preprocessor.json").is_file()
@@ -262,8 +264,8 @@ def test_pose_round_trips() -> None:
 
 
 @pytest.mark.parametrize("antialias", [False, True])
-def test_select_action_matches_the_praxis_session_bitwise(antialias: bool) -> None:
-    """The LeRobot glue (images, poses, history, seeds) gives the praxis commands, bit for bit.
+def test_inference_matches_the_praxis_session_bitwise(antialias: bool) -> None:
+    """The LeRobot glue (images, poses, fed-back frames, seeds) gives the praxis commands, bit for bit.
 
     With `video.antialias` (`praxis-1-droid`) the preprocessor makes the tiles with the fit rule and the policy
     feeds them to the session as they are; the praxis session gets the raw frames.
@@ -282,16 +284,14 @@ def test_select_action_matches_the_praxis_session_bitwise(antialias: bool) -> No
         control_mode="none",
         exec_horizon=24,
     )  # type: ignore[arg-type]
-    pre, post = make_pre_post_processors(policy.config, None)
+    engine = SyncInferenceEngine(policy, *make_pre_post_processors(policy.config, None))
     observations: list[dict] = []
-    policy.reset()
+    engine.reset()
     actions: list[torch.Tensor] = []
     for step in range(22):  # 21 rows of the first chunk, then the first row of the second
         obs = fake_observation(step, image_shape=image_shape)
         observations.append(obs)
-        command = policy.select_action(pre(obs))
-        assert command.shape == (1, PRAXIS_COMMAND_DIM)
-        actions.append(post(command)[0])
+        actions.append(engine.step(obs, float(step))[0])
     # Chunk 0 (cold start, 21 rows) and chunk 1 (depth 1, 24 rows) through the praxis session.
     res0 = reference.step(_reference_obs(observations[:1]))
     res1 = reference.step(_reference_obs(observations[:22]))
@@ -306,7 +306,7 @@ def test_select_action_matches_the_praxis_session_bitwise(antialias: bool) -> No
         np.testing.assert_array_equal(got.numpy(), want, err_msg=f"step {step}")
     session = policy.sessions()[0]
     assert session is not None and session.state.stream.depth == 1
-    assert policy.count_queued_actions() == 23
+    assert engine.queued_actions == 23
 
 
 def test_scene_seed_selects_the_sampler_seed() -> None:
@@ -314,12 +314,12 @@ def test_scene_seed_selects_the_sampler_seed() -> None:
     policy.reset()
     obs = fake_observation(0)
     obs[OBS_SCENE_SEED] = torch.tensor([[3.0]])
-    first_seeded = policy.select_action(obs)[0].clone()
+    first_seeded = policy.predict_action_chunk(obs)[ACTION][0].clone()
     session = policy.sessions()[0]
     assert session is not None and session.seed == policy.config.seed + policy.config.seed_stride * 3
     policy.reset()
     obs.pop(OBS_SCENE_SEED)
-    first_unseeded = policy.select_action(obs)[0]
+    first_unseeded = policy.predict_action_chunk(obs)[ACTION][0]
     assert policy.sessions()[0].seed == policy.config.seed  # type: ignore[union-attr]
     assert not torch.equal(first_seeded, first_unseeded)
 
@@ -331,49 +331,31 @@ def test_batched_environments_match_single_runs() -> None:
         policy.reset()
         obs = fake_observation(0, seed=env)
         obs[OBS_SCENE_SEED] = torch.tensor([[float(env)]])
-        single.append(policy.select_action(obs)[0])
+        single.append(policy.predict_action_chunk(obs)[ACTION][0])
     policy.reset()
     a, b = fake_observation(0, seed=0), fake_observation(0, seed=1)
     batch = {k: torch.cat([a[k], b[k]]) if isinstance(a[k], torch.Tensor) else a[k] + b[k] for k in a}
     batch[OBS_SCENE_SEED] = torch.tensor([[0.0], [1.0]])
-    out = policy.select_action(batch)
-    assert out.shape == (2, PRAXIS_COMMAND_DIM)
+    out = policy.predict_action_chunk(batch)[ACTION]
+    assert out.shape == (2, 21, PRAXIS_COMMAND_DIM)
     assert torch.equal(out[0], single[0]) and torch.equal(out[1], single[1])
 
 
 def test_short_execution_horizon_is_stateless() -> None:
     policy = make_tiny_policy(seed=4, n_action_steps=8)
     policy.reset()
-    for step in range(9):
-        policy.select_action(fake_observation(step))
+    assert policy.predict_action_chunk(fake_observation(0))[ACTION].shape == (1, 8, PRAXIS_COMMAND_DIM)
+    policy.predict_action_chunk(_stack_of(range(1, 9)))
     session = policy.sessions()[0]
     assert session is not None and session.state.stateless
     assert session.state.stream.depth == 0
 
 
-def test_predict_action_chunk_pads_the_first_chunk() -> None:
+def test_the_first_chunk_of_a_window_has_21_commands() -> None:
     policy = make_tiny_policy(seed=5)
     policy.reset()
-    chunk = policy.predict_action_chunk(fake_observation(0))
-    assert chunk.shape == (1, 24, PRAXIS_COMMAND_DIM)
-    assert torch.equal(chunk[0, 20], chunk[0, 23])  # 21 real rows, padded with the last one
-
-
-def test_reset_and_drop_queued_actions() -> None:
-    policy = make_tiny_policy(seed=6)
-    policy.reset()
-    policy.select_action(fake_observation(0))
-    assert policy.count_queued_actions() == 20
-    session = policy.sessions()[0]
-    assert session is not None and session.state.restart_count == 0
-    policy.drop_queued_actions()
-    assert policy.count_queued_actions() == 0
-    assert session.state.restart_count == 1  # the chunk was cut short: the next call is a cold start
-    policy.select_action(fake_observation(1))
-    assert policy.count_queued_actions() == 20 and session.state.stream.depth == 0
-    policy.drop_queued_actions()
-    policy.drop_queued_actions()  # nothing queued: nothing to restart
-    assert session.state.restart_count == 2
+    assert policy.predict_action_chunk(fake_observation(0))[ACTION].shape == (1, 21, PRAXIS_COMMAND_DIM)
+    assert policy.predict_action_chunk(_stack_of(range(1, 22)))[ACTION].shape == (1, 24, PRAXIS_COMMAND_DIM)
     policy.reset()
     assert policy.sessions() == []
 
@@ -381,11 +363,12 @@ def test_reset_and_drop_queued_actions() -> None:
 def test_return_prediction_gives_frames_for_both_cameras() -> None:
     policy = make_tiny_policy(seed=7, return_prediction=True)
     policy.reset()
-    out = policy.select_action(fake_observation(0))
-    assert isinstance(out, dict) and ACTION in out and "prediction" in out
+    out = policy.predict_action_chunk(fake_observation(0))
+    assert out[ACTION].shape == (1, 21, PRAXIS_COMMAND_DIM)
+    assert out["prediction"]["observation_steps"] == list(range(21))  # a predicted frame per command
     frames = out["prediction"]["observation"]
     assert set(frames) == {"observation.images.exterior", "observation.images.wrist"}
-    assert frames["observation.images.exterior"].shape[1:] == (3, 32, 64)
+    assert frames["observation.images.exterior"].shape == (1, 21, 3, 32, 64)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +402,7 @@ def test_convert_and_load_pretrained(tmp_path: Path) -> None:
     loaded.vae, loaded.text_encoder = FakeAutoencoder(), FakeTextEncoder()
     policy.reset(), loaded.reset()
     obs = fake_observation(0)
-    assert torch.equal(policy.select_action(obs), loaded.select_action(obs))
+    assert torch.equal(policy.predict_action_chunk(obs)[ACTION], loaded.predict_action_chunk(obs)[ACTION])
 
 
 def _load_without_frozen_parts(path: Path) -> PraxisPolicy:
@@ -448,7 +431,7 @@ def test_save_pretrained_writes_shards_that_load_back(
     loaded.vae, loaded.text_encoder = FakeAutoencoder(), FakeTextEncoder()
     policy.reset(), loaded.reset()
     obs = fake_observation(3)
-    assert torch.equal(policy.select_action(obs), loaded.select_action(obs))
+    assert torch.equal(policy.predict_action_chunk(obs)[ACTION], loaded.predict_action_chunk(obs)[ACTION])
 
 
 def test_from_pretrained_leaves_the_weights_trainable_and_honours_strict(
@@ -625,61 +608,55 @@ def test_one_instruction_row_serves_every_environment() -> None:
     batch["task"] = "Pick up the red cube."  # one string for two environments
     batch[OBS_LANGUAGE_TOKENS] = torch.tensor([[11, 12, 13, 0]])
     batch[OBS_LANGUAGE_ATTENTION_MASK] = torch.tensor([[True, True, True, False]])
-    out = policy.select_action(batch)
-    assert out.shape == (2, PRAXIS_COMMAND_DIM)
+    out = policy.predict_action_chunk(batch)[ACTION]
+    assert out.shape == (2, 21, PRAXIS_COMMAND_DIM)
     assert all(env.text is not None for env in policy.sessions())
     assert torch.equal(policy.sessions()[0].text, policy.sessions()[1].text)
 
 
-def test_predict_action_chunk_takes_the_executed_frames_as_a_stack() -> None:
-    """A caller that executes whole chunks hands over the executed frames as a stack; the next
-    chunk then equals the one of a call-per-frame rollout (same history, same context)."""
-    policy = make_tiny_policy(seed=7)
-    policy.reset()
-    rows = [policy.select_action(fake_observation(s))[0] for s in range(45)]  # chunk 0: 21 rows, chunk 1: 24
-    chunked = make_tiny_policy(seed=7)
-    chunked.reset()
-    first = chunked.predict_action_chunk(fake_observation(0))[0]
-    assert torch.equal(first[:21], torch.stack(rows[:21]))
-    since = [fake_observation(s) for s in range(1, 22)]  # the observations since the first call
-    stack = {
+def _stack_of(steps: Iterable[int]) -> dict:
+    """The observations of ``steps`` as one ``(1, T, ...)`` stack, oldest first."""
+    since = [fake_observation(s) for s in steps]
+    return {
         key: torch.stack([obs[key][0] for obs in since])[None] if isinstance(value, torch.Tensor) else value
         for key, value in since[0].items()
     }
-    second = chunked.predict_action_chunk(stack)[0]
-    assert torch.equal(second, torch.stack(rows[21:45]))
-    assert chunked.sessions()[0].state.stream.depth == 1  # the context carried over
+
+
+def test_predict_action_chunk_takes_the_executed_frames_as_a_stack() -> None:
+    """The runner feeds back the observation after every executed command: the chunks it plays
+    equal those of chunk calls handed the executed frames as a stack (same history, same context)."""
+    policy = make_tiny_policy(seed=7)
+    pre, post = make_pre_post_processors(policy.config, None)
+    engine = SyncInferenceEngine(policy, pre, post)
+    engine.reset()
+    played = torch.stack([engine.step(fake_observation(s), float(s)) for s in range(45)], 1)
+    assert policy.sessions()[0].state.stream.depth == 1  # the context carried over
+    chunked = make_tiny_policy(seed=7)
+    chunked.reset()
+    first = chunked.predict_action_chunk(pre(fake_observation(0)))[ACTION]
+    # chunk 0: 21 rows, then the 21 observations after them; chunk 1: 24 rows
+    second = chunked.predict_action_chunk(pre(_stack_of(range(1, 22))))[ACTION]
+    assert torch.equal(played, post({ACTION: torch.cat([first, second], 1)})[ACTION])
+    assert chunked.sessions()[0].state.stream.depth == 1
     # the state of every frame is needed with a frame stack
-    bad = dict(stack, **{OBS_STATE: stack[OBS_STATE][:, :3]})
+    bad = _stack_of(range(22, 46))
+    bad[OBS_STATE] = bad[OBS_STATE][:, :3]
     with pytest.raises(ValueError, match="state of every frame"):
         chunked.predict_action_chunk(bad)
 
 
-def test_predict_action_chunk_drops_the_frames_of_the_padded_rows() -> None:
-    """The first chunk of a window has 21 real commands, padded to 24 with the last one. A caller
-    that executes all 24 rows and hands over the 24 frames gets the chunk of a caller that executed
-    the 21 real ones: the frames of the padded rows would shift the context by 3 frames."""
-
-    def stack_of(steps: range) -> dict:
-        since = [fake_observation(s) for s in steps]
-        return {
-            key: torch.stack([obs[key][0] for obs in since])[None]
-            if isinstance(value, torch.Tensor)
-            else value
-            for key, value in since[0].items()
-        }
-
+def test_predict_action_chunk_keeps_the_frames_after_the_commands_of_the_chunk() -> None:
+    """The first chunk of a window has 21 commands. Runners hand over the last 24 frames: the 21
+    after the commands are context, the 3 before them would shift the context by 3 frames."""
     chunks = []
-    for executed in (21, 24):
+    for steps in (range(1, 22), [97, 98, 99, *range(1, 22)]):
         policy = make_tiny_policy(seed=7)
         policy.reset()
         policy.predict_action_chunk(fake_observation(0))
-        chunks.append(policy.predict_action_chunk(stack_of(range(1, executed + 1)))[0])
+        chunks.append(policy.predict_action_chunk(_stack_of(steps))[ACTION][0])
         assert policy.sessions()[0].state.stream.depth == 1
-        # the second chunk has 24 real rows: 24 frames after it are all context
-        chunks.append(policy.predict_action_chunk(stack_of(range(executed + 1, executed + 25)))[0])
-    assert torch.equal(chunks[0], chunks[2])
-    assert not torch.equal(chunks[1], chunks[3])  # the frames differ (steps 22-45 against 25-48)
+    assert torch.equal(chunks[0], chunks[1])
 
 
 def test_tokenizer_step_strips_the_instruction() -> None:
@@ -725,10 +702,10 @@ def test_token_rows_must_be_one_or_one_per_environment() -> None:
     batch["task"] = ["a", "b", "c"]
     batch[OBS_LANGUAGE_TOKENS] = torch.tensor([[11, 12], [13, 14]])  # two rows for three environments
     with pytest.raises(ValueError, match="one row per environment"):
-        policy.select_action(batch)
+        policy.predict_action_chunk(batch)
     batch[OBS_LANGUAGE_TOKENS] = torch.tensor([[11, 12]]).expand(3, 2, 2)  # a stacked (B, T, L) tensor
     with pytest.raises(ValueError, match="must be \\(rows, length\\)"):
-        policy.select_action(batch)
+        policy.predict_action_chunk(batch)
 
 
 def test_config_rejects_bad_seeds_and_time_grid() -> None:

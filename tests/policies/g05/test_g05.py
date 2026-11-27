@@ -68,13 +68,16 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
+    TransitionKey,
 )
 from lerobot.processor.converters import create_transition
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_ANCHOR,
     MESSAGES_RENDERED,
     OBS_STATE,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
+    PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
 )
@@ -515,28 +518,9 @@ def test_libero_runtime_executes_ten_step_window_and_binarizes_gripper():
     policy_action = torch.zeros(5, 20)
     policy_action[:, 19] = torch.tensor([0.0, 0.5, 1.0, -0.2, 1.2])
 
-    env_action = postprocessor(policy_action)
+    env_action = postprocessor({ACTION: policy_action})[ACTION]
 
     torch.testing.assert_close(env_action[:, -1], torch.tensor([1.0, 1.0, -1.0, 1.0, -1.0]))
-
-
-def test_select_action_discards_tail_beyond_execution_window():
-    config = _config(n_action_steps=2)
-    policy = G05Policy(config, backend=TinyG05Backend())
-    calls = 0
-
-    def predict_action_chunk(batch, **kwargs):
-        nonlocal calls
-        calls += 1
-        return torch.full((1, 4, 20), float(calls))
-
-    policy.predict_action_chunk = predict_action_chunk
-    batch = _policy_batch()
-
-    assert policy.select_action(batch)[0, 0].item() == 1
-    assert policy.select_action(batch)[0, 0].item() == 1
-    assert policy.select_action(batch)[0, 0].item() == 2
-    assert calls == 2
 
 
 def test_libero_projection_mask_and_inverse_roundtrip():
@@ -559,7 +543,7 @@ def test_libero_projection_mask_and_inverse_roundtrip():
     assert processed["action_dim_is_pad"].sum() == 13
     assert torch.equal(processed["action_op_mask"], ~processed["action_dim_is_pad"])
     assert torch.equal(processed[ACTION][:, [10, 11, 12, 13, 14, 15, 19]], raw_action)
-    restored = postprocessor(processed[ACTION])
+    restored = postprocessor({ACTION: processed[ACTION]})[ACTION]
     assert torch.equal(restored, raw_action)
 
 
@@ -658,7 +642,7 @@ def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_p
         }
     )
     assert torch.isfinite(processed[ACTION]).all()
-    torch.testing.assert_close(postprocessor(processed[ACTION]), torch.zeros(4, 7))
+    torch.testing.assert_close(postprocessor({ACTION: processed[ACTION]})[ACTION], torch.zeros(4, 7))
 
     step_q01 = torch.arange(4, dtype=torch.float32).view(4, 1).expand(4, 7)
     step_stats = {
@@ -666,12 +650,10 @@ def test_stepwise_quantiles_constant_dimension_are_finite_and_serializable(tmp_p
         ACTION: {"q01": step_q01, "q99": step_q01 + 2},
     }
     _, stepwise_postprocessor = make_pre_post_processors(config, dataset_stats=step_stats)
-    normalized_action = torch.zeros(1, config.policy_action_dim)
-    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
-    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.full((1, 7), 2.0))
-    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
-    stepwise_postprocessor.reset()
-    torch.testing.assert_close(stepwise_postprocessor(normalized_action), torch.ones(1, 7))
+    # Runners postprocess whole chunks: each timestep is unnormalized with its own stats.
+    normalized_chunk = torch.zeros(1, 4, config.policy_action_dim)
+    expected = (torch.arange(4, dtype=torch.float32) + 1).view(1, 4, 1).expand(1, 4, 7)
+    torch.testing.assert_close(stepwise_postprocessor({ACTION: normalized_chunk})[ACTION], expected)
 
     preprocessor.save_pretrained(tmp_path)
     loaded = PolicyProcessorPipeline.from_pretrained(
@@ -1408,7 +1390,7 @@ def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     batch["task"] = [" first\n", "第二个 task"]
 
     prepared = _prepared_policy_batch(policy, batch)
-    action = policy.predict_action_chunk(prepared)
+    action = policy.predict_action_chunk(prepared)[ACTION]
 
     assert action.shape == (2, 4, 20)
     assert [sample["command"] for sample in backend.last_samples] == batch["task"]
@@ -2006,19 +1988,13 @@ def _bbox_target(label: str, xyxy: list[float]) -> str:
 
 
 def test_system2_chunk_carries_the_cot_subtask_and_boxes_on_the_bbox_camera():
-    from lerobot.processor import (
-        policy_output_to_transition,
-        transition_to_policy_action,
-        transition_to_prediction,
-    )
-
     policy = _policy_with_cot(f"{_bbox_target('cube', [0.25, 0.5, 0.75, 0.875])}|Subtask: grasp the cup")
 
-    step = policy_output_to_transition(policy.predict_action_chunk({}))
+    output = policy.predict_action_chunk({})
 
-    assert transition_to_policy_action(step).shape == (1, 4, 20)
+    assert output[ACTION].shape == (1, 4, 20)
     camera = policy.config.bbox_camera
-    assert transition_to_prediction(step) == {
+    assert output[PREDICTION] == {
         "language": {"subtask": ["grasp the cup"]},
         "boxes": {camera: [{"detections": [{"label": "cube", "bbox": [0.25, 0.5, 0.75, 0.875]}]}]},
     }
@@ -2044,58 +2020,20 @@ def test_system2_prediction_has_one_value_per_env():
     }
 
 
-def test_system2_cot_without_fields_returns_a_bare_chunk():
-    assert isinstance(_policy_with_cot("I see a table.").predict_action_chunk({}), torch.Tensor)
+def test_system2_cot_without_fields_returns_the_chunk_alone():
+    assert _policy_with_cot("I see a table.").predict_action_chunk({}).keys() == {ACTION}
 
 
-def test_system1_chunk_is_a_bare_tensor():
-    assert isinstance(_policy_with_cot().predict_action_chunk({}), torch.Tensor)
-
-
-def test_select_action_returns_the_prediction_with_the_first_action_of_a_chunk():
-    policy = _policy_with_cot("Subtask: grasp the cup")
-
-    first, second = policy.select_action({}), policy.select_action({})
-
-    assert first["action"].shape == (1, 20)
-    assert first["prediction"] == {"language": {"subtask": ["grasp the cup"]}}
-    assert isinstance(second, torch.Tensor)
-
-
-def test_relative_anchor_is_held_while_a_chunk_is_in_flight():
-    """Re-anchoring mid-chunk accumulates commands and jumps at the chunk seam.
-
-    Each action in a chunk is a delta from the state observed when the chunk was
-    predicted. The preprocessor runs every tick, so without the in-flight guard the
-    anchor follows the robot and every delta is added to the position the previous
-    action already reached.
-    """
-    from lerobot.processor.relative_action_processor import to_absolute_actions
-
-    step = G05RelativeJointActionsStep(enabled=True)
-    queued = {"n": 0}
-    step.bind_action_queue(lambda: queued["n"])
-
-    position = torch.zeros(1, 6)
-    delta = torch.full((1, 6), 1.0)
-    commanded = []
-    for _ in range(9):
-        step(create_transition(observation={OBS_STATE: position}))
-        if queued["n"] == 0:  # select_action refills the queue
-            queued["n"] = 4
-        position = to_absolute_actions(delta, step.get_cached_state(), step._build_mask(6))
-        queued["n"] -= 1
-        commanded.append(position[0, 0].item())
-
-    # One step per chunk, not a per-tick ramp.
-    assert commanded == [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0]
+def test_system1_returns_the_chunk_alone():
+    assert _policy_with_cot().predict_action_chunk({}).keys() == {ACTION}
 
 
 def test_relative_anchor_uses_the_last_proprio_history_step():
     step = G05RelativeJointActionsStep(enabled=True, num_obs_steps=3)
     history = torch.stack([torch.full((6,), float(i)) for i in (1, 2, 3)])
-    step(create_transition(observation={OBS_STATE: history}))
-    assert torch.equal(step.get_cached_state(), torch.full((6,), 3.0))
+    transition = step(create_transition(observation={OBS_STATE: history}))
+    anchor = transition[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR]
+    assert torch.equal(anchor, torch.full((6,), 3.0))
 
 
 class _CharTokenizer:

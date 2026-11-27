@@ -37,6 +37,7 @@ from lerobot.policies.nat_vla.processor_nat_vla import (  # noqa: E402
     NATVLATokenizerProcessorStep,
     vlm_config_of,
 )
+from lerobot.utils.constants import ACTION, RTC_INFERENCE_DELAY, RTC_PREV_CHUNK_LEFT_OVER  # noqa: E402
 
 # A small NAT tokenizer with the released tokenizer's token layout.
 TOKENIZER = {
@@ -256,35 +257,14 @@ def test_tokens_of_fully_padded_latents_are_not_trained(policy, preprocessor):
         assert policy.forward({**batch, "action_is_pad": padded_after_step_10})[0] != policy.forward(batch)[0]
 
 
-def test_predicted_chunks_and_queued_actions(policy, preprocessor):
-    batch = preprocessor(observations())
-    assert policy.predict_action_chunk(batch).shape == (2, 32, 7)
-    assert policy.predict_action_chunk(batch, steps=8).shape == (2, 8, 7)
-    policy.config.n_action_steps = 8
-    policy.reset()
-    actions = [policy.select_action(batch) for _ in range(9)]
-    policy.config.n_action_steps = 32
-    policy.reset()
-    assert all(action.shape == (2, 7) for action in actions) and not torch.equal(actions[7], actions[8])
+def test_predicted_chunks(policy, preprocessor):
+    assert policy.predict_action_chunk(preprocessor(observations()))[ACTION].shape == (2, 32, 7)
 
 
 def test_predicting_keeps_the_training_mode(policy, preprocessor):
     policy.train()
-    policy.predict_action_chunk(preprocessor(observations()), steps=8)
+    policy.predict_action_chunk(preprocessor(observations()))
     assert policy.training and policy.vlm.training
-
-
-def test_streamed_actions_equal_the_predicted_chunk(policy, preprocessor):
-    batch = preprocessor(observations())
-    policy.config.n_action_steps = 10
-    policy.reset()
-    try:
-        streamed = torch.stack([policy.select_action(batch) for _ in range(11)], 1)
-    finally:
-        policy.config.n_action_steps = 32
-        policy.reset()
-    chunk = policy.predict_action_chunk(batch, steps=10)
-    assert torch.equal(streamed[:, :10], chunk[:, :10]) and torch.equal(streamed[:, 10], chunk[:, 0])
 
 
 class StepCountingDecoder:
@@ -343,33 +323,15 @@ def generation_prompts(policy):
     return prompts
 
 
-def test_executing_actions_start_the_next_chunk_through_their_tokens(policy, preprocessor):
-    batch = preprocessor(observations())
-    prompts = generation_prompts(policy)
-    policy.config.n_action_steps, policy.config.rtc_steps = 8, 8
-    policy.reset()
-    try:
-        actions = torch.stack([policy.select_action(batch) for _ in range(16)], 1)
-    finally:
-        del policy.vlm.generate
-        policy.config.n_action_steps, policy.config.rtc_steps = 32, 0
-        policy.reset()
-
-    assert len(prompts) == 3 and actions.shape == (2, 16, 7)
-    for chunk, executing in ((1, actions[:, :8]), (2, actions[:, 8:])):
-        prefix = policy.action_tokenizer.tokens_starting_with(executing).cpu()
-        assert torch.equal(
-            prompts[chunk][:, -prefix.shape[1] :], prefix + policy.vocabulary.first_action_token
-        )
-
-
 def test_rtc_inference_starts_the_chunk_with_the_tokens_of_the_actions_run_meanwhile(policy, preprocessor):
     assert supports_rtc_inference(policy) and validate_local_chunk_policy(policy).prediction_steps == 32
     batch = preprocessor(observations(size=1))
     left_over = torch.linspace(-0.5, 0.5, 20)[:, None].expand(-1, 7)
     prompts = generation_prompts(policy)
     try:
-        chunk = policy.predict_action_chunk(batch, inference_delay=3, prev_chunk_left_over=left_over)
+        chunk = policy.predict_action_chunk(
+            {**batch, RTC_INFERENCE_DELAY: 3, RTC_PREV_CHUNK_LEFT_OVER: left_over}
+        )[ACTION]
     finally:
         del policy.vlm.generate
 
@@ -377,13 +339,6 @@ def test_rtc_inference_starts_the_chunk_with_the_tokens_of_the_actions_run_meanw
     assert torch.equal(prompts[0][:, -4:], prefix + policy.vocabulary.first_action_token)
     assert chunk.shape == (1, 32, 7)
     torch.testing.assert_close(chunk[:, :8], policy.action_tokenizer.decode(prefix, 7)[:, :8])
-
-
-def test_rtc_steps_must_fit_whole_latents_in_the_chunk(make_config):
-    with pytest.raises(ValueError, match="rtc_steps"):
-        make_config(rtc_steps=8)
-    with pytest.raises(ValueError, match="whole latents"):
-        NATVLAPolicy(make_config(n_action_steps=16, rtc_steps=4))
 
 
 def test_generation_writes_only_action_tokens(policy, preprocessor):
@@ -410,7 +365,7 @@ def test_the_vlm_follows_the_configured_dtype_and_the_tokenizer_stays_in_float32
         assert all(
             parameter.dtype == torch.float32 for parameter in each_policy.action_tokenizer.parameters()
         )
-        chunk = each_policy.predict_action_chunk(preprocessor(observations()))
+        chunk = each_policy.predict_action_chunk(preprocessor(observations()))[ACTION]
         assert chunk.dtype == torch.float32 and chunk.isfinite().all()
 
 
@@ -468,9 +423,7 @@ def test_another_nat_tokenizer_swaps_in_through_the_config_alone(make_config, tm
     assert torch.isfinite(loss)
 
     batch = small_preprocessor(observations())
-    assert small.predict_action_chunk(batch).shape == (2, 16, 7)
-    streamed = torch.stack([small.select_action(batch) for _ in range(8)], 1)
-    torch.testing.assert_close(streamed, small.predict_action_chunk(batch, steps=8))
+    assert small.predict_action_chunk(batch)[ACTION].shape == (2, 16, 7)
 
 
 def test_only_min_max_action_normalization_is_accepted(make_config):

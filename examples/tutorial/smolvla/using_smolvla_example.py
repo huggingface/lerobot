@@ -1,6 +1,9 @@
+import time
+
 import torch
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.smolvla import SmolVLAPolicy
 from lerobot.policies.utils import build_inference_frame, make_robot_action
@@ -9,6 +12,7 @@ from lerobot.utils.feature_utils import hw_to_dataset_features
 
 MAX_EPISODES = 5
 MAX_STEPS_PER_EPISODE = 20
+FPS = 30
 
 
 def main():
@@ -42,6 +46,9 @@ def main():
     robot = SO100Follower(robot_cfg)
     robot.connect()
 
+    # Predicts a chunk of actions when the previous one has executed and plays it back one action per tick
+    engine = SyncInferenceEngine(model, preprocess, postprocess, fps=FPS)
+
     task = ""  # something like "pick the red block"
     robot_type = ""  # something like "so100_follower" for multi-embodiment datasets
 
@@ -51,16 +58,15 @@ def main():
     dataset_features = {**action_features, **obs_features}
 
     for _ in range(MAX_EPISODES):
+        engine.reset()
         for _ in range(MAX_STEPS_PER_EPISODE):
             obs = robot.get_observation()
+            timestamp = time.perf_counter()
             obs_frame = build_inference_frame(
                 observation=obs, ds_features=dataset_features, device=device, task=task, robot_type=robot_type
             )
 
-            obs = preprocess(obs_frame)
-
-            action = model.select_action(obs)
-            action = postprocess(action)
+            action = engine.step(obs_frame, timestamp)
             action = make_robot_action(action, dataset_features)
             robot.send_action(action)
 

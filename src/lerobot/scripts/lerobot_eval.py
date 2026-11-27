@@ -84,13 +84,10 @@ from lerobot.envs import (
 )
 from lerobot.envs.factory import descriptor_features
 from lerobot.envs.utils import prepare_canonical_observation, validate_checkpoint
-from lerobot.lerobot_types import PolicyAction
+from lerobot.inference import SyncInferenceEngine
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import (
     PolicyProcessorPipeline,
-    bind_relative_anchor,
-    policy_output_to_transition,
-    transition_to_policy_action,
 )
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STR, REWARD
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -177,7 +174,7 @@ def rollout(
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
@@ -216,7 +213,7 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
-        predicted_latents_callback: Optional callback invoked after every ``select_action`` with the policy
+        predicted_latents_callback: Optional callback invoked after every step with the policy
             itself. World-model policies (e.g. LingBot-VA) stash predicted video latents on
             ``policy.last_predicted_latents``; this lets the caller concatenate chunks and decode once.
     Returns:
@@ -270,18 +267,7 @@ def rollout(
     # What the simulator reports besides success, one row per step; empty for benchmarks that report nothing.
     all_metrics: list[dict[str, np.ndarray]] = []
 
-    # A relative-action policy predicts a chunk of offsets anchored to the state at prediction
-    # time, but this loop reruns the pre/post pipeline every step, which would re-anchor queued
-    # actions to the current (moved) state. Bind the step to the policy's queue depth so it holds
-    # the anchor until the chunk drains. Done here rather than in `eval_main` so that every caller
-    # of this public loop is covered; rebinding the same callable each rollout is a no-op.
-    # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
-    # so it inherits the queue's batching assumptions rather than adding any: every sub-env
-    # refills on the same step, and a sub-env that finished early stays frozen at its final state
-    # and its transitions are discarded.
-    if bind_relative_anchor(policy, preprocessor) is not None:
-        logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
-
+    engine: SyncInferenceEngine | None = None
     step = 0
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
@@ -321,14 +307,17 @@ def rollout(
             # Apply environment-specific preprocessing (e.g., IsaaclabArenaProcessorStep for Isaac Lab Arena)
             observation = env_preprocessor(observation)
 
-            observation = preprocessor(observation)
-            with torch.inference_mode():
-                action = transition_to_policy_action(
-                    policy_output_to_transition(policy.select_action(observation))
+            # The same chunk loop as on a robot; one step is one frame of the policy's past inputs.
+            if engine is None:
+                engine = SyncInferenceEngine(
+                    policy,
+                    preprocessor,
+                    postprocessor,
+                    observation_keys=SyncInferenceEngine.observation_keys(observation),
                 )
+            action = engine.step(observation, float(step))
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
-            action = postprocessor(action)
 
             action_transition = {ACTION: action}
             action_transition = env_postprocessor(action_transition)
@@ -466,7 +455,7 @@ def eval_policy(
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
@@ -963,7 +952,7 @@ def eval_one(
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     n_episodes: int,
     max_episodes_rendered: int,
     videos_dir: Path | None,
@@ -1089,7 +1078,7 @@ def eval_policy_all(
     env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     n_episodes: int,
     *,
     max_episodes_rendered: int = 0,

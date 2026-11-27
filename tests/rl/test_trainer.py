@@ -19,7 +19,6 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import torch  # noqa: E402
-from torch import Tensor  # noqa: E402
 
 from lerobot.rl.algorithms.base import RLAlgorithm  # noqa: E402
 from lerobot.rl.algorithms.configs import TrainingStats  # noqa: E402
@@ -40,9 +39,6 @@ class _DummyRLAlgorithm(RLAlgorithm):
     def __init__(self):
         self.configure_calls = 0
         self.update_calls = 0
-
-    def select_action(self, observation: dict[str, Tensor]) -> Tensor:
-        return torch.zeros(1)
 
     def configure_data_iterator(
         self,

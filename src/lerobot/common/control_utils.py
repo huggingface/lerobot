@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 import numpy as np
 import torch
 
-from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
+from lerobot.policies import prepare_observation_for_inference
 from lerobot.utils.import_utils import _deepdiff_available, require_package
 
 if TYPE_CHECKING or _deepdiff_available:
@@ -35,64 +35,48 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
+    from lerobot.inference import SyncInferenceEngine
     from lerobot.teleoperators import Teleoperator
-from lerobot.lerobot_types import PolicyAction, RobotAction
-from lerobot.processor import (
-    PolicyProcessorPipeline,
-    policy_output_to_transition,
-    transition_to_policy_action,
-)
+from lerobot.lerobot_types import RobotAction
 from lerobot.robots import Robot
 
 
 def predict_action(
     observation: dict[str, np.ndarray],
-    policy: PreTrainedPolicy,
+    engine: SyncInferenceEngine,
+    timestamp: float,
     device: torch.device,
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
     use_amp: bool,
     task: str | None = None,
     robot_type: str | None = None,
-):
+) -> torch.Tensor:
     """
-    Performs a single-step inference to predict a robot action from an observation.
+    Returns this control tick's robot action, predicting a new chunk when the last one has executed.
 
-    This function encapsulates the full inference pipeline:
     1. Prepares the observation by converting it to PyTorch tensors and adding a batch dimension.
-    2. Runs the preprocessor pipeline on the observation.
-    3. Feeds the processed observation to the policy to get a raw action.
-    4. Runs the postprocessor pipeline on the raw action.
-    5. Formats the final action by removing the batch dimension and moving it to the CPU.
+    2. Hands it to ``engine``, which records it and, when its chunk has executed, runs the
+       preprocessor, the policy's ``predict_action_chunk`` and the postprocessor.
+    3. Returns the next action of the chunk, ``[1, action_dim]`` on the CPU.
 
     Args:
         observation: A dictionary of NumPy arrays representing the robot's current observation.
-        policy: The `PreTrainedPolicy` model to use for action prediction.
+        engine: The `SyncInferenceEngine` holding the policy and its processors; ``reset()`` it
+            at the start of each episode.
+        timestamp: The observation's capture time, increasing within an episode, in the unit
+            of the engine's ``fps``.
         device: The `torch.device` (e.g., 'cuda' or 'cpu') to run inference on.
-        preprocessor: The `PolicyProcessorPipeline` for preprocessing observations.
-        postprocessor: The `PolicyProcessorPipeline` for postprocessing actions.
         use_amp: A boolean to enable/disable Automatic Mixed Precision for CUDA inference.
         task: An optional string identifier for the task.
         robot_type: An optional string identifier for the robot type.
 
     Returns:
-        A `torch.Tensor` containing the predicted action, ready for the robot.
+        A `torch.Tensor` containing the predicted action, ready for `make_robot_action`.
     """
     observation = copy(observation)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
-    ):
+    with torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext():
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         observation = prepare_observation_for_inference(observation, device, task, robot_type)
-        observation = preprocessor(observation)
-
-        # Compute the next action with the policy
-        # based on the current observation
-        action = transition_to_policy_action(policy_output_to_transition(policy.select_action(observation)))
-
-        action = postprocessor(action)
-
+        action = engine.step(observation, timestamp)
     return action
 
 

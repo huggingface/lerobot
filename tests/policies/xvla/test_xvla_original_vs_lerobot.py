@@ -27,7 +27,6 @@ import torch
 
 pytest.importorskip("transformers")
 
-from lerobot.lerobot_types import PolicyAction  # noqa: E402
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import make_xvla_pre_post_processors
@@ -74,7 +73,7 @@ def instantiate_lerobot_xvla(
 ) -> tuple[
     Any,  # Policy
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
 ]:
     """Instantiate LeRobot XVLA policy with preprocessor and postprocessor."""
     if from_pretrained:

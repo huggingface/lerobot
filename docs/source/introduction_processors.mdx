@@ -34,8 +34,8 @@ model.to("cuda")
 preprocessor, postprocessor = make_pre_post_processors(model.config, pretrained_path="hf_user/model", dataset_stats=dataset.meta.stats)
 
 preprocessed_sample = preprocessor(sample)
-action = model.select_action(preprocessed_sample)
-postprocessed_action = postprocessor(action)
+actions = model.predict_action_chunk(preprocessed_sample)  # [1, chunk_size, action_dim]
+postprocessed_actions = postprocessor(actions)
 ```
 
 ## What are Processors?
@@ -207,21 +207,23 @@ The most common real-world scenario combines both pipeline types robot hardware 
 
 ```python
 # Real deployment: Robot sensors → Model → Robot commands
-with torch.no_grad():
-    while not done:
-        raw_obs = robot.get_observation()  # dict[str, Any]
+from lerobot.inference import SyncInferenceEngine
 
-        # Add your robot observation to policy observation processor
+# Runs the preprocessor, predict_action_chunk and the postprocessor once per chunk,
+# and returns one action per control tick
+engine = SyncInferenceEngine(policy, policy_preprocessor, policy_postprocessor, fps=fps)
+engine.reset()  # at the start of each episode
+while not done:
+    raw_obs = robot.get_observation()  # dict[str, Any]
+    timestamp = time.perf_counter()
 
-        policy_input = policy_preprocessor(raw_obs)  # Batched dict
+    # Add your robot observation to policy observation processor
 
-        policy_output = policy.select_action(policy_input)  # Policy tensor
+    policy_action = engine.step(raw_obs, timestamp)  # Policy action, (1, action_dim)
 
-        policy_action = policy_postprocessor(policy_output)
+    # Add your robot action to policy action processor
 
-        # Add your robot action to policy action processor
-
-        robot.send_action(policy_action)
+    robot.send_action(policy_action)
 ```
 
 ## Feature Contracts: Shape and Type Transformation

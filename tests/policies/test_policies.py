@@ -34,6 +34,7 @@ from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets import make_dataset
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs, prepare_canonical_observation
+from lerobot.inference import SyncInferenceEngine
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy, ACTTemporalEnsembler
@@ -52,6 +53,7 @@ from lerobot.utils.import_utils import is_package_available
 from lerobot.utils.random_utils import seeded_context
 from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
+from tests.inference.rtc_helpers import Pipeline
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
 pytestmark = pytest.mark.dataset
@@ -184,7 +186,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     policy = make_policy(train_cfg.policy, ds_meta=dataset.meta)
     assert isinstance(policy, PreTrainedPolicy)
 
-    # Check that we run select_actions and get the appropriate output.
+    # Check that we run the chunk loop and get the appropriate output.
     envs = make_env(train_cfg.env, n_envs=2)
 
     dataloader = torch.utils.data.DataLoader(
@@ -232,8 +234,9 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
 
     # get the next action for the environment (also check that the observation batch is not modified)
     observation_ = deepcopy(observation)
-    with torch.inference_mode():
-        action = policy.select_action(observation).cpu().numpy()
+    identity = Pipeline()
+    executor = SyncInferenceEngine(policy, identity, identity, observation_keys=list(observation))
+    action = executor.step(observation, 0.0).cpu().numpy()
     assert set(observation) == set(observation_), (
         "Observation batch keys are not the same after a forward pass."
     )
@@ -729,10 +732,10 @@ def test_act_inference_in_bfloat16():
     )
     policy = ACTPolicy(config).eval()
     batch = {OBS_STATE: torch.randn(2, 4), OBS_ENV_STATE: torch.randn(2, 4)}
-    expected = policy.predict_action_chunk(batch)
+    expected = policy.predict_action_chunk(batch)[ACTION]
 
     policy.to(torch.bfloat16)
-    actions = policy.predict_action_chunk({k: v.to(torch.bfloat16) for k, v in batch.items()})
+    actions = policy.predict_action_chunk({k: v.to(torch.bfloat16) for k, v in batch.items()})[ACTION]
     assert actions.dtype == torch.bfloat16
     torch.testing.assert_close(actions.float(), expected, atol=0.1, rtol=0.1)
 

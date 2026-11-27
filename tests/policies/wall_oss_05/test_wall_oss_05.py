@@ -251,7 +251,7 @@ def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
 
     torch.testing.assert_close(processed[OBS_STATE][0, :3], torch.tensor([-1.0, 0.0, 1.0]))
     torch.testing.assert_close(processed[ACTION], torch.full((1, 32, 26), -0.5))
-    torch.testing.assert_close(postprocessor(processed[ACTION]), batch[ACTION])
+    torch.testing.assert_close(postprocessor({ACTION: processed[ACTION]})[ACTION], batch[ACTION])
 
 
 @pytest.mark.dataset
@@ -542,7 +542,7 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path, st
     torch.testing.assert_close(processed[OBS_STATE], torch.zeros_like(processed[OBS_STATE]))
     torch.testing.assert_close(processed[ACTION], torch.zeros_like(processed[ACTION]))
     torch.testing.assert_close(
-        loaded_postprocessor(torch.zeros(1, 32, 26)),
+        loaded_postprocessor({ACTION: torch.zeros(1, 32, 26)})[ACTION],
         torch.full((1, 32, action_dim), 15.0),
     )
 
@@ -559,7 +559,7 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path, st
         torch.zeros_like(processed[OBS_STATE]),
     )
     torch.testing.assert_close(
-        reloaded_postprocessor(torch.zeros(1, 32, 26)),
+        reloaded_postprocessor({ACTION: torch.zeros(1, 32, 26)})[ACTION],
         torch.full((1, 32, action_dim), 15.0),
     )
 
@@ -586,7 +586,9 @@ def test_processors_normalize_native_widths_and_mask_padded_joints(tmp_path, sta
     torch.testing.assert_close(processed[ACTION], torch.zeros(1, 32, 26))
     assert processed["dof_mask"][..., :action_dim].all()
     assert not processed["dof_mask"][..., action_dim:].any()
-    torch.testing.assert_close(postprocessor(torch.zeros(1, 32, 26)), torch.ones(1, 32, action_dim))
+    torch.testing.assert_close(
+        postprocessor({ACTION: torch.zeros(1, 32, 26)})[ACTION], torch.ones(1, 32, action_dim)
+    )
     batch.pop(ACTION)
     inference = preprocessor(batch)
     torch.testing.assert_close(inference["dof_mask"], processed["dof_mask"])
@@ -719,7 +721,7 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     assert policy.model.visual.patch_embed.proj.weight.grad.norm() > 0
     optimizer.step()
     output = policy.predict_action_chunk(batch)
-    assert post(output).shape == (2, 2, 6)
+    assert post(output)[ACTION].shape == (2, 2, 6)
     pre.save_pretrained(tmp_path / "checkpoint")
     post.save_pretrained(tmp_path / "checkpoint")
     policy.save_pretrained(tmp_path / "checkpoint")
@@ -730,7 +732,7 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
         if isinstance(step, WallOSS05TokenizerStep):
             step._processor = processor
     torch.testing.assert_close(pre2(next(iter(DataLoader(dataset, batch_size=2))))[ACTION], batch[ACTION])
-    torch.testing.assert_close(post2(output), post(output))
+    torch.testing.assert_close(post2(output)[ACTION], post(output)[ACTION])
     # Sharded resume constructs from config before DCP supplies the weights.
     restored.config.pretrained_path = tmp_path / "weights-restored-later"
     deferred = make_policy(restored.config, ds_meta=dataset.meta, defer_weight_load=True)
@@ -760,7 +762,7 @@ def test_constant_quantiles_match_wall_normalization_and_inverse(tmp_path, reloa
     torch.testing.assert_close(processed[OBS_STATE], expected[None], atol=0, rtol=0)
     torch.testing.assert_close(processed[ACTION], expected[None, None].expand(1, 32, -1), atol=0, rtol=0)
     torch.testing.assert_close(
-        postprocessor(torch.ones(1, 32, 26)), torch.full((1, 32, 26), 0.5), atol=0, rtol=0
+        postprocessor({ACTION: torch.ones(1, 32, 26)})[ACTION], torch.full((1, 32, 26), 0.5), atol=0, rtol=0
     )
 
 

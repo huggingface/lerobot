@@ -23,8 +23,10 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
 from lerobot.datasets.sample_windows import SampleWindows
+from lerobot.inference import SyncInferenceEngine
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_policy_config, make_pre_post_processors
+from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.random_utils import set_seed
 
@@ -81,7 +83,7 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     optimizer.zero_grad()
     policy.reset()
 
-    # HACK: We reload a batch without windows as `select_action` won't expect a timestamps dimension
+    # HACK: We reload a batch without windows, as an environment serves the current frame only.
     # We simulate having an environment using a dataset by reading single frames and dropping tensors
     # indicating padding (those ending with "_is_pad")
     dataset.reader.samples = SampleWindows(dataset.meta, dataset.episodes)
@@ -106,11 +108,14 @@ def get_policy_stats(ds_repo_id: str, policy_name: str, policy_kwargs: dict):
     else:
         actions_queue = train_cfg.policy.n_action_repeats
 
+    # The policy receives the raw observation, as these artifacts were recorded; the executor
+    # builds its observation windows and plays its chunks back, one action per tick.
+    executor = SyncInferenceEngine(
+        policy, PolicyProcessorPipeline(steps=[]), postprocessor, observation_keys=list(obs)
+    )
     actions = {}
     for i in range(actions_queue):
-        unnormalized_action = policy.select_action(obs).contiguous()
-        action_robot = postprocessor(unnormalized_action)
-        actions[str(i)] = action_robot
+        actions[str(i)] = executor.step(obs, float(i)).contiguous()
 
     return output_dict, grad_stats, param_stats, actions
 

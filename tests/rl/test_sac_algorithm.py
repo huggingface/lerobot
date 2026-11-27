@@ -194,26 +194,26 @@ def test_get_weights_are_on_cpu():
 
 
 # ===========================================================================
-# select_action (lives on the policy, not the algorithm)
+# predict_action_chunk (lives on the policy, not the algorithm)
 # ===========================================================================
 
 
-def test_select_action_returns_correct_shape():
+def test_predict_action_chunk_returns_one_action():
     action_dim = 6
     _, policy = _make_algorithm(state_dim=10, action_dim=action_dim)
     policy.eval()
-    obs = {OBS_STATE: torch.randn(10)}
-    action = policy.select_action(obs)
-    assert action.shape == (action_dim,)
+    obs = {OBS_STATE: torch.randn(2, 10)}
+    action = policy.predict_action_chunk(obs)[ACTION]
+    assert action.shape == (2, 1, action_dim)
 
 
-def test_select_action_with_discrete_critic():
+def test_predict_action_chunk_with_discrete_critic():
     continuous_dim = 5
     _, policy = _make_algorithm(state_dim=10, action_dim=continuous_dim, num_discrete_actions=3)
     policy.eval()
-    obs = {OBS_STATE: torch.randn(10)}
-    action = policy.select_action(obs)
-    assert action.shape == (continuous_dim + 1,)
+    obs = {OBS_STATE: torch.randn(2, 10)}
+    action = policy.predict_action_chunk(obs)[ACTION]
+    assert action.shape == (2, 1, continuous_dim + 1)
 
 
 # ===========================================================================

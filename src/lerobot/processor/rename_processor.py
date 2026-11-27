@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.utils.constants import OBS_PREFIX
 
 from .pipeline import ObservationProcessorStep, ProcessorStepRegistry
 
@@ -43,6 +45,17 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
 
     def observation(self, observation):
         return rename_keys(observation, self.rename_map)
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """Rename observations and their padding masks, which batches also carry as complementary data."""
+        transition = super().__call__(transition)
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if self.rename_map and complementary:
+            transition[TransitionKey.COMPLEMENTARY_DATA] = {
+                _rename_key_with_metadata(key, self.rename_map) if key.startswith(OBS_PREFIX) else key: value
+                for key, value in complementary.items()
+            }
+        return transition
 
     def get_config(self) -> dict[str, Any]:
         return {"rename_map": self.rename_map}

@@ -20,8 +20,8 @@ The majority of changes here involve removing unused code, unifying naming, and 
 """
 
 import math
-from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 from itertools import chain
 from typing import Any
 
@@ -34,8 +34,10 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy
 from .configuration_act import ACTConfig
 
@@ -94,40 +96,25 @@ class ACTPolicy(PreTrainedPolicy):
         ]
 
     def reset(self):
-        """This should be called whenever the environment is reset."""
+        """Clear the temporal ensemble, when enabled."""
         if self.config.temporal_ensemble_coeff is not None:
             self.temporal_ensembler.reset()
-        else:
-            self._action_queue = deque([], maxlen=self.config.n_action_steps)
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """With temporal ensembling, every call returns the one ensembled action to execute."""
+        spec = super().chunk_inference_spec()
+        if self.config.temporal_ensemble_coeff is None:
+            return spec
+        return replace(spec, prediction_steps=1, execution_steps=1)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        """Select a single action given environment observations.
+    def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
+        """Predict a chunk of actions given environment observations.
 
-        This method wraps `select_actions` in order to return one action at a time for execution in the
-        environment. It works by managing the actions in a queue and only calling `select_actions` when the
-        queue is empty.
+        With temporal ensembling, the predicted chunk joins the ensemble of the previous calls'
+        overlapping chunks and the call returns the next ensembled action, ``[B, 1, A]``: call
+        it once per control step and ``reset()`` it at the start of each episode.
         """
-        self.eval()  # keeping the policy in eval mode as it could be set to train mode while queue is consumed
-
-        if self.config.temporal_ensemble_coeff is not None:
-            actions = self.predict_action_chunk(batch)
-            action = self.temporal_ensembler.update(actions)
-            return action
-
-        # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
-        # querying the policy.
-        if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
-
-            # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
-
-    @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
         self.eval()
 
         if self.config.image_features:
@@ -135,7 +122,9 @@ class ACTPolicy(PreTrainedPolicy):
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
 
         actions = self.model(batch)[0]
-        return actions
+        if self.config.temporal_ensemble_coeff is not None:
+            return PolicyOutput(action=self.temporal_ensembler.update(actions).unsqueeze(1))
+        return PolicyOutput(action=actions)
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training or validation."""

@@ -5,9 +5,9 @@ relative actions. The key invariant: RTC guidance operates in model space
 (normalized relative actions), while the robot receives absolute actions after postprocessing.
 
 Flow under test:
-  Preprocessor: raw obs → relative step caches state → normalizer
+  Preprocessor: raw obs → relative step writes the action anchor into the batch → normalizer
   Model: generates normalized relative actions (guided by RTC using leftover relative actions)
-  Postprocessor: unnormalize → absolute step (relative + cached state) → robot actions
+  Postprocessor: unnormalize → absolute step (relative + the batch's anchor) → robot actions
 """
 
 import importlib.util
@@ -29,7 +29,7 @@ from lerobot.processor.relative_action_processor import (
     RelativeActionsProcessorStep,
     to_relative_actions,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, ACTION_ANCHOR, OBS_STATE
 
 
 def _import_rtc_module(module_name: str, filename: str):
@@ -88,8 +88,16 @@ def _make_relative_pipeline(action_dim=ACTION_DIM, norm_mode=NormalizationMode.M
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True)
     return relative_step, normalizer, unnormalizer, absolute_step
+
+
+def _postprocess(unnormalizer, absolute_step, model_output, preprocessed):
+    """Postprocess a model chunk with the complementary data (the anchor) of the batch it was predicted from."""
+    transition = create_transition(
+        action=model_output, complementary_data=preprocessed[TransitionKey.COMPLEMENTARY_DATA]
+    )
+    return absolute_step(unnormalizer(transition))[TransitionKey.ACTION]
 
 
 class TestActionQueueRelativeActions:
@@ -192,8 +200,8 @@ class TestRTCDenoiseWithRelativeLeftovers:
 class TestFullPipelineRelativeRTC:
     """End-to-end test of the RTC + relative actions pipeline matching lerobot-rollout flow."""
 
-    def test_preprocessor_caches_state_for_postprocessor(self):
-        """Preprocessor's relative step should cache state so postprocessor can convert back."""
+    def test_preprocessor_writes_anchor_for_postprocessor(self):
+        """Preprocessor's relative step should write the anchor into the batch so postprocessor can convert back."""
         relative_step, normalizer, unnormalizer, absolute_step = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
@@ -202,22 +210,20 @@ class TestFullPipelineRelativeRTC:
         batch = {ACTION: actions, OBS_STATE: state}
         transition = batch_to_transition(batch)
 
-        relative_step(transition)
-        assert relative_step._last_state is not None
-        torch.testing.assert_close(relative_step._last_state, state)
+        anchor = relative_step(transition)[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR]
+        torch.testing.assert_close(anchor, state)
 
-    def test_preprocessor_caches_state_without_actions(self):
+    def test_preprocessor_writes_anchor_without_actions(self):
         """During inference, preprocessor receives only observations (no actions).
-        Relative step should still cache state for the postprocessor."""
+        Relative step should still write the anchor for the postprocessor."""
         relative_step, _, _, _ = _make_relative_pipeline()
 
         state = torch.randn(1, ACTION_DIM)
         batch = {OBS_STATE: state}
         transition = batch_to_transition(batch)
 
-        relative_step(transition)
-        assert relative_step._last_state is not None
-        torch.testing.assert_close(relative_step._last_state, state)
+        anchor = relative_step(transition)[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR]
+        torch.testing.assert_close(anchor, state)
 
     def test_roundtrip_with_identity_normalization(self):
         """Actions → relative → normalize → [model] → unnormalize → absolute should recover originals.
@@ -237,11 +243,7 @@ class TestFullPipelineRelativeRTC:
 
         model_output = t2[TransitionKey.ACTION].clone()
 
-        model_transition = {TransitionKey.ACTION: model_output}
-        t3 = unnormalizer(model_transition)
-        t4 = absolute_step(t3)
-
-        recovered = t4[TransitionKey.ACTION]
+        recovered = _postprocess(unnormalizer, absolute_step, model_output, t2)
         torch.testing.assert_close(recovered, actions, atol=1e-5, rtol=1e-5)
 
     def test_eval_loop_simulation(self):
@@ -274,13 +276,14 @@ class TestFullPipelineRelativeRTC:
         # --- Iteration 1: first chunk, no leftovers ---
         state_1 = torch.randn(1, ACTION_DIM)
         obs_batch_1 = {OBS_STATE: state_1}
-        relative_step(batch_to_transition(obs_batch_1))
+        preprocessed_1 = relative_step(batch_to_transition(obs_batch_1))
 
         model_relatives_1 = mock_model(prev_chunk_left_over=None, inference_delay=0, state=state_1)
         original_actions_1 = model_relatives_1.squeeze(0)
 
-        model_transition_1 = {TransitionKey.ACTION: model_relatives_1}
-        postprocessed_1 = absolute_step(unnormalizer(model_transition_1))[TransitionKey.ACTION].squeeze(0)
+        postprocessed_1 = _postprocess(
+            unnormalizer, absolute_step, model_relatives_1, preprocessed_1
+        ).squeeze(0)
 
         queue.merge(original_actions_1, postprocessed_1, real_delay=0)
 
@@ -296,15 +299,16 @@ class TestFullPipelineRelativeRTC:
 
         state_2 = state_1 + 0.01 * torch.randn(1, ACTION_DIM)
         obs_batch_2 = {OBS_STATE: state_2}
-        relative_step(batch_to_transition(obs_batch_2))
+        preprocessed_2 = relative_step(batch_to_transition(obs_batch_2))
 
         model_relatives_2 = mock_model(
             prev_chunk_left_over=prev_actions.unsqueeze(0), inference_delay=3, state=state_2
         )
         original_actions_2 = model_relatives_2.squeeze(0)
 
-        model_transition_2 = {TransitionKey.ACTION: model_relatives_2}
-        postprocessed_2 = absolute_step(unnormalizer(model_transition_2))[TransitionKey.ACTION].squeeze(0)
+        postprocessed_2 = _postprocess(
+            unnormalizer, absolute_step, model_relatives_2, preprocessed_2
+        ).squeeze(0)
 
         queue.merge(original_actions_2, postprocessed_2, real_delay=3)
 
@@ -327,20 +331,16 @@ class TestFullPipelineRelativeRTC:
         state_2 = torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]])
         relatives = torch.zeros(1, 5, ACTION_DIM)
 
-        # Iteration 1: cache state_1
-        relative_step(batch_to_transition({OBS_STATE: state_1}))
-        result_1 = absolute_step(unnormalizer({TransitionKey.ACTION: relatives.clone()}))[
-            TransitionKey.ACTION
-        ]
+        # Iteration 1: anchored on state_1
+        preprocessed_1 = relative_step(batch_to_transition({OBS_STATE: state_1}))
+        result_1 = _postprocess(unnormalizer, absolute_step, relatives.clone(), preprocessed_1)
         # relative=0 + state_1 should give state_1
         for t in range(5):
             torch.testing.assert_close(result_1[0, t], state_1[0], atol=1e-5, rtol=1e-5)
 
-        # Iteration 2: cache state_2
-        relative_step(batch_to_transition({OBS_STATE: state_2}))
-        result_2 = absolute_step(unnormalizer({TransitionKey.ACTION: relatives.clone()}))[
-            TransitionKey.ACTION
-        ]
+        # Iteration 2: anchored on state_2
+        preprocessed_2 = relative_step(batch_to_transition({OBS_STATE: state_2}))
+        result_2 = _postprocess(unnormalizer, absolute_step, relatives.clone(), preprocessed_2)
         for t in range(5):
             torch.testing.assert_close(result_2[0, t], state_2[0], atol=1e-5, rtol=1e-5)
 
@@ -434,18 +434,17 @@ class TestRTCReanchoringWithStateNormalizer:
         return relative_step, normalizer
 
     def test_reanchor_with_raw_state_matches_normalize_of_absolute_minus_state(self):
-        """Reanchoring with the raw cached state yields ``normalize(prev_actions_absolute - raw_state)``."""
+        """Reanchoring on the batch's anchor yields ``normalize(prev_actions_absolute - raw_state)``."""
         relative_step, normalizer = self._build_normalizer_with_state_stats()
 
         raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
-        relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
+        preprocessed = relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
 
         prev_actions_absolute = torch.tensor([[2.0, 3.0, 4.0, 5.0, 6.0, 7.0]] * 5)
 
         result = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
-            current_state=relative_step.get_cached_state(),
-            relative_step=relative_step,
+            anchor=preprocessed[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR],
             normalizer_step=normalizer,
             policy_device="cpu",
         )
@@ -456,10 +455,9 @@ class TestRTCReanchoringWithStateNormalizer:
 
     def test_reanchor_with_normalized_state_produces_wrong_result(self):
         """Reanchoring with raw vs. normalized state produces meaningfully different outputs."""
-        relative_step, normalizer = self._build_normalizer_with_state_stats()
+        _, normalizer = self._build_normalizer_with_state_stats()
 
         raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
-        relative_step(batch_to_transition({OBS_STATE: raw_state.clone()}))
 
         normalized_obs = normalizer(batch_to_transition({OBS_STATE: raw_state.clone()}))
         normalized_state = normalized_obs[TransitionKey.OBSERVATION][OBS_STATE]
@@ -469,15 +467,13 @@ class TestRTCReanchoringWithStateNormalizer:
 
         result_raw = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
-            current_state=raw_state,
-            relative_step=relative_step,
+            anchor=raw_state,
             normalizer_step=normalizer,
             policy_device="cpu",
         )
         result_normalized = reanchor_relative_rtc_prefix(
             prev_actions_absolute=prev_actions_absolute,
-            current_state=normalized_state,
-            relative_step=relative_step,
+            anchor=normalized_state,
             normalizer_step=normalizer,
             policy_device="cpu",
         )
@@ -488,8 +484,8 @@ class TestRTCReanchoringWithStateNormalizer:
             "OBS_STATE stats are too close to identity to be sensitive."
         )
 
-    def test_engine_pipeline_cached_state_is_raw_after_full_preprocess(self):
-        """``get_cached_state()`` returns raw OBS_STATE after the full preprocessor pipeline runs."""
+    def test_engine_pipeline_anchor_is_raw_after_full_preprocess(self):
+        """The batch's ``action_anchor`` is the raw OBS_STATE after the full preprocessor pipeline runs."""
         relative_step, normalizer = self._build_normalizer_with_state_stats()
 
         raw_state = torch.tensor([[7.0, 8.0, 9.0, 10.0, 11.0, 12.0]])
@@ -498,11 +494,11 @@ class TestRTCReanchoringWithStateNormalizer:
         transition = relative_step(transition)
         preprocessed = normalizer(transition)
 
-        cached = relative_step.get_cached_state()
-        torch.testing.assert_close(cached, raw_state, atol=1e-6, rtol=1e-6)
+        anchor = preprocessed[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR]
+        torch.testing.assert_close(anchor, raw_state, atol=1e-6, rtol=1e-6)
 
         post_normalize_state = preprocessed[TransitionKey.OBSERVATION][OBS_STATE]
-        assert not torch.allclose(cached, post_normalize_state, atol=1e-3)
+        assert not torch.allclose(anchor, post_normalize_state, atol=1e-3)
 
 
 def _detect_relative_actions(preprocessor) -> bool:
@@ -537,7 +533,7 @@ class TestNonRelativePolicy:
 
     def test_disabled_relative_step_is_noop(self):
         relative_step = RelativeActionsProcessorStep(enabled=False)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, relative_step=relative_step)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False)
 
         state = torch.randn(1, ACTION_DIM)
         actions = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
@@ -562,7 +558,7 @@ class TestNonRelativePolicy:
 
         relative_step = RelativeActionsProcessorStep(enabled=False)
         unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-        absolute_step = AbsoluteActionsProcessorStep(enabled=False, relative_step=relative_step)
+        absolute_step = AbsoluteActionsProcessorStep(enabled=False)
 
         rtc = RTCProcessor(_make_rtc_config())
         queue = ActionQueue(_make_rtc_config())
@@ -624,11 +620,12 @@ class TestMultiChunkConsistency:
         for i in range(3):
             queue.get_left_over()
 
-            relative_step(batch_to_transition({OBS_STATE: states[i]}))
+            preprocessed = relative_step(batch_to_transition({OBS_STATE: states[i]}))
 
             model_output = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-            post_transition = absolute_step(unnormalizer({TransitionKey.ACTION: model_output.clone()}))
-            postprocessed = post_transition[TransitionKey.ACTION].squeeze(0)
+            postprocessed = _postprocess(
+                unnormalizer, absolute_step, model_output.clone(), preprocessed
+            ).squeeze(0)
             original = model_output.squeeze(0)
 
             delay = min(i * 2, CHUNK_SIZE - 1)
@@ -652,12 +649,10 @@ class TestMultiChunkConsistency:
         queue = ActionQueue(_make_rtc_config())
 
         state = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
-        relative_step(batch_to_transition({OBS_STATE: state}))
+        preprocessed = relative_step(batch_to_transition({OBS_STATE: state}))
 
         model_relatives = torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_relatives.clone()}))[
-            TransitionKey.ACTION
-        ].squeeze(0)
+        post = _postprocess(unnormalizer, absolute_step, model_relatives.clone(), preprocessed).squeeze(0)
         original = model_relatives.squeeze(0)
 
         queue.merge(original, post, real_delay=0)
@@ -676,12 +671,10 @@ class TestMultiChunkConsistency:
         queue = ActionQueue(_make_rtc_config())
 
         state = torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]])
-        relative_step(batch_to_transition({OBS_STATE: state}))
+        preprocessed = relative_step(batch_to_transition({OBS_STATE: state}))
 
         model_relatives = 0.1 * torch.randn(1, CHUNK_SIZE, ACTION_DIM)
-        post = absolute_step(unnormalizer({TransitionKey.ACTION: model_relatives.clone()}))[
-            TransitionKey.ACTION
-        ].squeeze(0)
+        post = _postprocess(unnormalizer, absolute_step, model_relatives.clone(), preprocessed).squeeze(0)
         original = model_relatives.squeeze(0)
 
         queue.merge(original, post, real_delay=0)

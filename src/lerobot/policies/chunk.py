@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Policy declarations for direct, current-observation chunk prediction."""
+"""How a policy's ``predict_action_chunk`` is driven."""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -28,21 +28,47 @@ class ExecutionMode(StrEnum):
 
 @dataclass(frozen=True)
 class ChunkPolicySpec:
-    """Policy author declaration; inheriting the default is an explicit contract.
+    """How a policy's ``predict_action_chunk`` is driven; the default derives it from the config.
 
-    The current observation suffices, direct chunk calls perform all preparation,
-    outputs are [B, prediction_steps, A], and canonical processors accept full chunks.
-    Mutable policy/processor state belongs to the exclusive session, never the network.
+    ``predict_action_chunk`` receives batches in the training layout. What it receives is not
+    declared here but by the config's ``inference_deltas``: every declared observation arrives
+    as ``[B, T, ...]`` with ``{feature}_is_pad``, past executed commands as
+    ``observation.action``.
+
+    Attributes:
+        prediction_steps: Actions a call returns, ``[B, prediction_steps, A]``.
+        execution_steps: Actions executed from each chunk before the next call.
+        modes: Execution modes the policy supports.
+        retains_session_state: Whether calls keep state between them (cleared by ``reset``).
+        training_max_delay: Largest inference delay the policy was trained for (trained RTC).
+        complete_execution: Every chunk executes fully before the next call, which observes the
+            result of its last action, for policies whose state follows the executed actions.
+            Such a policy may return fewer than ``prediction_steps`` actions (e.g. a shorter
+            first chunk).
     """
 
     prediction_steps: int
     execution_steps: int
     modes: tuple[ExecutionMode, ...] = (ExecutionMode.CHUNK,)
-    current_observation_only: bool = True
     retains_session_state: bool = True
     training_max_delay: int = 0
+    complete_execution: bool = False
 
     def __post_init__(self) -> None:
-        """Validate the policy's declared prediction and execution lengths."""
+        """Validate lengths and complete execution."""
         if not 0 < self.execution_steps <= self.prediction_steps:
             raise ValueError("Execution length must be positive and no longer than prediction length.")
+        if self.complete_execution and (
+            tuple(self.modes) != (ExecutionMode.CHUNK,) or self.execution_steps != self.prediction_steps
+        ):
+            raise ValueError("Complete execution runs whole plain chunks.")
+
+    def accepts(self, steps: int) -> bool:
+        """Whether a call may return a chunk of ``steps`` actions."""
+        if self.complete_execution:
+            return 0 < steps <= self.prediction_steps
+        return steps == self.prediction_steps
+
+    def steps_to_execute(self, steps: int) -> int:
+        """How many actions of a returned chunk of ``steps`` actions execute in plain chunk mode."""
+        return steps if self.complete_execution else min(self.execution_steps, steps)

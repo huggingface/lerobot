@@ -6,8 +6,6 @@ Tests the complete flow matching OpenPI:
 Uses real dataset: lerobot-data-collection/dagger_final_1_21
 """
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 import torch
@@ -18,7 +16,6 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.compute_stats import get_feature_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.processor import (
-    DataProcessorPipeline,
     TransitionKey,
     batch_to_transition,
     create_transition,
@@ -27,11 +24,10 @@ from lerobot.processor.normalize_processor import NormalizerProcessorStep, Unnor
 from lerobot.processor.relative_action_processor import (
     AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
-    bind_relative_anchor,
     to_absolute_actions,
     to_relative_actions,
 )
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, ACTION_ANCHOR, OBS_STATE
 
 pytestmark = pytest.mark.dataset
 
@@ -167,7 +163,7 @@ def test_full_pipeline_roundtrip(dataset, action_dim):
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True)
 
     original_actions = action_chunks[0].unsqueeze(0)
     state = states[0].unsqueeze(0)
@@ -237,16 +233,6 @@ def test_processor_step_roundtrip(dataset, action_dim):
     mask = [True] * action_dim
     recovered = to_absolute_actions(relative_transition[TransitionKey.ACTION], state, mask)
     torch.testing.assert_close(recovered, original_actions)
-
-
-def test_reset_clears_the_cached_anchor():
-    """Resetting the pipeline should clear the cached anchor."""
-    step = RelativeActionsProcessorStep(enabled=True, action_names=["a.pos", "b.pos"])
-    step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0]])}))
-    assert step.get_cached_state() is not None
-
-    DataProcessorPipeline(steps=[step]).reset()
-    assert step.get_cached_state() is None
 
 
 def test_processor_step_disabled_is_noop(dataset, action_dim):
@@ -337,7 +323,7 @@ def test_quantile_normalization_roundtrip(dataset, action_dim):
     relative_step = RelativeActionsProcessorStep(enabled=True)
     normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
     unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True)
 
     original_actions = action_chunks[0].unsqueeze(0)
     state = states[0].unsqueeze(0)
@@ -379,12 +365,11 @@ def test_state_not_modified_by_relative_processor(dataset, action_dim):
     torch.testing.assert_close(result_state, original_state)
 
 
-def test_cached_anchor_and_queue_binding_not_in_config():
-    """The anchor and its queue binding are runtime state and must not leak into the config."""
+def test_anchor_not_in_config():
+    """The anchor travels with the batch and must not leak into the config."""
     step = RelativeActionsProcessorStep(enabled=True)
-    step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0, 3.0, 4.0]])}))
-    step.bind_action_queue(lambda: 0)
-    assert step.get_cached_state() is not None
+    result = step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0, 3.0, 4.0]])}))
+    assert result[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR] is not None
     assert set(step.get_config()) == {"enabled", "exclude_joints", "action_names"}
 
 
@@ -392,9 +377,9 @@ def test_cached_anchor_and_queue_binding_not_in_config():
 # Chunk anchoring
 # --------------------------------------------------------------------------------------
 # A chunk generated at tick t must be un-relativised against state(t) for every action it
-# yields, however many ticks it takes to drain. The hold lives in the step, so it is tested
-# here; the engine and eval suites only check that their setup path calls
-# `bind_relative_anchor`.
+# yields. The preprocessor writes the anchor into the batch it hands the policy, and the
+# postprocessor reads it back from that batch, so the anchor is always the state the chunk
+# was predicted from.
 
 _ANCHOR_NAMES = [f"j{i}.pos" for i in range(4)]
 
@@ -404,72 +389,26 @@ def _anchor_step(**kwargs):
 
 
 def _feed(step, value):
-    """Run one preprocess tick at a uniform state, and report the anchor it left behind."""
-    step(create_transition(observation={OBS_STATE: torch.full((1, 4), value)}))
-    return step.get_cached_state()
+    """Run one preprocess call at a uniform state, and report the anchor it wrote."""
+    result = step(create_transition(observation={OBS_STATE: torch.full((1, 4), value)}))
+    return result[TransitionKey.COMPLEMENTARY_DATA][ACTION_ANCHOR]
 
 
-def test_unbound_step_advances_its_anchor_every_tick():
-    """Nothing bound is the pre-existing behaviour, not a new failure mode."""
+def test_each_preprocess_call_re_anchors():
     step = _anchor_step()
     _feed(step, 1.0)
     torch.testing.assert_close(_feed(step, 5.0), torch.full((1, 4), 5.0))
 
 
-def test_bound_step_holds_the_anchor_until_the_queue_drains():
-    step = _anchor_step()
-    depth = {"n": 0}
-    step.bind_action_queue(lambda: depth["n"])
-
-    torch.testing.assert_close(_feed(step, 1.0), torch.full((1, 4), 1.0))  # empty queue: anchors
-    depth["n"] = 2
-    torch.testing.assert_close(_feed(step, 5.0), torch.full((1, 4), 1.0))  # in flight: held
-    depth["n"] = 0
-    torch.testing.assert_close(_feed(step, 9.0), torch.full((1, 4), 9.0))  # drained: re-anchors
-
-
-def test_binding_is_reversible():
-    step = _anchor_step()
-    step.bind_action_queue(lambda: 3)
-    _feed(step, 1.0)
-    step.bind_action_queue(None)
-    torch.testing.assert_close(_feed(step, 5.0), torch.full((1, 4), 5.0))
-
-
-def test_bind_relative_anchor_skips_disabled_and_missing_steps():
-    """A disabled step converts nothing, so holding its anchor would freeze what nobody reads."""
-    enabled, disabled = _anchor_step(), RelativeActionsProcessorStep(enabled=False)
-    policy = SimpleNamespace(count_queued_actions=lambda: 3)
-
-    assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled, enabled])) is enabled
-    assert enabled._count_queued_actions == policy.count_queued_actions
-    assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled])) is None
-    assert disabled._count_queued_actions is None
-    assert bind_relative_anchor(policy, SimpleNamespace()) is None
-
-
-def test_bare_loop_holds_the_anchor_across_a_chunk():
-    """The case that fails without this: no engine and no wrapper, just
-    ``preprocess -> select_action -> postprocess`` with the arm moving under the draining
-    chunk -- what async inference, ``lerobot-record`` and notebook loops actually do.
-    """
+def test_a_whole_chunk_is_anchored_on_the_state_it_was_predicted_from():
     relative_step = _anchor_step()
-    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True)
     # A distinct offset per step, so a wrong anchor cannot be masked by a flat chunk.
-    chunk = [torch.full((1, 4), 0.1 * (i + 1)) for i in range(3)]
-    queue = []
-
-    def select_action():
-        if not queue:  # what the real policies do: refill only once the queue is empty
-            queue.extend(chunk)
-        return queue.pop(0)
-
-    bind_relative_anchor(
-        SimpleNamespace(count_queued_actions=lambda: len(queue)), SimpleNamespace(steps=[relative_step])
-    )
-
+    chunk = torch.stack([torch.full((4,), 0.1 * (i + 1)) for i in range(3)])[None]  # [1, 3, 4]
     anchor = torch.full((1, 4), 10.0)
-    for tick, offset in enumerate(chunk):
-        relative_step(create_transition(observation={OBS_STATE: anchor + tick}))
-        action = absolute_step(create_transition(action=select_action()))[TransitionKey.ACTION]
-        torch.testing.assert_close(action, anchor + offset)
+    preprocessed = relative_step(create_transition(observation={OBS_STATE: anchor}))
+    complementary = preprocessed[TransitionKey.COMPLEMENTARY_DATA]
+    actions = absolute_step(create_transition(action=chunk, complementary_data=complementary))[
+        TransitionKey.ACTION
+    ]
+    torch.testing.assert_close(actions, anchor[:, None] + chunk)
