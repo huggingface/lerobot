@@ -807,6 +807,7 @@ class VLAFlowMatching(nn.Module):
             use_cache=self.config.use_cache,
         )
         num_steps = self.config.num_steps
+        action_feature = self.config.action_feature
 
         return euler_integrate(
             lambda input_x_t, current_timestep: self.denoise_step(
@@ -822,6 +823,7 @@ class VLAFlowMatching(nn.Module):
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
+            action_dim=action_feature.shape[0] if action_feature is not None else None,
         )
 
     def denoise_step(

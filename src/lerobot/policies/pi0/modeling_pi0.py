@@ -676,6 +676,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         bsize = state.shape[0]
         device = state.device
+        action_feature = self.config.action_feature
 
         if noise is None:
             # Sample noise with padded dimension as expected by action_in_proj
@@ -720,6 +721,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             inference_delay=kwargs.get("inference_delay"),
             prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
             execution_horizon=kwargs.get("execution_horizon"),
+            action_dim=action_feature.shape[0] if action_feature is not None else None,
         )
 
     def denoise_step(
