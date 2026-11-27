@@ -38,6 +38,7 @@ from lerobot.policies.cae_fastwam.action_vae import (
     build_action_chunks,
     load_cae_action_vae_config,
     normalize_action_chunks,
+    resolve_schedule,
     save_cae_action_vae,
     train_cae_action_vae,
 )
@@ -145,7 +146,7 @@ def test_training_fits_chunks_deterministically():
     )  # fmt: skip
     vae, metrics = train_cae_action_vae(chunks, is_pad, cfg)
     history = metrics["history"]
-    assert len(history) == 6 and metrics["steps"] == 6 * 8
+    assert len(history) == 6 and metrics["steps"] == 6 * 8 and metrics["kl_warmup_epochs"] == 2
     assert history[-1]["loss_recon"] < history[0]["loss_recon"]
     assert [h["beta_kl"] for h in history[:3]] == [0.5e-4, 1e-4, 1e-4]
     assert metrics["final"]["mse"] < float(np.mean(chunks**2))
@@ -154,6 +155,22 @@ def test_training_fits_chunks_deterministically():
     assert metrics2["final"] == metrics["final"]
     for a, b in zip(vae.state_dict().values(), vae2.state_dict().values(), strict=True):
         torch.testing.assert_close(a, b, rtol=0, atol=0)
+
+
+def test_default_schedule_is_the_released_step_budget():
+    """About 54k optimizer steps whatever the dataset size, with the released KL schedule (warmup = 2 x epochs). The
+    four LIBERO suites (53229 / 67309 / 52895 / 104280 chunks) get the epochs the step-matched validation used."""
+    cfg = CAEActionVAETrainingConfig()
+    assert [resolve_schedule(n, cfg) for n in (53229, 67309, 52895, 104280)] == [
+        (261, 522),
+        (206, 412),
+        (262, 524),
+        (133, 266),
+    ]
+    assert resolve_schedule(277713, cfg) == (50, 100)  # the four suites together: the released 50 epochs
+    assert resolve_schedule(53229, CAEActionVAETrainingConfig(epochs=50)) == (50, 100)
+    with pytest.raises(ValueError, match="batch size"):
+        resolve_schedule(100, cfg)
 
 
 def vae_stats():
@@ -270,7 +287,7 @@ def test_train_tokenizer_trains_the_cae_action_vae(tmp_path, lerobot_dataset_fac
         normalization_mode="MIN_MAX",
         output_dir=str(out),
         cae=CAEActionVAETrainingConfig(
-            num_tokens=2, latent_dim=4, encoder_hidden_dim=8, decoder_hidden_dim=8, epochs=2, batch_size=32,
+            num_tokens=2, latent_dim=4, encoder_hidden_dim=8, decoder_hidden_dim=8, steps=12, batch_size=32,
             device="cpu",
         ),
     )  # fmt: skip

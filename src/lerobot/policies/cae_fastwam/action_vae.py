@@ -62,8 +62,10 @@ METADATA_NAME = "metadata.json"
 class CAEActionVAETrainingConfig:
     """Options of the CAE action VAE (`--cae.*` of `lerobot-train-tokenizer --tokenizer_type=cae_action_vae`).
 
-    The defaults are the released LIBERO action VAE's (8 latent tokens of width 16 for a 32-step chunk).
-    Keep `num_tokens` and `latent_dim` to warm-start the action expert from `amd/CAE-FastWAM-lerobot`.
+    The defaults are the released LIBERO action VAE's (8 latent tokens of width 16 for a 32-step chunk),
+    including its optimizer-step budget: about 54k steps (50 epochs over the four LIBERO suites), so the number of
+    epochs follows from the dataset size. Keep `num_tokens` and `latent_dim` to warm-start the action expert from
+    `amd/CAE-FastWAM-lerobot`.
     """
 
     # Latent tokens per chunk (`action_horizon` must be a multiple) and their width.
@@ -75,9 +77,13 @@ class CAEActionVAETrainingConfig:
     variational: bool = True
     beta_kl: float = 1e-4
     free_bits: float = 0.1
-    kl_warmup_epochs: int = 100
+    # Epochs of linear KL warmup (default: twice the epochs, so the KL weight ends at half of `beta_kl`, as in
+    # the released VAE: 100 warmup epochs for its 50 epochs).
+    kl_warmup_epochs: int | None = None
     velocity_weight: float = 0.1
-    epochs: int = 50
+    # Optimizer steps; the epochs are `round(steps / steps_per_epoch)`. `epochs` overrides it.
+    steps: int = 54_000
+    epochs: int | None = None
     batch_size: int = 256
     lr: float = 1e-4
     weight_decay: float = 0.0
@@ -297,6 +303,16 @@ def evaluate_action_vae(
     }
 
 
+def resolve_schedule(num_chunks: int, cfg: CAEActionVAETrainingConfig) -> tuple[int, int]:
+    """The number of epochs and of KL warmup epochs for `num_chunks` chunks (the last partial batch is dropped)."""
+    steps_per_epoch = num_chunks // cfg.batch_size
+    if steps_per_epoch == 0:
+        raise ValueError(f"Only {num_chunks} chunks for a batch size of {cfg.batch_size}.")
+    epochs = cfg.epochs if cfg.epochs is not None else max(1, round(cfg.steps / steps_per_epoch))
+    warmup = cfg.kl_warmup_epochs if cfg.kl_warmup_epochs is not None else 2 * epochs
+    return epochs, warmup
+
+
 def train_cae_action_vae(
     chunks: np.ndarray,
     action_is_pad: np.ndarray,
@@ -328,16 +344,16 @@ def train_cae_action_vae(
         ids = torch.as_tensor(ids_np, dtype=torch.long, device=device)
     else:
         ids = None
-    if len(actions) < cfg.batch_size:
-        raise ValueError(f"Only {len(actions)} chunks for a batch size of {cfg.batch_size}.")
+    epochs, kl_warmup_epochs = resolve_schedule(len(actions), cfg)
     generator = torch.Generator().manual_seed(cfg.seed)
     steps_per_epoch = len(actions) // cfg.batch_size  # the last partial batch is dropped
+    logger.info("%d epochs of %d steps, KL warmup over %d epochs", epochs, steps_per_epoch, kl_warmup_epochs)
     history = []
-    for epoch in range(1, cfg.epochs + 1):
+    for epoch in range(1, epochs + 1):
         vae.train()
         beta = cfg.beta_kl if cfg.variational else 0.0
-        if cfg.variational and cfg.kl_warmup_epochs > 0:
-            beta *= min(1.0, epoch / cfg.kl_warmup_epochs)
+        if cfg.variational and kl_warmup_epochs > 0:
+            beta *= min(1.0, epoch / kl_warmup_epochs)
         order = torch.randperm(len(actions), generator=generator).to(device)
         totals = dict.fromkeys(("loss", "loss_recon", "loss_vel", "loss_kl"), 0.0)
         for step in range(steps_per_epoch):
@@ -364,7 +380,7 @@ def train_cae_action_vae(
         logger.info(
             "epoch %d/%d: loss %.6f, recon %.6f, vel %.6f, kl %.4f",
             epoch,
-            cfg.epochs,
+            epochs,
             *(epoch_losses[key] for key in ("loss", "loss_recon", "loss_vel", "loss_kl")),
         )
     ema_buffers = dict(ema.named_buffers())
@@ -375,7 +391,8 @@ def train_cae_action_vae(
     if not all(math.isfinite(metrics[key]) for key in ("mse", "mse_sample", "vel_mse")):
         raise RuntimeError(f"The action VAE diverged: {metrics}")
     logger.info("EMA reconstruction (normalized actions): %s", {k: metrics[k] for k in ("mse", "vel_mse")})
-    return ema.cpu(), {"final": metrics, "history": history, "steps": steps_per_epoch * cfg.epochs}
+    schedule = {"epochs": epochs, "kl_warmup_epochs": kl_warmup_epochs, "steps": steps_per_epoch * epochs}
+    return ema.cpu(), {"final": metrics, "history": history, **schedule}
 
 
 def _json_stats(stats: dict[str, Any]) -> dict[str, list[float]]:
