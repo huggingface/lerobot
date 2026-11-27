@@ -127,16 +127,9 @@ class PolicyRunner:
         self._validate_feature_contract()
         self._validate_processor_pair(preprocessor, postprocessor)
         self._relative_step = next(
-            (
-                step
-                for step in preprocessor.steps
-                if isinstance(step, RelativeActionsProcessorStep) and step.enabled
-            ),
-            None,
+            (step for step in preprocessor.get_steps(RelativeActionsProcessorStep) if step.enabled), None
         )
-        self._normalizer_step = next(
-            (step for step in preprocessor.steps if isinstance(step, NormalizerProcessorStep)), None
-        )
+        self._normalizer_step = preprocessor.get_step(NormalizerProcessorStep)
         # Chunk callers never use select_action's private playback queue. A prior
         # sync binding must not hold an old anchor across complete chunk calls.
         if self._relative_step is not None:

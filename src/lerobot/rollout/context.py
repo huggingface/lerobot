@@ -731,12 +731,7 @@ def _attach_planner(
     runtime_messages = None
     if preprocessor is not None:
         runtime_messages = next(
-            (
-                step
-                for step in preprocessor.steps
-                if isinstance(step, RenderRuntimeMessagesStep) and step.recipe
-            ),
-            None,
+            (step for step in preprocessor.get_steps(RenderRuntimeMessagesStep) if step.recipe), None
         )
     if not planner_cfg.instructions:
         if pretrained_path is None:
