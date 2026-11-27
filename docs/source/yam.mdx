@@ -110,7 +110,7 @@ Use the same `--robot.id` in later commands, so LeRobot loads the saved file.
 
 ## Observations and actions
 
-One arm has `joint_1.pos` to `joint_6.pos`, then `gripper.pos`, for both observations and actions. Joints are absolute angles in degrees, and the gripper goes from 0 (closed) to 100 (open). `use_degrees=false` switches to radians and 0 to 1, as I2RT and MolmoAct2 data use. `use_velocity_and_torque=true` adds `.vel` and `.torque` observations. Actions are absolute joint targets, clipped to the joint limits.
+One arm has `joint_1.pos` to `joint_6.pos`, then `gripper.pos`, for both observations and actions. Joints are absolute angles in degrees, and the gripper goes from 0 (closed) to 100 (open). `use_degrees=false` switches to radians and 0 to 1, as I2RT uses. `use_velocity_and_torque=true` adds `.vel` and `.torque` observations. Actions are absolute joint targets, clipped to the joint limits.
 
 Two arms use the same names with `left_` and `right_` prefixes. Cameras set on an arm are prefixed too, while top-level `--robot.cameras` keep their names.
 
@@ -152,7 +152,7 @@ Before the first action, and when no action arrives for `command_timeout_s` (1 s
 
 ## Example: MolmoAct2
 
-[`lerobot/MolmoAct2-BimanualYAM-LeRobot`](https://huggingface.co/lerobot/MolmoAct2-BimanualYAM-LeRobot) is `allenai/MolmoAct2-BimanualYAM` in LeRobot format, with its released normalization statistics. It was trained on two YAM arms with radians and a 0–1 gripper, and with three cameras in the order top, left, right; see [MolmoAct2](./molmoact2).
+[`lerobot/MolmoAct2-BimanualYAM-LeRobot`](https://huggingface.co/lerobot/MolmoAct2-BimanualYAM-LeRobot) is `allenai/MolmoAct2-BimanualYAM` in LeRobot format, with its released normalization statistics. It was trained on two YAM arms with three cameras in the order top, left, right. Its processors map LeRobot's degrees and 0–100 grippers to the radians and 0–1 grippers it was trained on, so the arms keep their default units; see [MolmoAct2](./molmoact2).
 
 ```bash
 pip install -e ".[yam,molmoact2,dataset]"
@@ -160,7 +160,6 @@ pip install -e ".[yam,molmoact2,dataset]"
 lerobot-rollout \
   --robot.type=bi_yam_follower --robot.id=bimanual_yam \
   --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1 \
-  --robot.left_arm_config.use_degrees=false --robot.right_arm_config.use_degrees=false \
   --robot.cameras='{
     "top": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/TOP_CAMERA", "width": 640, "height": 480, "fps": 30},
     "left": {"type": "opencv", "index_or_path": "/dev/v4l/by-id/LEFT_CAMERA", "width": 640, "height": 480, "fps": 30, "fourcc": "MJPG"},
@@ -188,7 +187,7 @@ Float mode lets you start the policy from any position: add `--robot.left_arm_co
 | `not within initial_tolerance_deg`              | Fold the arm, with every joint at zero, before connecting.                                                   |
 | Connecting asks you to calibrate again          | Use the same `--robot.id` as during calibration.                                                             |
 | The arm drifts in float mode                    | Adjust `gravity_factors` for the cameras or payload on the arm.                                              |
-| MolmoAct2 moves the arms to the wrong positions | Set `use_degrees=false` on both arms: the model uses radians and a 0–1 gripper.                              |
+| MolmoAct2 moves the arms to the wrong positions | Keep `use_degrees=true` on both arms: the checkpoint converts degrees to the radians it was trained on.      |
 
 ## References
 

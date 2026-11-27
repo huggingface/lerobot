@@ -98,16 +98,12 @@ DEFAULT_RERUN_PORT = 9090
 def get_feature_names(dataset: LeRobotDataset, key: str) -> list[str]:
     """Return per-dimension names for a feature from the dataset metadata.
 
-    Only flat-list ``names`` metadata is used. Dict-style ``names`` and missing names fall back to ``{key}_{i}`` indices.
+    Features without usable names fall back to ``{key}_{i}`` indices.
     """
-    feature = dataset.features[key]
-    dim = feature["shape"][-1]
-
-    names = feature.get("names")
-    if isinstance(names, list) and len(names) == dim:
-        return [str(name) for name in names]
-
-    return [f"{key}_{d}" for d in range(dim)]
+    names = dataset.meta.names.get(key)
+    if names is not None:
+        return names
+    return [f"{key}_{i}" for i in range(dataset.features[key]["shape"][-1])]
 
 
 def check_chw_float32(frame: torch.Tensor) -> None:

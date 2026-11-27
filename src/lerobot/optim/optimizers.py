@@ -269,6 +269,46 @@ class PraxisAdamWConfig(OptimizerConfig):
         return AdamW(params, **kwargs)
 
 
+@OptimizerConfig.register_subclass("molmoact2_adamw")
+@dataclass
+class MolmoAct2AdamWConfig(OptimizerConfig):
+    """AdamW of the MolmoAct2 fine-tuning recipe, which clips each parameter group separately.
+
+    The trainer's global clipping is off by default (`grad_clip_norm=0`): the optimizer
+    (`lerobot.policies.molmoact2.optimizer_molmoact2.MolmoAct2AdamW`) clips every group to `group_grad_clip_norm`
+    and skips steps with a non-finite gradient.
+
+    Args:
+        lr (`float`, *optional*, defaults to 1e-05):
+            The peak learning rate.
+        betas (`tuple[float, float]`, *optional*, defaults to `(0.9, 0.95)`):
+            AdamW moment coefficients.
+        eps (`float`, *optional*, defaults to 1e-06):
+            AdamW epsilon.
+        weight_decay (`float`, *optional*, defaults to 0.0):
+            Decoupled weight decay.
+        grad_clip_norm (`float`, *optional*, defaults to 0.0):
+            Global gradient norm clip of the training loop.
+        group_grad_clip_norm (`float`, *optional*, defaults to 1.0):
+            Gradient norm clip of each parameter group.
+    """
+
+    lr: float = 1e-5
+    betas: tuple[float, float] = (0.9, 0.95)
+    eps: float = 1e-6
+    weight_decay: float = 0.0
+    grad_clip_norm: float = 0.0
+    group_grad_clip_norm: float = 1.0
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        # The optimizer is MolmoAct2 code; it stays in the policy package.
+        from lerobot.policies.molmoact2.optimizer_molmoact2 import MolmoAct2AdamW
+
+        kwargs = asdict(self)
+        kwargs.pop("grad_clip_norm")
+        return MolmoAct2AdamW(params, **kwargs)
+
+
 @OptimizerConfig.register_subclass("multi_adam")
 @dataclass
 class MultiAdamConfig(OptimizerConfig):

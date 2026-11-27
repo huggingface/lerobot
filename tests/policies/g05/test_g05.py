@@ -1852,6 +1852,13 @@ def test_new_robot_takes_its_layout_from_the_dataset(tmp_path: Path):
     assert (reloaded.state_slots, reloaded.camera_order) == (config.state_slots, config.camera_order)
 
 
+def test_new_robot_reads_name_to_index_joint_names():
+    config = _new_robot_config()
+    joints = {"dtype": "float32", "shape": (6,), "names": {name: i for i, name in enumerate(_OMX_JOINTS)}}
+    config.set_dataset_feature_metadata({OBS_STATE: joints, ACTION: joints})
+    assert config.state_slots == config.action_slots == (10, 11, 12, 13, 14, 19)
+
+
 def test_joint_signs_are_checked_against_the_new_robot_joints():
     # The base checkpoint records 14 raw dims; the signs cover the 6-joint robot being fine-tuned.
     config = _new_robot_config(

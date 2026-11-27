@@ -342,6 +342,8 @@ class LiberoEnvConfig(EnvConfig):
     camera_name: str = "agentview_image,robot0_eye_in_hand_image"
     init_states: bool = True
     hard_reset: bool = True
+    # No-op steps at the start of each episode so the scene settles before the policy acts.
+    num_steps_wait: int = 10
     # Raw camera name -> observation name. Default: agentview_image -> image,
     # robot0_eye_in_hand_image -> image2.
     camera_name_mapping: dict[str, str] | None = None
@@ -367,6 +369,7 @@ class LiberoEnvConfig(EnvConfig):
             "observation_width": self.observation_width,
             "control_freq": self.fps,
             "hard_reset": self.hard_reset,
+            "num_steps_wait": self.num_steps_wait,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids

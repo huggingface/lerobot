@@ -150,8 +150,7 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
         cameras (`dict[str, CameraConfig]`, *optional*):
             Cameras attached to this arm.
         use_degrees (`bool`, *optional*, defaults to `True`):
-            Whether joints use degrees and the gripper 0 to 100. `False` gives radians and 0 to 1, as in I2RT
-            and MolmoAct2 data.
+            Whether joints use degrees and the gripper 0 to 100. `False` gives radians and 0 to 1, as in I2RT.
         use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
             Whether observations include motor velocity and torque.
         control_frequency (`float`, *optional*, defaults to 100.0):

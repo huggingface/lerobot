@@ -16,40 +16,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from lerobot.utils.import_utils import require_package
-
-
-def flatten_feature_names(names: Any) -> list[str] | None:
-    """Flatten LeRobot's flat or grouped feature-name metadata."""
-    if names is None:
-        return None
-    if isinstance(names, str):
-        return [names]
-    if isinstance(names, dict):
-        indexed_names = list(names.items())
-        if indexed_names and all(
-            isinstance(index, int) and not isinstance(index, bool) for _, index in indexed_names
-        ):
-            indexed_names.sort(key=lambda item: item[1])
-            if [index for _, index in indexed_names] != list(range(len(indexed_names))):
-                return None
-            return [str(name) for name, _ in indexed_names]
-        values: Iterable[Any] = names.values()
-    elif isinstance(names, Sequence):
-        values = names
-    else:
-        return None
-
-    flattened = []
-    for value in values:
-        nested = flatten_feature_names(value)
-        if nested is None:
-            return None
-        flattened.extend(nested)
-    return flattened or None
 
 
 def import_dm05_core():

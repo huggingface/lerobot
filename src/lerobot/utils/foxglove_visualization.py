@@ -463,34 +463,6 @@ def log_foxglove_data(
 # to in the Foxglove app. This relies on the SDK's PlaybackControl capability.
 
 
-def _feature_dim_names(feature: dict | None) -> list[str] | None:
-    """Best-effort per-dimension series labels for a 1D feature, or ``None`` to fall back to indices.
-
-    LeRobot records a feature's ``names`` inconsistently: a flat list (``["x", "y"]``), a category
-    mapping (``{"motors": ["motor_0", "motor_1"]}``), or a name->index mapping
-    (``{"delta_x": 0, "delta_y": 1}``). Each is handled, but labels are only returned when their count
-    matches the feature's 1D shape, so a malformed/mismatched ``names`` can't silently mislabel series.
-    """
-
-    if not feature:
-        return None
-    shape = feature.get("shape")
-    dim = shape[0] if shape and len(shape) == 1 else None
-    names = feature.get("names")
-    labels: list[str] | None = None
-    if isinstance(names, dict):
-        values = list(names.values())
-        if values and all(isinstance(v, (list, tuple)) for v in values):
-            labels = [str(n) for group in values for n in group]
-        elif values and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
-            labels = [name for name, _ in sorted(names.items(), key=lambda kv: kv[1])]
-    elif isinstance(names, (list, tuple)):
-        labels = [str(n) for n in names]
-    if labels is not None and dim is not None and len(labels) == dim:
-        return labels
-    return None
-
-
 def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -> dict[str, float]:
     """Flatten a frame's vector/scalar feature ``key`` into ``{label: value}`` entries.
 
@@ -580,8 +552,8 @@ def serve_foxglove_dataset_playback(
         depth_ranges[key] = (float(np.asarray(lo).item()), float(np.asarray(hi).item()))
     # Per-dimension series labels from the dataset metadata (e.g. joint names), computed once.
     scalar_labels = {
-        OBS_STATE: _feature_dim_names(dataset.meta.features.get(OBS_STATE)),
-        ACTION: _feature_dim_names(dataset.meta.features.get(ACTION)),
+        OBS_STATE: dataset.meta.names.get(OBS_STATE),
+        ACTION: dataset.meta.names.get(ACTION),
     }
     # Local channel cache so the playback server is self-contained and doesn't touch the live-stream cache.
     channels: dict = {}

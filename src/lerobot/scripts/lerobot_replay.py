@@ -113,6 +113,13 @@ def replay(cfg: ReplayConfig):
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
     actions = dataset.select_columns(ACTION)
+    action_names = dataset.meta.names[ACTION]
+    if action_names is None:
+        action_feature = dataset.features[ACTION]
+        raise ValueError(
+            f"Expected one name per action value, got names={action_feature.get('names')!r} "
+            f"for shape {action_feature.get('shape')}"
+        )
     check_control_rate(robot, dataset.fps)
 
     robot.connect()
@@ -130,7 +137,7 @@ def replay(cfg: ReplayConfig):
             with timer.section("read_frame"):
                 action_array = actions[idx][ACTION]
                 action = {}
-                for i, name in enumerate(dataset.features[ACTION]["names"]):
+                for i, name in enumerate(action_names):
                     action[name] = action_array[i]
 
             with timer.section("observe"):

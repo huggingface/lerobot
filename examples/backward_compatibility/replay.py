@@ -79,6 +79,7 @@ def replay(cfg: ReplayConfig):
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
     actions = dataset.select_columns(ACTION)
+    action_names = dataset.meta.names[ACTION]
     robot.connect()
 
     try:
@@ -88,7 +89,7 @@ def replay(cfg: ReplayConfig):
 
             action_array = actions[idx][ACTION]
             action = {}
-            for i, name in enumerate(dataset.features[ACTION]["names"]):
+            for i, name in enumerate(action_names):
                 key = f"{name.removeprefix('main_')}.pos"
                 action[key] = action_array[i].item()
 

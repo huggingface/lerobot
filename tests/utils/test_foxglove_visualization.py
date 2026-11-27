@@ -16,7 +16,7 @@
 
 """Tests for the Foxglove backend's pure helpers.
 
-These cover topic naming, series labelling and feature-name parsing. They import
+These cover topic naming and series labelling. They import
 ``foxglove_visualization`` directly and need NO ``foxglove`` extra: the SDK is imported lazily inside
 the functions that talk to the server, so the helpers below run in the base test tier.
 """
@@ -72,25 +72,6 @@ def test_frame_to_scalars_matches_live_labeling_and_handles_scalar():
     assert fv._frame_to_scalars({ACTION: np.array(5.0)}, ACTION) == {"action": 5.0}
     # A missing feature yields an empty mapping.
     assert fv._frame_to_scalars({}, OBS_STATE) == {}
-
-
-def test_feature_dim_names_formats():
-    # Flat list of names.
-    assert fv._feature_dim_names({"shape": [2], "names": ["x", "y"]}) == ["x", "y"]
-    # Category mapping (dict of lists).
-    assert fv._feature_dim_names({"shape": [2], "names": {"motors": ["m0", "m1"]}}) == ["m0", "m1"]
-    # name -> index mapping (returned sorted by index).
-    assert fv._feature_dim_names({"shape": [2], "names": {"delta_x": 0, "delta_y": 1}}) == [
-        "delta_x",
-        "delta_y",
-    ]
-    # Bool values must NOT be treated as an index map (bool is a subclass of int).
-    assert fv._feature_dim_names({"shape": [2], "names": {"a": True, "b": False}}) is None
-    # Mismatched length -> None (won't silently mislabel).
-    assert fv._feature_dim_names({"shape": [3], "names": ["x", "y"]}) is None
-    # Missing / absent names -> None.
-    assert fv._feature_dim_names(None) is None
-    assert fv._feature_dim_names({"shape": [2]}) is None
 
 
 def test_is_scalar():
