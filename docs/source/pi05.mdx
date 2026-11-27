@@ -333,6 +333,14 @@ are reset together.
 
 By default, π₀.₅ predicts absolute actions. You can enable **relative actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
 
+With proprioceptive memory, newly constructed processors use the delta-zero frame
+at the end of the state history as the relative-action anchor. The processor saves
+this choice as `state_index`, and the inverse transform and RTC use the same frame.
+Saved processors without this field keep the legacy index `0`; loading a checkpoint
+does not silently change its learned action convention. A checkpoint trained with
+relative actions anchored to an older frame needs separate evaluation or retraining;
+changing its processor alone does not establish correct behavior.
+
 To use relative actions, first recompute your dataset stats in relative space via the CLI:
 
 ```bash
