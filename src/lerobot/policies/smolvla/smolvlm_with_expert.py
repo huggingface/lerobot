@@ -27,7 +27,6 @@ if TYPE_CHECKING or _transformers_available:
         AutoModel,
         AutoModelForImageTextToText,
         AutoProcessor,
-        DynamicCache,
         SmolVLMForConditionalGeneration,
     )
 else:
@@ -35,8 +34,58 @@ else:
     AutoModel = None
     AutoModelForImageTextToText = None
     AutoProcessor = None
-    DynamicCache = None
     SmolVLMForConditionalGeneration = None
+
+
+class _PrefixKVLayer:
+    """Key/value tensors of one layer, stored as [batch, heads, seq, head_dim] like ``transformers.DynamicLayer``."""
+
+    def __init__(self):
+        self.keys: torch.Tensor | None = None
+        self.values: torch.Tensor | None = None
+
+    @property
+    def is_initialized(self) -> bool:
+        return self.keys is not None
+
+    def get_seq_length(self) -> int:
+        return 0 if self.keys is None else self.keys.shape[-2]
+
+    def crop(self, tokens_to_remove: int) -> None:
+        """Drop the last ``-tokens_to_remove`` tokens; 0 is a no-op (same contract as ``DynamicLayer.crop``)."""
+        if tokens_to_remove > 0:
+            raise ValueError(f"crop expects a non-positive value, got {tokens_to_remove}")
+        if tokens_to_remove == 0 or self.keys is None:
+            return
+        self.keys = self.keys[..., :tokens_to_remove, :]
+        self.values = self.values[..., :tokens_to_remove, :]
+
+
+class PrefixKVCache:
+    """Minimal key/value cache for the prefix prefill and the denoising steps.
+
+    Same interface as the parts of ``transformers.DynamicCache`` this module uses (``update``, ``layers[i].keys`` /
+    ``.values``, ``crop``, ``get_seq_length``), but a layer starts from the first key/value it receives instead of
+    concatenating onto an empty tensor. That empty-tensor ``torch.cat`` is what stops SmolVLA from being traced and
+    exported (for example with ``openvino.convert_model``); the numerics are identical.
+    """
+
+    def __init__(self):
+        self.layers: list[_PrefixKVLayer] = []
+
+    def update(self, key_states: torch.Tensor, value_states: torch.Tensor, layer_idx: int):
+        while len(self.layers) <= layer_idx:
+            self.layers.append(_PrefixKVLayer())
+        layer = self.layers[layer_idx]
+        if layer.keys is None:
+            layer.keys, layer.values = key_states, value_states
+        else:
+            layer.keys = torch.cat([layer.keys, key_states], dim=-2)
+            layer.values = torch.cat([layer.values, value_states], dim=-2)
+        return layer.keys, layer.values
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self.layers[layer_idx].get_seq_length() if layer_idx < len(self.layers) else 0
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -231,8 +280,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "PrefixKVCache | None" = None,
+    ) -> "tuple[list[torch.Tensor], PrefixKVCache | None]":
         query_states = []
         key_states = []
         value_states = []
@@ -278,7 +327,7 @@ class SmolVLMWithExpertModel(nn.Module):
                 raise ValueError(
                     "`use_cache=True` requires a `past_key_values` cache (forward() creates one on prefill)."
                 )
-            # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
+            # The cache stores tensors as [batch, heads, seq, head_dim]; this module works with
             # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
             # returns them unchanged; during denoising it appends the suffix K/V and returns
             # [prefix; suffix], exactly like the previous hand-rolled dict cache.
@@ -305,8 +354,8 @@ class SmolVLMWithExpertModel(nn.Module):
         batch_size,
         head_dim,
         use_cache: bool = True,
-        past_key_values: "DynamicCache | None" = None,
-    ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
+        past_key_values: "PrefixKVCache | None" = None,
+    ) -> "tuple[list[torch.Tensor], PrefixKVCache | None]":
         attention_interface = self.get_attention_interface()
 
         att_outputs = []
@@ -347,7 +396,7 @@ class SmolVLMWithExpertModel(nn.Module):
             # Cross-attention layers never fill the cache themselves: during the prefix prefill every
             # layer goes through `forward_attn_layer`, which stores the (post-RoPE) VLM K/V for this
             # layer index. Here we only read them back (no concatenation: the expert cross-attends to
-            # the fixed prefix). `DynamicCache` stores [batch, heads, seq, head_dim]; transpose back.
+            # the fixed prefix). The cache stores [batch, heads, seq, head_dim]; transpose back.
             key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
             value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
 
@@ -419,7 +468,7 @@ class SmolVLMWithExpertModel(nn.Module):
         self,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: "DynamicCache | None" = None,
+        past_key_values: "PrefixKVCache | None" = None,
         inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
     ):
@@ -444,7 +493,7 @@ class SmolVLMWithExpertModel(nn.Module):
         # read from it instead.
         fill_kv_cache = use_cache and past_key_values is None
         if fill_kv_cache:
-            past_key_values = DynamicCache()
+            past_key_values = PrefixKVCache()
 
         # RMSNorm
         num_layers = self.num_vlm_layers
