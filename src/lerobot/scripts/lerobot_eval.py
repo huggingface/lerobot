@@ -187,6 +187,8 @@ def rollout(
     recording_private: bool = False,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
     max_episode_steps: int | None = None,
+    *,
+    recording_num_envs: int | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -219,6 +221,8 @@ def rollout(
         predicted_latents_callback: Optional callback invoked after every ``select_action`` with the policy
             itself. World-model policies (e.g. LingBot-VA) stash predicted video latents on
             ``policy.last_predicted_latents``; this lets the caller concatenate chunks and decode once.
+        recording_num_envs: When recording datasets, record this many leading vector slots. Defaults to
+            recording all slots. The policy and environment still run on the whole batch.
     Returns:
         The dictionary described above.
     """
@@ -244,7 +248,10 @@ def rollout(
         recording_datasets = []
         multi_env = env.num_envs > 1
         base_repo_id = recording_repo_id or "eval_recording"
-        for i in range(env.num_envs):
+        n_recording_envs = env.num_envs if recording_num_envs is None else recording_num_envs
+        if not 1 <= n_recording_envs <= env.num_envs:
+            raise ValueError(f"recording_num_envs must be in [1, {env.num_envs}], got {n_recording_envs}.")
+        for i in range(n_recording_envs):
             root = str(recording_dir / f"env_{i}") if multi_env else str(recording_dir)
             repo_id = f"{base_repo_id}_env_{i}" if multi_env else base_repo_id
             recording_datasets.append(
@@ -380,7 +387,7 @@ def rollout(
                 episode_ends = np.ones_like(episode_ends, dtype=bool)
 
             if recording_datasets is not None and raw_observation is not None:
-                for env_idx in range(env.num_envs):
+                for env_idx, dataset in enumerate(recording_datasets):
                     if done[env_idx]:
                         continue
                     frame = _build_raw_frame(
@@ -391,11 +398,11 @@ def rollout(
                         successes[env_idx],
                         bool(episode_ends[env_idx]),
                         task_desc,
-                        recording_datasets[env_idx].features,
+                        dataset.features,
                     )
-                    recording_datasets[env_idx].add_frame(frame)
+                    dataset.add_frame(frame)
                     if episode_ends[env_idx]:
-                        recording_datasets[env_idx].save_episode()
+                        dataset.save_episode()
                 raw_observation = deepcopy(observation)
 
             done = episode_ends | done
@@ -599,6 +606,7 @@ def eval_policy(
             recording_private=recording_private,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
             max_episode_steps=max_episode_steps,
+            recording_num_envs=min(env.num_envs, n_episodes - batch_ix * env.num_envs),
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
