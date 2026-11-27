@@ -11,9 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Train FAST tokenizer for action encoding.
+"""Train an action tokenizer: FAST (default) or the CAE-FastWAM action VAE.
 
-This script:
+With `--tokenizer_type=cae_action_vae`, the script trains the action VAE of CAE-FastWAM (stage 1) on the
+dataset's action chunks instead (see `lerobot.policies.cae_fastwam.action_vae` and the CAE-FastWAM docs):
+
+```shell
+lerobot-train-tokenizer \
+    --tokenizer_type=cae_action_vae \
+    --repo_id=user/dataset_name \
+    --action_horizon=32 \
+    --sample_fraction=1.0 \
+    --normalization_mode=MIN_MAX \
+    --output_dir=./cae_action_vae_dataset_name
+```
+
+For FAST, this script:
 1. Loads action chunks from LeRobotDataset (with episode sampling)
 2. Optionally applies relative transforms (relative vs absolute actions)
 3. Extracts specified action dimensions for encoding
@@ -46,7 +59,7 @@ lerobot-train-tokenizer \
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,6 +76,7 @@ else:
 
 from lerobot.configs import NormalizationMode, parser
 from lerobot.datasets import LeRobotDataset
+from lerobot.policies.cae_fastwam.action_vae import CAEActionVAETrainingConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.utils import init_logging
 
@@ -71,10 +85,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenizerTrainingConfig:
-    """Configuration for training FAST tokenizer."""
+    """Configuration for training an action tokenizer (FAST by default)."""
 
     # LeRobot dataset repository ID
     repo_id: str
+    # Tokenizer to train: "fast" (FAST, BPE on DCT coefficients) or "cae_action_vae" (CAE-FastWAM action VAE)
+    tokenizer_type: str = "fast"
     # Root directory for dataset (default: ~/.cache/huggingface/lerobot)
     root: str | None = None
     # Number of future actions in each chunk
@@ -105,6 +121,8 @@ class TokenizerTrainingConfig:
     hub_repo_id: str | None = None
     # Whether to create a private repository on the Hub
     hub_private: bool = False
+    # CAE-FastWAM action VAE options (`--tokenizer_type=cae_action_vae` only)
+    cae: CAEActionVAETrainingConfig = field(default_factory=CAEActionVAETrainingConfig)
 
 
 def apply_relative_transform(
@@ -387,6 +405,16 @@ def train_tokenizer(cfg: TokenizerTrainingConfig) -> None:
     Args:
         cfg: TokenizerTrainingConfig dataclass with all configuration parameters
     """
+    if cfg.tokenizer_type == "cae_action_vae":
+        from lerobot.policies.cae_fastwam.action_vae import train_cae_action_vae_from_config
+
+        train_cae_action_vae_from_config(cfg)
+        return
+    if cfg.tokenizer_type != "fast":
+        raise ValueError(
+            f"Unknown tokenizer_type {cfg.tokenizer_type!r}; expected 'fast' or 'cae_action_vae'."
+        )
+
     # load dataset
     logger.info(f"Loading dataset: {cfg.repo_id}")
     dataset = LeRobotDataset(repo_id=cfg.repo_id, root=cfg.root)
