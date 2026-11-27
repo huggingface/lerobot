@@ -30,15 +30,17 @@ from __future__ import annotations
 import contextlib
 import importlib
 import json
+import math
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
+import pyarrow as pa
 import torch
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
@@ -91,6 +93,123 @@ _DEPTH_DECODE_MAX_BYTES = 64 << 20
 # PyAV retains decoded uint16 frames while dequantization creates float32 output.
 # Leave extra headroom for the selected-frame stack and allocator overhead.
 _DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+
+def _is_list_type(arrow_type: pa.DataType) -> bool:
+    """True for Arrow fixed-size, variable-length, and list-view array types."""
+    return (
+        pa.types.is_fixed_size_list(arrow_type)
+        or pa.types.is_list(arrow_type)
+        or pa.types.is_large_list(arrow_type)
+        or pa.types.is_list_view(arrow_type)
+        or pa.types.is_large_list_view(arrow_type)
+    )
+
+
+def _unpack_list_column(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    key: str,
+    expected_shape: tuple[int, ...] = (),
+) -> np.ndarray:
+    """Recursively unpack a (possibly nested) Arrow list column into a dense numpy array.
+
+    Supports arbitrary-depth ``FixedSizeList`` columns as well as uniform-width
+    variable-length list columns, raising ``ValueError`` on nulls, ragged rows,
+    non-primitive leaf types, or shape mismatches instead of silently misaligning rows.
+    """
+    if isinstance(array, pa.ChunkedArray):
+        array = array.combine_chunks()
+    num_rows = len(array)
+    current = array
+    inferred_dims: list[int] = []
+    depth = 0
+
+    while _is_list_type(current.type):
+        if current.null_count > 0:
+            raise ValueError(
+                f"Column {key!r} contains {current.null_count} null list value(s) at nesting depth "
+                f"{depth} (type {array.type}); cannot unpack into a dense array."
+            )
+        if pa.types.is_fixed_size_list(current.type):
+            inferred_dims.append(int(current.type.list_size))
+        elif len(current) == 0:
+            inferred_dims.append(expected_shape[depth] if depth < len(expected_shape) else 0)
+        else:
+            if pa.types.is_list_view(current.type) or pa.types.is_large_list_view(current.type):
+                lengths = current.sizes.to_numpy(zero_copy_only=False)
+            else:
+                offsets = current.offsets.to_numpy(zero_copy_only=False)
+                lengths = np.diff(offsets)
+            width = int(lengths[0])
+            if not np.all(lengths == width):
+                raise ValueError(
+                    f"Column {key!r} has ragged list lengths at nesting depth {depth} "
+                    f"(type {array.type}); cannot unpack into a dense array."
+                )
+            inferred_dims.append(width)
+        current = current.flatten()
+        depth += 1
+
+    if current.null_count > 0:
+        raise ValueError(
+            f"Column {key!r} contains {current.null_count} null leaf value(s) "
+            f"(type {array.type}); cannot unpack into a dense numeric array."
+        )
+    if pa.types.is_nested(current.type):
+        raise ValueError(
+            f"Column {key!r} has unsupported nested leaf type {current.type} "
+            f"(from {array.type}); expected a primitive array."
+        )
+
+    values = current.to_numpy(zero_copy_only=False)
+    inferred_shape = tuple(inferred_dims)
+    inferred_row_size = math.prod(inferred_shape)
+
+    if expected_shape:
+        expected_row_size = math.prod(expected_shape)
+        if inferred_row_size != expected_row_size:
+            raise ValueError(
+                f"Column {key!r} unpacked row width {inferred_row_size} (list dims {inferred_shape}) "
+                f"does not match feature shape {expected_shape} (expected {expected_row_size} values/row)."
+            )
+        if len(inferred_shape) > 1 and inferred_shape != expected_shape:
+            raise ValueError(
+                f"Column {key!r} nested list dims {inferred_shape} do not match feature shape "
+                f"{expected_shape}."
+            )
+        target_shape = expected_shape
+        row_size = expected_row_size
+    else:
+        target_shape = inferred_shape
+        row_size = inferred_row_size
+
+    expected_total = num_rows * row_size
+    if len(values) != expected_total:
+        raise ValueError(
+            f"Column {key!r} flattened to {len(values)} value(s), expected {expected_total} "
+            f"for {num_rows} row(s) of shape {target_shape}."
+        )
+    return values.reshape((num_rows, *target_shape))
+
+
+def _unpack_numeric_column(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    key: str,
+    expected_shape: tuple[int, ...] = (),
+) -> np.ndarray:
+    """Unpack an Arrow scalar or (possibly nested) list column into a dense numpy array."""
+    if isinstance(array, pa.ChunkedArray):
+        array = array.combine_chunks()
+    if _is_list_type(array.type):
+        return _unpack_list_column(array, key=key, expected_shape=expected_shape)
+    if array.null_count > 0:
+        raise ValueError(
+            f"Column {key!r} contains {array.null_count} null value(s) "
+            f"(type {array.type}); cannot unpack into a dense numeric array."
+        )
+    return array.to_numpy(zero_copy_only=False)
 
 
 def _decode_frame_limit(
@@ -521,12 +640,12 @@ class LanceDatasetReader(BaseDatasetReader):
         first = base + min(window) - (1 if key in self.meta.depth_keys else 0)
         return self._video_file_key(key, ep_idx), (first, base + max(window))
 
-    def _fetch_rows(self, rows: list[int]) -> dict[str, np.ndarray]:
+    def _fetch_rows(self, rows: list[int]) -> dict[str, Any]:
         batch = _opened(self._frames_perm).__getitems__(rows)
-        columns = {}
+        columns: dict[str, Any] = {}
         for key, lance_name in zip(self._tabular_keys, self._fetch_columns, strict=True):
             array = batch.column(lance_name)
-            if hasattr(array, "combine_chunks"):
+            if isinstance(array, pa.ChunkedArray):
                 array = array.combine_chunks()
             if key in self._language_keys:
                 language_rows = array.to_pylist()
@@ -538,11 +657,12 @@ class LanceDatasetReader(BaseDatasetReader):
                                 for call in msg["tool_calls"]
                             ]
                 columns[key] = language_rows
-            elif hasattr(array, "flatten") and hasattr(array.type, "value_type"):
-                values = array.flatten().to_numpy(zero_copy_only=False)
-                columns[key] = values.reshape(len(array), -1)
-            else:
+            elif key in self._string_keys:
                 columns[key] = array.to_numpy(zero_copy_only=False)
+            else:
+                columns[key] = _unpack_numeric_column(
+                    array, key=key, expected_shape=self._feature_shapes[key]
+                )
         return columns
 
     def _decode_videos(
@@ -909,7 +1029,7 @@ class LanceDatasetReader(BaseDatasetReader):
         slack = _RANGE_SLACK * 4 if key in self.meta.depth_keys else _RANGE_SLACK
         return int(kf_positions[start_idx]), min(end + slack, meta["file_size"])
 
-    def _build_item(self, plan: _SamplePlan, columns: dict[str, np.ndarray], row_pos: dict[int, int]) -> dict:
+    def _build_item(self, plan: _SamplePlan, columns: dict[str, Any], row_pos: dict[int, int]) -> dict:
         base = row_pos[plan["abs_idx"]]
         item: dict = {}
         for key in self._tabular_keys:
