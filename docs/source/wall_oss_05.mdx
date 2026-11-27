@@ -60,12 +60,10 @@ For a LeRobot source checkout:
 uv sync --extra wall_oss_05
 ```
 
-The policy is implemented natively in LeRobot. Its only policy-specific
-dependency is Transformers; no separate Wall-X checkout is required.
-Recipe-backed processing also requires the dataset extra. For language queries
-or training, install `uv sync --extra wall_oss_05 --extra training` (training
-includes dataset support). Set `--policy.recipe=null` for action-only processing
-without the dataset extra.
+The policy is implemented natively in LeRobot. Its policy-specific
+dependencies are Transformers and the dataset extra, which its recipe-backed
+processor needs; no separate Wall-X checkout is required. For training, install
+`uv sync --extra wall_oss_05 --extra training`.
 
 ## Checkpoints
 
