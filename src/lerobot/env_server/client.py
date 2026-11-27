@@ -99,8 +99,6 @@ class EnvClient:
         self.session_id = ""
         self.generation = 0
         self.descriptor: EnvDescriptor | None = None
-        # The suite the server last described, as it says; empty from a server that doesn't say.
-        self.described_suite = ""
         self._lock = RLock()
         self.failed = False
         self.num_envs = 0
@@ -108,7 +106,8 @@ class EnvClient:
     def describe(self, task_group: str | None = None) -> EnvDescriptor:
         """Return the env the server runs (features, fps, tasks), without building any simulator.
 
-        With `task_group`, that suite's own descriptor, if it declares its features; else the server's first suite's.
+        With `task_group`, that suite's own settings, and its shapes if it declares its features; else the server's
+        first suite's shapes. A server older than per-suite descriptions describes its first suite.
         """
         request = {"task_group": task_group} if task_group else {}
         with self._lock:
@@ -150,16 +149,15 @@ class EnvClient:
             self.deployment = body["deployment"]
             self.instance_id = body["instance_id"]
             self.descriptor = decode_descriptor(body["descriptor"])
-            self.described_suite = body.get("task_group") or ""
             return self.descriptor
 
-    def _describe_any(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _describe_any(self, request: dict[str, Any]) -> dict[str, Any]:
         """Describe whichever deployment the endpoint serves; a timeout if no server answers."""
         try:
             return self._query(
                 ANY_DEPLOYMENT_DESCRIBE,
                 MessageType.DESCRIBE,
-                request or {},
+                request,
                 self.handshake_timeout_s,
                 MessageType.DESCRIPTOR,
             )
@@ -182,32 +180,16 @@ class EnvClient:
         task_id: int | None = None,
         seeds: list[int | None] | None = None,
         use_async_envs: bool = False,
-        descriptor: EnvDescriptor | None = None,
     ) -> StepResult:
         """Open a session of `num_envs` envs on one task and return the result of its first reset.
 
-        The task must have the observations and actions of `descriptor`, the run's first suite's; by default,
-        its own description.
+        The task must have the observations and actions the server describes for its suite.
         """
         with self._lock:
             if self.session_id:
                 raise RuntimeError("Env server session already open")
-            if descriptor is not None and task_group:
-                # A suite the server describes from its declared features is checked before it is built.
-                described = self.describe(task_group)
-                difference = (
-                    descriptor.schema_difference(described) if self.described_suite == task_group else ""
-                )
-                if difference:
-                    raise ProtocolError(
-                        ErrorCode.INCOMPATIBLE,
-                        f"Suite {task_group!r} has other observations or actions than the run's first suite: "
-                        f"{difference}",
-                    )
-            elif not self.instance_id:
-                # Finds the server instance to open the session on.
-                self.describe(task_group)
-            descriptor = descriptor or self.descriptor or self.describe(task_group)
+            # Describing also finds the server instance to open the session on.
+            described = self.describe(task_group)
             body = self._query(
                 instance_prefix(self.deployment, self.instance_id) + "/open",
                 MessageType.OPEN,
@@ -225,13 +207,13 @@ class EnvClient:
                 MessageType.ACCEPTED,
             )
             opened_descriptor = decode_descriptor(body["descriptor"])
-            difference = descriptor.schema_difference(opened_descriptor)
+            # A server older than per-suite descriptions describes its first suite, whatever the task.
+            difference = described.schema_difference(opened_descriptor)
             if difference:
                 self.transport.close()
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE,
-                    f"Suite {task_group!r} has other observations or actions than the run's first suite: "
-                    f"{difference}. A server describes a suite it hasn't built only from the features it declares.",
+                    f"The opened task has other observations or actions than the server described: {difference}",
                 )
             self.descriptor = opened_descriptor
             self.session_id = body["session_id"]
@@ -332,8 +314,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             use_async_envs (`bool`, *optional*, defaults to `False`):
                 Run each env in its own worker process on the server.
             descriptor (`EnvDescriptor`, *optional*):
-                The run's first suite's descriptor, if already fetched; saves a `describe` call. The task must have
-                its observations and actions.
+                The descriptor of the task's suite, if already fetched; saves a `describe` call.
         """
         self.client = client
         self.use_async_envs = use_async_envs
@@ -381,11 +362,10 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             self._latest = self.client.request("reset", seeds=seeds)
         else:
             self._latest = self.client.open(
-                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs, self.descriptor
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
             )
-            # The opened task's descriptor, with its own control rate and episode limit.
+            # The opened task's descriptor, with its simulator's episode limit.
             self.descriptor = self.client.descriptor or self.descriptor
-            self.metadata["render_fps"] = self.descriptor.fps
         return self.latest.obs, self.latest.info()
 
     def step(

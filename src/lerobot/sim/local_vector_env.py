@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from multiprocessing.connection import Connection
-from typing import Any, cast
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -257,22 +257,27 @@ def _describe(
     )
 
 
-def declared_descriptor(
-    config: SimConfig, tasks: dict[str, list[int]], max_episode_steps: int = _DEFAULT_MAX_EPISODE_STEPS
-) -> EnvDescriptor | None:
-    """Describe a suite from its declared `features`, without building it; None if it declares none.
+def describe_suite(
+    config: SimConfig, tasks: dict[str, list[int]], like: EnvDescriptor | None = None
+) -> EnvDescriptor:
+    """Describe a suite with its own settings, without building it.
 
-    Images are `uint8` and every other observation `float32`, as `canonical_observation` returns them. The episode
-    limit is a placeholder until the simulator is built.
+    The shapes are the suite's declared `features` (images `uint8`, other observations `float32`, as
+    `canonical_observation` returns them), else those of `like`, a suite described before; a suite with neither
+    must be built to be described. The episode limit is `like`'s, or a placeholder, until the simulator is built.
     """
-    if not config.features:
-        return None
-    observations = {
-        name: (shape, "uint8" if name == OBS_IMAGE or name.startswith(f"{OBS_IMAGES}.") else "float32")
-        for name, shape in config.features.items()
-        if name != ACTION
-    }
-    return _describe(config, tasks, observations, config.features[ACTION], max_episode_steps)
+    limit = like.max_episode_steps if like is not None else _DEFAULT_MAX_EPISODE_STEPS
+    if config.features:
+        observations = {
+            name: (shape, "uint8" if name == OBS_IMAGE or name.startswith(f"{OBS_IMAGES}.") else "float32")
+            for name, shape in config.features.items()
+            if name != ACTION
+        }
+        return _describe(config, tasks, observations, config.features[ACTION], limit)
+    if like is None:
+        raise ValueError(f"Suite {config.task!r} of {config.type} declares no features to describe it from")
+    observations = {f.name: (f.shape, f.dtype) for f in like.features}
+    return _describe(config, tasks, observations, like.action_feature.shape, limit)
 
 
 class LocalVectorEnv(gym.vector.VectorEnv):
@@ -292,7 +297,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
 
     def __init__(
         self,
-        config: SimConfig | Mapping[str, Any],
+        settings: Mapping[str, Any],
         num_envs: int = 1,
         task_group: str | None = None,
         task_id: int | None = None,
@@ -302,9 +307,9 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         """Select the task; build its simulators now only if nothing else describes them.
 
         Args:
-            config (`SimConfig` or `dict`):
-                The simulator to run: a `SimConfig`, used as is, or its settings (`SimSettings` fields), resolved
-                with the integration's `sim_settings` for the suite this env runs.
+            settings (`dict`):
+                The simulator to run, as `SimSettings` fields. Unset ones come from the integration's
+                `sim_settings` for the suite this env runs.
             num_envs (`int`, *optional*, defaults to `1`):
                 Number of envs in the batch.
             task_group (`str`, *optional*):
@@ -314,19 +319,10 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             use_async_envs (`bool`, *optional*, defaults to `False`):
                 Run each env in its own worker process.
             descriptor (`EnvDescriptor`, *optional*):
-                The descriptor of another suite of the same run, which this one must match: one policy runs
-                them all.
+                The descriptor of the suite this one must match, e.g. the run's first suite, since one policy runs
+                them all. A suite that declares no features is described with its shapes until it is built.
         """
-        settings: dict[str, Any] | None = None
-        if isinstance(config, SimConfig):
-            sim_type, task, options = config.type, config.task, config.kwargs
-        else:
-            settings = dict(config)
-            sim_type, task, options = (
-                settings["type"],
-                settings.get("task") or "",
-                settings.get("kwargs") or {},
-            )
+        sim_type, task, options = settings["type"], settings.get("task") or "", settings.get("kwargs") or {}
         with simulator_required(sim_type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{sim_type}")
             vector_env_fns = getattr(integration, "vector_env_fns", None)
@@ -346,9 +342,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if self.task_group not in factories:
             raise ValueError(f"Unknown task {self.task_group!r}; this environment has {sorted(self.tasks)}")
         # Each suite has its own settings, e.g. its control rate or robot.
-        self.config = (
-            SimConfig.resolve(settings, self.task_group) if settings is not None else cast(SimConfig, config)
-        )
+        self.config = SimConfig.resolve(dict(settings), self.task_group)
         task_factories = factories[self.task_group]
         # Default to the suite's first task id, not 0: a suite can be filtered (e.g. LIBERO's task_ids).
         self.task_id: int = next(iter(task_factories), 0) if task_id is None else task_id
@@ -476,19 +470,14 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         try:
             built = self._read_descriptor()
             # Observations are a dict: features declared in another order still match.
-            difference = self.descriptor.schema_difference(built)
-            if difference:
-                source = "its declared features" if self.config.features else "the run's other suites"
-                raise ValueError(
-                    f"Suite {self.task_group!r} of {self.config.type} has other observations or actions than "
-                    f"{source}: {difference}"
-                )
+            source = "its declared features" if self.config.features else "the first suite"
+            self.descriptor.check_suite(self.task_group, built, source)
         except BaseException:
             # Not left built, so a later call checks it again instead of running it.
             self._close_envs()
             raise
-        # The same schema, with the simulator's own episode limit.
-        self.descriptor = built
+        # The simulator's own episode limit. The rest is the same, and is kept in the order clients were given.
+        self.descriptor = replace(self.descriptor, max_episode_steps=built.max_episode_steps)
 
     def _build_envs(self) -> None:
         """Build the simulators, so each task builds on first use."""
@@ -524,30 +513,12 @@ class LocalVectorEnv(gym.vector.VectorEnv):
 
         With neither, build it to describe it. `_build` checks a description the simulator didn't give.
         """
-        limit = other.max_episode_steps if other is not None else _DEFAULT_MAX_EPISODE_STEPS
-        described = declared_descriptor(self.config, self.tasks, limit)
-        if described is None and other is not None:
-            try:
-                described = _describe(
-                    self.config,
-                    self.tasks,
-                    {f.name: (f.shape, f.dtype) for f in other.features},
-                    other.action_feature.shape,
-                    limit,
-                )
-            except ValueError as error:
-                raise ValueError(
-                    f"Suite {self.task_group!r} of {self.config.type} doesn't fit the run's other suites: {error}"
-                ) from error
-        if described is None:
+        if other is None and not self.config.features:
             self._build_envs()
             return self._read_descriptor()
-        difference = other.schema_difference(described) if other is not None else ""
-        if difference:
-            raise ValueError(
-                f"Suite {self.task_group!r} of {self.config.type} has other observations or actions than the "
-                f"run's other suites: {difference}"
-            )
+        described = describe_suite(self.config, self.tasks, other)
+        if other is not None:
+            other.check_suite(self.task_group, described)
         return described
 
     def _read_descriptor(self) -> EnvDescriptor:

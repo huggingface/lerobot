@@ -21,7 +21,7 @@ from typing import Any
 
 from lerobot.sim.integrations import simulator_required
 from lerobot.sim.types import CONTROL_MODES
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_PREFIX
 
 
 @dataclass
@@ -71,9 +71,9 @@ class SimConfig:
         self.features = {name: tuple(shape) for name, shape in self.features.items()}
         if self.features and ACTION not in self.features:
             raise ValueError(f"features must give the shape of {ACTION!r}, got {sorted(self.features)}")
-        unknown = [name for name in self.features if name != ACTION and not name.startswith(f"{OBS_STR}.")]
+        unknown = [name for name in self.features if name != ACTION and not name.startswith(OBS_PREFIX)]
         if unknown:
-            raise ValueError(f"features are observations ({OBS_STR}.*) or {ACTION!r}, got {unknown}")
+            raise ValueError(f"features are observations ({OBS_PREFIX}*) or {ACTION!r}, got {unknown}")
         if self.control_mode not in CONTROL_MODES:
             raise ValueError(f"Unknown control_mode {self.control_mode!r}; expected one of {CONTROL_MODES}")
         if not math.isfinite(self.fps) or self.fps <= 0:
@@ -83,18 +83,15 @@ class SimConfig:
 
     @classmethod
     def resolve(cls, settings: dict[str, Any], suite: str) -> "SimConfig":
-        """Build `suite`'s config from `settings`, taking missing values from the integration's `sim_settings`.
-
-        With no suite (`""`), the integration's values are left out: `LocalVectorEnv`, given the settings
-        themselves, resolves its own suite once it knows it.
-        """
+        """Build `suite`'s config from `settings`, taking missing values from the integration's `sim_settings`."""
+        if not suite:
+            raise ValueError("Settings are resolved for one suite; name it")
         declared: dict[str, Any] = {}
-        if suite:
-            with simulator_required(settings["type"]):
-                integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
-                sim_settings = getattr(integration, "sim_settings", None)
-                if sim_settings is not None:
-                    declared = sim_settings(suite, **(settings.get("kwargs") or {}))
+        with simulator_required(settings["type"]):
+            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
+            sim_settings = getattr(integration, "sim_settings", None)
+            if sim_settings is not None:
+                declared = sim_settings(suite, **(settings.get("kwargs") or {}))
         return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
 
 

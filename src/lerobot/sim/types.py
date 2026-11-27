@@ -14,7 +14,7 @@
 
 """Env metadata and step results, independent of how the env is served."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import numpy as np
@@ -91,29 +91,35 @@ class EnvDescriptor:
         return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
 
     def schema_difference(self, other: "EnvDescriptor") -> str:
-        """Name what differs in `other`'s observations and actions, matched by name in any order; empty if none."""
+        """Name what differs in `other`'s observations and actions, matched by name in any order; empty if none.
+
+        Actions also differ in what they command (`control_mode`), even with the same shape and names.
+        """
         expected = {f.name: f for f in (*self.features, self.action_feature)}
         actual = {f.name: f for f in (*other.features, other.action_feature)}
         differences = []
+        if self.control_mode != other.control_mode:
+            differences.append(f"control_mode: expected {self.control_mode!r}, got {other.control_mode!r}")
         for name in sorted(expected.keys() | actual.keys()):
             want, got = expected.get(name), actual.get(name)
             if want is None or got is None:
                 differences.append(f"{name} {'missing' if got is None else 'not expected'}")
                 continue
-            for key in ("shape", "dtype", "names", "semantics"):
+            for key in (spec.name for spec in fields(FeatureSpec)):
                 if getattr(want, key) != getattr(got, key):
                     differences.append(
                         f"{name} {key}: expected {getattr(want, key)}, got {getattr(got, key)}"
                     )
         return "; ".join(differences)
 
-    def same_schema(self, other: "EnvDescriptor") -> bool:
-        """Return whether `other` has the same observation features, action feature and semantics."""
-        return (
-            self.features == other.features
-            and self.action_feature == other.action_feature
-            and self.semantics == other.semantics
-        )
+    def check_suite(self, suite: str, other: "EnvDescriptor", source: str = "the run's first suite") -> None:
+        """Raise if suite `suite`, described by `other`, has other observations or actions than this descriptor.
+
+        `source` names what this descriptor describes, for the error message.
+        """
+        difference = self.schema_difference(other)
+        if difference:
+            raise ValueError(f"Suite {suite!r} has other observations or actions than {source}: {difference}")
 
 
 @dataclass(frozen=True)

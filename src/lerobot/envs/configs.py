@@ -25,7 +25,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -93,10 +92,12 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """
         return _gym_settings(self, "delta")
 
-    def sim_config(self) -> SimConfig:
-        """Return ``sim_settings()`` with the sim's defaults for the first suite ``task`` names."""
-        suite = next((part.strip() for part in (self.task or "").split(",") if part.strip()), "")
-        return SimConfig.resolve(self.sim_settings(), suite)
+    def sim_config(self) -> NoReturn:
+        """Removed: settings differ per suite, resolve them with ``SimConfig.resolve(sim_settings(), suite)``."""
+        raise RuntimeError(
+            "EnvConfig.sim_config() was removed, since each suite has its own settings: resolve one suite's with "
+            "lerobot.sim.SimConfig.resolve(config.sim_settings(), suite)"
+        )
 
     def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""

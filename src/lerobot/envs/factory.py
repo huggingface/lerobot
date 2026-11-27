@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from functools import partial
@@ -119,10 +120,16 @@ def make_env(
     groups = [task.strip() for task in cfg.task.split(",")] if cfg.task else []
     # Describe the env from the first requested suite, so no other suite's simulator is built before it runs.
     descriptor, make = _env_factory(cfg, n_envs, use_async_envs, groups[0] if groups else None)
-    groups = groups or list(descriptor.tasks)
-    return {
-        group: {task_id: make(group, task_id) for task_id in _suite(descriptor, group)} for group in groups
-    }
+    envs: dict[str, dict[int, LocalVectorEnv | RemoteVectorEnv]] = {}
+    # Every env is created now, so a suite that doesn't match the first fails before any runs, closing the others.
+    with contextlib.ExitStack() as cleanup:
+        for group in groups or list(descriptor.tasks):
+            envs[group] = {}
+            for task_id in _suite(descriptor, group):
+                env = envs[group][task_id] = make(group, task_id)
+                cleanup.callback(env.close)
+        cleanup.pop_all()
+    return envs
 
 
 def make_task_env(
@@ -166,7 +173,12 @@ def _env_factory(
     task_group: str | None = None,
     task_id: int | None = None,
 ) -> tuple[EnvDescriptor, Callable[[str, int], LocalVectorEnv | RemoteVectorEnv]]:
-    """Return the env's descriptor, and a function building the vector env of one of its tasks."""
+    """Return the run's descriptor, and a function building the vector env of one task.
+
+    The run's first suite is `task_group`, or the env's first one. Every suite the function builds an env of
+    must match it, since one policy runs them all, and is checked when its first env is created, before anything
+    is built. In this process, the env of the first suite's task `task_id` describes the run and is reused.
+    """
     settings = cfg.sim_settings()
     server = cfg.server
     if server is not None:
@@ -183,22 +195,31 @@ def _env_factory(
             zenoh_config_path=server.zenoh_config_path,
             max_payload_bytes=server.max_payload_bytes,
         )
-        probe = connect()
-        try:
-            # The run's first suite: every suite it runs must match it, one policy runs them all.
-            descriptor = probe.describe(task_group)
-        finally:
-            probe.close()
+
+        def describe(group: str | None) -> EnvDescriptor:
+            # A suite with its own settings, and its declared shapes, else the server's first suite's, which its
+            # sessions are held to. Nothing is built.
+            probe = connect()
+            try:
+                return probe.describe(group)
+            finally:
+                probe.close()
+
+        descriptor = describe(task_group)
         check_served(descriptor.config, settings, server.endpoint)
+        descriptors = {task_group or next(iter(descriptor.tasks)): descriptor}
 
         def make(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
+            if group not in descriptors:
+                descriptors[group] = describe(group)
+                descriptor.check_suite(group, descriptors[group])
             return RemoteVectorEnv(
                 connect(encoding=server.encoding, jpeg_quality=server.jpeg_quality),
                 n_envs,
                 group,
                 task_id,
                 use_async_envs and n_envs > 1,
-                descriptor,
+                descriptors[group],
             )
 
         return descriptor, make

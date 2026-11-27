@@ -27,7 +27,7 @@ from typing import Any, cast
 import numpy as np
 
 from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig, SimSettings
-from lerobot.sim.local_vector_env import declared_descriptor
+from lerobot.sim.local_vector_env import describe_suite
 from lerobot.transport.protocol import (
     Envelope,
     ErrorCode,
@@ -245,10 +245,9 @@ class EnvServer:
         self._startup_env: LocalVectorEnv | None = None
         # The simulator's settings as configured; each env resolves its own suite's from them.
         self.settings: dict[str, Any] = asdict(config.sim)
-        # The first suite's descriptor, and the other suites' from their declared features (None if they have none).
+        # The first suite's descriptor, and each suite's once described.
         self.descriptor: EnvDescriptor
-        self._first_suite = ""
-        self._suite_descriptors: dict[str, EnvDescriptor | None] = {}
+        self._suite_descriptors: dict[str, EnvDescriptor] = {}
         self.ready = Event()
         self._stop = Event()
 
@@ -273,8 +272,6 @@ class EnvServer:
                     self._startup_env.task_group,
                 )
             self.descriptor = self._startup_env.descriptor
-            self._first_suite = self._startup_env.task_group
-            self._suite_descriptors = {self._first_suite: self.descriptor}
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance_id)
             describe = self.transport.declare_queryable(
@@ -349,15 +346,12 @@ class EnvServer:
         """Answer a request by its key: describe, open, or a session's reset, step or close."""
         if key in (deployment_prefix(self.config.deployment) + "/describe", ANY_DEPLOYMENT_DESCRIBE):
             _check_request_type(message, MessageType.DESCRIBE)
-            suite, descriptor = self._describe(message.body.get("task_group"))
             return message.reply(
                 MessageType.DESCRIPTOR,
                 {
                     "deployment": self.config.deployment,
                     "instance_id": self.instance_id,
-                    "descriptor": encode_descriptor(descriptor),
-                    # The suite it describes: the one asked for, or the first one.
-                    "task_group": suite,
+                    "descriptor": encode_descriptor(self._describe(message.body.get("task_group"))),
                 },
             )
         if message.instance_id != self.instance_id:
@@ -379,20 +373,21 @@ class EnvServer:
             MessageType.ACK, session.with_jpeg_frames(session.handle(operation, message.body))
         )
 
-    def _describe(self, task_group: str | None) -> tuple[str, EnvDescriptor]:
-        """Return a suite and its descriptor without building it: `task_group`, if it declares its features.
+    def _describe(self, task_group: str | None) -> EnvDescriptor:
+        """Describe suite `task_group` without building it, or the first suite if it names none of the env's.
 
-        Otherwise, the first suite and its descriptor. A client older than per-suite descriptions asks for none and gets the first suite's. An unknown suite is
-        refused when it is opened, naming the suites the env has.
+        A suite is described with its own settings, and with its declared features, else the first suite's
+        shapes. Its sessions are built against this description and refused if the simulator differs. An unknown
+        suite is refused when it is opened, naming the suites the env has.
         """
-        if task_group and task_group in self.descriptor.tasks:
-            if task_group not in self._suite_descriptors:
-                config = SimConfig.resolve(self.settings, task_group)
-                self._suite_descriptors[task_group] = declared_descriptor(config, self.descriptor.tasks)
-            descriptor = self._suite_descriptors[task_group]
-            if descriptor is not None:
-                return task_group, descriptor
-        return self._first_suite, self.descriptor
+        if not task_group or task_group not in self.descriptor.tasks:
+            return self.descriptor
+        if task_group not in self._suite_descriptors:
+            config = SimConfig.resolve(self.settings, task_group)
+            self._suite_descriptors[task_group] = describe_suite(
+                config, self.descriptor.tasks, self.descriptor
+            )
+        return self._suite_descriptors[task_group]
 
     def _open(self, body: dict[str, Any]) -> dict[str, Any]:
         """Check an open request and start a session for it."""
@@ -417,7 +412,7 @@ class EnvServer:
         seeds = _checked_seeds(body.get("seeds"), num_envs)
         batch_bytes = num_envs * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize
-            for f in self._describe(body.get("task_group"))[1].features
+            for f in self._describe(body.get("task_group")).features
         )
         # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
         limits = codec_limits(min(self.limits.max_payload_bytes, client_payload_bytes))
@@ -461,8 +456,10 @@ class EnvServer:
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()
-        # Each session runs its own suite, which may differ from the others: its client checks it.
-        return LocalVectorEnv(self.settings, num_envs, task_group, task_id, use_async_envs)
+        # Built against the description clients were given, so a simulator that differs is refused.
+        return LocalVectorEnv(
+            self.settings, num_envs, task_group, task_id, use_async_envs, self._describe(task_group)
+        )
 
     def _reap_sessions(self) -> None:
         """Close sessions whose client left or never showed up."""

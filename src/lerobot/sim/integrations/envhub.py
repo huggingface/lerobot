@@ -312,9 +312,9 @@ def sim_settings(
             )
         source = "sim_settings"
     else:
-        declared = getattr(module, "LEROBOT_SIM", {})
-        source = "LEROBOT_SIM"
-        if hasattr(module, "LEROBOT_SIM"):
+        legacy = getattr(module, "LEROBOT_SIM", None)
+        declared, source = legacy or {}, "LEROBOT_SIM"
+        if legacy is not None:
             warnings.warn(
                 f"{repo_id} sets LEROBOT_SIM, which is deprecated: define sim_settings(task, **make_env_kwargs) "
                 "returning the same dict instead (https://huggingface.co/docs/lerobot/envhub#sim_settings).",
@@ -328,5 +328,6 @@ def sim_settings(
             match = get_close_matches(key, _DEFAULTS, n=1)
             keys.append(f"{key!r} (did you mean {match[0]!r}?)" if match else repr(key))
         raise ValueError(f"{repo_id} {source} has unknown keys {', '.join(keys)}; expected {list(_DEFAULTS)}")
-    logger.info("EnvHub %s declares %s for %r in %s", repo_id, sorted(declared), task, source)
+    # Called for each env built, so once per task.
+    logger.debug("EnvHub %s declares %s for %r in %s", repo_id, sorted(declared), task, source)
     return {**_DEFAULTS, **declared}
