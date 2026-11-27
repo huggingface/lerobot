@@ -58,14 +58,28 @@ _BASE_MODEL_FIELDS = (
     "action_encoder_variational",
     "task_suites",
 )
+# Fields that only shape the action VAE (with `action_vae_path`, its weights come from there).
+_ACTION_VAE_FIELDS = (
+    "action_dim",
+    "action_horizon",
+    "action_latent_tokens",
+    "action_decoder_hidden_dim",
+    "action_encoder_hidden_dim",
+    "action_encoder_variational",
+    "task_suites",
+)
 
 
 def is_cae_fastwam_base_compatible_config(config: CAEFastWAMConfig) -> bool:
-    """Return whether every weight of `base_model_id` (the default architecture) fits `config`."""
+    """Return whether every weight of `base_model_id` (the default architecture) fits `config`, apart from
+    the action VAE when `action_vae_path` provides it."""
+    checked = [
+        name for name in _BASE_MODEL_FIELDS if not (config.action_vae_path and name in _ACTION_VAE_FIELDS)
+    ]
     defaults = {
         f.name: f.default_factory() if f.default_factory is not MISSING else f.default
         for f in fields(CAEFastWAMConfig)
-        if f.name in _BASE_MODEL_FIELDS
+        if f.name in checked
     }
     if any(getattr(config, name) != default for name, default in defaults.items()):
         return False
@@ -125,6 +139,12 @@ class CAEFastWAMConfig(FastWAMConfig):
         fp32_attention (bool): False: attention in the model dtype, as the original implementation.
         toggle_action_dimensions (list[int]): `[-1]` maps the LIBERO gripper from the dataset
             convention (0 close, 1 open) to the simulator's (+1 close, -1 open) and binarizes it.
+        action_vae_path (str | None): Action VAE trained with `lerobot-train-tokenizer
+            --tokenizer_type=cae_action_vae` (local directory or Hub repo). Its architecture, suite name
+            and statistics (`task_suite_stats`) replace the config's, and its weights replace the
+            checkpoint's action VAE. It must use the policy's action normalization (MIN_MAX). The action expert still initializes from the
+            checkpoint (keep `action_latent_dim`), so it needs a stage 2 fine-tune on the VAE's latents.
+            The saved policy holds the VAE's weights and does not keep this path.
     """
 
     action_latent_tokens: int = 8
@@ -140,6 +160,7 @@ class CAEFastWAMConfig(FastWAMConfig):
     base_model_id: str | None = CAE_FASTWAM_BASE_MODEL_ID
     fp32_attention: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=lambda: [-1])
+    action_vae_path: str | None = None
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -149,6 +170,8 @@ class CAEFastWAMConfig(FastWAMConfig):
     )
 
     def __post_init__(self) -> None:
+        if self.action_vae_path:
+            self._adopt_action_vae(self.action_vae_path)
         if self.action_dit_config is None:
             self.action_dit_config = default_cae_action_dit_config(self.action_latent_dim)
         if self.input_features is None:
@@ -178,6 +201,38 @@ class CAEFastWAMConfig(FastWAMConfig):
         ):
             self.pretrained_path = Path(self.base_model_id)
             self._auto_pretrained_path = True
+
+    def _adopt_action_vae(self, path: str) -> None:
+        """Take the architecture, suite, statistics and normalization of the VAE at `path`."""
+        from .action_vae import load_cae_action_vae_config
+
+        vae, stats = load_cae_action_vae_config(path)
+        mode = NormalizationMode(vae["normalization_mode"])
+        if mode != self.normalization_mapping["ACTION"]:
+            raise ValueError(
+                f"The action VAE at {path} was trained on {mode.value}-normalized actions, but the policy "
+                f"normalizes actions with {self.normalization_mapping['ACTION'].value}; train it with "
+                f"`--normalization_mode={self.normalization_mapping['ACTION'].value}`."
+            )
+        self.action_dim = int(vae["action_dim"])
+        self.action_horizon = int(vae["action_horizon"])
+        self.action_latent_tokens = int(vae["num_tokens"])
+        self.action_latent_dim = int(vae["latent_dim"])
+        self.action_encoder_hidden_dim = int(vae["encoder_hidden_dim"])
+        self.action_decoder_hidden_dim = int(vae["decoder_hidden_dim"])
+        self.action_encoder_variational = bool(vae["variational"])
+        self.task_suites = [str(suite) for suite in vae["task_suites"]]
+        self.task_suite_stats = stats
+        if self.task_suite not in self.task_suites:
+            self.task_suite = None
+
+    def _save_pretrained(self, save_directory: Path) -> None:
+        # The saved policy holds the action VAE's weights and statistics, so it loads without the VAE.
+        action_vae_path, self.action_vae_path = self.action_vae_path, None
+        try:
+            super()._save_pretrained(save_directory)
+        finally:
+            self.action_vae_path = action_vae_path
 
     def _validate_cae_options(self) -> None:
         """Check the CAE-FastWAM fields against each other and against FastWAM's."""

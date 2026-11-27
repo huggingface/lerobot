@@ -22,12 +22,14 @@ Devices, Inc.). Everything else is LeRobot's FastWAM.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.wan import FastWAM
 
@@ -345,6 +347,33 @@ class CAEFastWAMPolicy(FastWAMPolicy):
         for module in (self.model.action_encoder, self.model.action_decoder):
             module.requires_grad_(False)
             module.eval()
+        if config.action_vae_path:
+            self.load_action_vae(config.action_vae_path)
+
+    @torch.no_grad()
+    def load_action_vae(self, path: str) -> None:
+        """Load the weights of an action VAE trained with `lerobot-train-tokenizer --tokenizer_type=cae_action_vae`."""
+        from .action_vae import load_cae_action_vae_state_dict
+
+        state_dict = load_cae_action_vae_state_dict(path)
+        for prefix, module in (
+            ("encoder.", self.model.action_encoder),
+            ("decoder.", self.model.action_decoder),
+        ):
+            module.load_state_dict(
+                {key[len(prefix) :]: value for key, value in state_dict.items() if key.startswith(prefix)}
+            )
+        logging.info("CAE-FastWAM: action VAE loaded from %s.", path)
+
+    @classmethod
+    def _load_checkpoint(
+        cls, model: CAEFastWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> CAEFastWAMPolicy:
+        """FastWAM's loader; with `action_vae_path`, the action VAE then comes from there, not the checkpoint."""
+        model = super()._load_checkpoint(model, checkpoint, map_location, strict)
+        if model.config.action_vae_path:
+            model.load_action_vae(model.config.action_vae_path)
+        return model
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, Any]]:
         """Compute the CAE-FastWAM training loss for a preprocessed LeRobot batch.
