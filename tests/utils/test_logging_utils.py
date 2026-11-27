@@ -174,6 +174,7 @@ def test_metrics_tracker_reduce_across_ranks_outside_distributed():
     assert tracker.update_s.avg == 0.5
 
 
+@pytest.mark.gpu
 def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
     captured = {}
 
@@ -186,19 +187,26 @@ def test_metrics_tracker_reduce_across_ranks_invokes_all_reduce(monkeypatch):
     monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
     monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 4)
     monkeypatch.setattr(logging_utils.dist, "all_reduce", fake_all_reduce)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", lambda out, local: None)
 
     metrics = {
         "loss": AverageMeter("loss"),  # reduction="none" -> not touched
         "update_s": AverageMeter("update_s", reduction="max"),
     }
     tracker = MetricsTracker(batch_size=32, num_frames=1000, num_episodes=50, metrics=metrics)
+    tracker.metrics["late_max"] = AverageMeter("late_max", reduction="max")
+    tracker.metrics["late_local"] = AverageMeter("late_local")
+    tracker.late_max = 0.6
+    tracker.late_local = 0.3
     tracker.loss = 1.0
     tracker.update_s = 0.4
     tracker.reduce_across_ranks()
 
     assert captured["op"] == logging_utils.dist.ReduceOp.MAX
-    assert torch.allclose(captured["values"], torch.tensor([0.4], device=captured["values"].device))
+    assert torch.allclose(captured["values"], torch.tensor([0.6, 0.4], device=captured["values"].device))
     assert tracker.update_s.avg == pytest.approx(0.9)
+    assert tracker.late_max.avg == pytest.approx(0.9)
+    assert tracker.late_local.avg == pytest.approx(0.3)
     # Metrics without a reduction stay untouched.
     assert tracker.loss.avg == 1.0
     # Invariant: avg == sum / count must hold after reduce, so subsequent .update() calls
@@ -239,3 +247,69 @@ def test_metrics_tracker_update_metrics_does_not_override_caller_meter():
 
     assert tracker.metrics["loss"].avg == pytest.approx(1.0)  # snapshot ignored
     assert tracker.metrics["latent_loss"].avg == pytest.approx(0.2)
+
+
+def test_distributed_policy_metrics_align_by_name(monkeypatch):
+    tracker = MetricsTracker(batch_size=1, num_frames=8, num_episodes=2, metrics={})
+    tracker.update_metrics({"flow_loss": 2.0, "shared": 3.0})
+    tracker.update_metrics({"shared": 6.0})
+    peer = {"shared": (9.0, 1), "text_loss": (8.0, 1)}
+
+    def gather(out, local):
+        out[:] = [local, peer]
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", gather)
+    monkeypatch.setattr(logging_utils.dist, "all_reduce", lambda tensor, op: None)
+    tracker.reduce_across_ranks()
+
+    assert tracker.flow_loss.avg == 2.0
+    assert tracker.text_loss.avg == 8.0
+    assert tracker.shared.avg == 6.0
+
+    tracker.reset_averages()
+    tracker.update_metrics({"text_loss": 4.0})
+    peer = {"flow_loss": (5.0, 1)}
+    tracker.reduce_across_ranks()
+    assert tracker.flow_loss.avg == 5.0
+    assert tracker.text_loss.avg == 4.0
+
+
+def test_repeated_policy_metric_reduction_counts_each_update_once(monkeypatch):
+    tracker = MetricsTracker(batch_size=1, num_frames=8, num_episodes=2, metrics={})
+
+    def gather(out, local):
+        out[:] = [local, local]  # The peer reports the same observations.
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", gather)
+
+    tracker.update_metrics({"shared": 1.0})
+    tracker.reduce_across_ranks()
+    tracker.reduce_across_ranks()
+    tracker.update_metrics({"shared": 5.0})
+    tracker.reduce_across_ranks()
+    assert tracker.shared.avg == 3.0
+
+
+def test_local_meter_keeps_value_when_peer_reports_same_policy_key(monkeypatch):
+    tracker = MetricsTracker(1, 8, 2, {"local": AverageMeter("local")})
+    tracker.local = 1.0
+
+    def gather(out, local):
+        out[:] = [local, {"local": (8.0, 1), "peer_only": (4.0, 1)}]
+
+    monkeypatch.setattr(logging_utils.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(logging_utils.dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(logging_utils.dist, "all_gather_object", gather)
+
+    tracker.reduce_across_ranks()
+    assert tracker.local.avg == 1.0
+    assert tracker.peer_only.avg == 4.0
+
+    tracker.update_metrics({"peer_only": 10.0})
+    tracker.reduce_across_ranks()
+    assert tracker.local.avg == 1.0
+    assert tracker.peer_only.avg == 7.0

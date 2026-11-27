@@ -16,6 +16,8 @@
 
 from dataclasses import dataclass, field
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -30,7 +32,7 @@ DEFAULT_IMAGE_SIZE = 224
 class PI0FastConfig(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.float32
 
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
@@ -91,6 +93,7 @@ class PI0FastConfig(PreTrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.01
     optimizer_grad_clip_norm: float = 1.0
+    optimizer_fused: bool | None = None
 
     # Scheduler settings: see openpi `CosineDecaySchedule`
     # Note: These will auto-scale if --steps < scheduler_decay_steps
@@ -111,11 +114,16 @@ class PI0FastConfig(PreTrainedConfig):
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid paligemma_variant: {self.paligemma_variant}")
 
-        if self.dtype not in ["bfloat16", "float32"]:
+        if self.dtype not in [torch.bfloat16, torch.float32]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "input_features and output_features must be resolved (e.g. from the dataset) "
+                "before calling validate_features()"
+            )
         for i in range(self.empty_cameras):
             key = OBS_IMAGES + f".empty_camera_{i}"
             empty_camera = PolicyFeature(
@@ -145,6 +153,7 @@ class PI0FastConfig(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self):

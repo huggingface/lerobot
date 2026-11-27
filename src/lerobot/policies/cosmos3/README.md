@@ -1,0 +1,1 @@
+../../../../docs/source/policy_cosmos3_README.md

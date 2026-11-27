@@ -570,9 +570,8 @@ class VectorQuantize(nn.Module):
         sync_affine_param=False,
         ema_update=True,
         learnable_codebook=False,
-        in_place_codebook_optimizer: Callable[
-            ..., Optimizer
-        ] = None,  # Optimizer used to update the codebook embedding if using learnable_codebook
+        in_place_codebook_optimizer: Callable[..., Optimizer]
+        | None = None,  # Optimizer used to update the codebook embedding if using learnable_codebook
         affine_param=False,
         affine_param_batch_decay=0.99,
         affine_param_codebook_decay=0.9,

@@ -58,7 +58,7 @@ class EpisodeRecord:
     # repeat queries from different modules don't re-read the whole shard.
     _frames_df_cache: Any = field(default=None, init=False, repr=False, compare=False)
 
-    def frames_df(self):  # type: ignore[no-untyped-def]
+    def frames_df(self) -> Any:
         """Lazy-load the pandas slice for this episode (memoized)."""
         if self._frames_df_cache is None:
             import pandas as pd  # noqa: PLC0415  - deferred for optional dataset extra

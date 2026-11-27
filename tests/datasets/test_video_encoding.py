@@ -17,6 +17,8 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import shutil
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +48,8 @@ from tests.fixtures.constants import (
     DUMMY_VIDEO_KEY,
 )
 from tests.fixtures.dataset_factories import add_frames
+
+pytestmark = pytest.mark.dataset
 
 
 # Per-codec skip markers — validation tests only fire when the codec is available
@@ -393,6 +397,49 @@ class TestGetVideoInfo:
         assert "video.crf" not in info
         assert "video.preset" not in info
 
+    @require_h264
+    def test_fractional_frame_rate_is_not_truncated(self, tmp_path):
+        """A 30000/1001 stream is 29.97 fps. int(base_rate) used to report 29."""
+        path = tmp_path / "ntsc.mp4"
+        rate = Fraction(30000, 1001)
+        with av.open(str(path), "w") as container:
+            stream = container.add_stream("h264", rate=rate)
+            stream.width = 16
+            stream.height = 16
+            stream.pix_fmt = "yuv420p"
+            for i in range(3):
+                frame = av.VideoFrame(16, 16, "yuv420p")
+                frame.pts = i
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+            for packet in stream.encode():
+                container.mux(packet)
+
+        info = get_video_info(path)
+        assert info["video.fps"] != 29
+        assert abs(info["video.fps"] - float(rate)) < 1e-6
+
+    @require_h264
+    def test_integer_frame_rate_stays_an_int(self, tmp_path):
+        """An exact 30 fps stream stays an int. The fractional case stays a float."""
+        path = tmp_path / "thirty.mp4"
+        with av.open(str(path), "w") as container:
+            stream = container.add_stream("h264", rate=30)
+            stream.width = 16
+            stream.height = 16
+            stream.pix_fmt = "yuv420p"
+            for i in range(3):
+                frame = av.VideoFrame(16, 16, "yuv420p")
+                frame.pts = i
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+            for packet in stream.encode():
+                container.mux(packet)
+
+        info = get_video_info(path)
+        assert info["video.fps"] == 30
+        assert type(info["video.fps"]) is int
+
     @require_libsvtav1
     def test_merges_encoder_config_as_video_prefixed_entries(self):
         cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
@@ -536,6 +583,25 @@ class TestReencodeVideo:
 
 
 class TestConcatenateVideoFiles:
+    @pytest.mark.parametrize("directory", ["with spaces", "writer's clips", "録画 café", "'quoted'"])
+    def test_special_characters_in_paths(self, tmp_path, directory):
+        clip_dir = tmp_path / directory
+        clip_dir.mkdir()
+        inputs = [clip_dir / "first's clip.mp4", clip_dir / "second clip.mp4"]
+        shutil.copyfile(TEST_ARTIFACTS_DIR / "clip_6frames.mp4", inputs[0])
+        shutil.copyfile(TEST_ARTIFACTS_DIR / "clip_4frames.mp4", inputs[1])
+
+        out = tmp_path / "out.mp4"
+        concatenate_video_files(inputs, out)
+
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 10
+        for input_path, output_index in zip(inputs, [0, 6], strict=True):
+            with av.open(str(input_path)) as container:
+                expected = next(container.decode(video=0)).to_ndarray(format="rgb24")
+            np.testing.assert_array_equal(frames[output_index].to_ndarray(format="rgb24"), expected)
+
     def test_two_clips_frame_count(self, tmp_path):
         """Output frame count equals the sum of the two input frame counts."""
         out = tmp_path / "out.mp4"

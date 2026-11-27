@@ -23,7 +23,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
 
+from lerobot.configs import PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
+from lerobot.utils.hub import split_hub_reference
 
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
@@ -41,12 +43,23 @@ class GaussianActorPolicy(
     def __init__(
         self,
         config: GaussianActorConfig | None = None,
-    ):
+    ) -> None:
+        if config is None:
+            # Same error PreTrainedPolicy.__init__ raises, kept for the legacy no-argument constructor.
+            raise ValueError(
+                f"Parameter config in `{self.__class__.__name__}(config)` should be an instance of class "
+                "`PreTrainedConfig`. To create a model from a pretrained model use "
+                f"`model = {self.__class__.__name__}.from_pretrained(PRETRAINED_MODEL_NAME)`"
+            )
         super().__init__(config)
         config.validate_features()
         self.config = config
 
         # Determine action dimension and initialize all components
+        if config.output_features is None:
+            raise ValueError(
+                "`GaussianActorConfig.output_features` must be resolved before building the actor."
+            )
         continuous_action_dim = config.output_features[ACTION].shape[0]
         self._init_encoders()
         self._init_actor(continuous_action_dim)
@@ -95,7 +108,9 @@ class GaussianActorPolicy(
 
         return actions
 
-    def forward(self, batch: dict[str, Tensor | dict[str, Tensor]]) -> dict[str, Tensor]:
+    def forward(  # type: ignore[override]  # RL actor returns a dict
+        self, batch: dict[str, Tensor | dict[str, Tensor]]
+    ) -> dict[str, Tensor]:
         """Actor forward pass: sample actions and return log-probabilities.
 
         Args:
@@ -151,12 +166,16 @@ class GaussianActorObservationEncoder(nn.Module):
     def __init__(self, config: GaussianActorConfig) -> None:
         super().__init__()
         self.config = config
-        self._init_image_layers()
-        self._init_state_layers()
+        if config.input_features is None:
+            raise ValueError(
+                "`GaussianActorConfig.input_features` must be resolved before building the encoder."
+            )
+        self._init_image_layers(config.input_features)
+        self._init_state_layers(config.input_features)
         self._compute_output_dim()
 
-    def _init_image_layers(self) -> None:
-        self.image_keys = [k for k in self.config.input_features if is_image_feature(k)]
+    def _init_image_layers(self, input_features: dict[str, PolicyFeature]) -> None:
+        self.image_keys = [k for k in input_features if is_image_feature(k)]
         self.has_images = bool(self.image_keys)
         if not self.has_images:
             return
@@ -169,7 +188,7 @@ class GaussianActorObservationEncoder(nn.Module):
         if self.config.freeze_vision_encoder:
             freeze_image_encoder(self.image_encoder)
 
-        dummy = torch.zeros(1, *self.config.input_features[self.image_keys[0]].shape)
+        dummy = torch.zeros(1, *input_features[self.image_keys[0]].shape)
         with torch.no_grad():
             _, channels, height, width = self.image_encoder(dummy).shape
 
@@ -194,18 +213,18 @@ class GaussianActorObservationEncoder(nn.Module):
                 nn.Tanh(),
             )
 
-    def _init_state_layers(self) -> None:
-        self.has_env = OBS_ENV_STATE in self.config.input_features
-        self.has_state = OBS_STATE in self.config.input_features
+    def _init_state_layers(self, input_features: dict[str, PolicyFeature]) -> None:
+        self.has_env = OBS_ENV_STATE in input_features
+        self.has_state = OBS_STATE in input_features
         if self.has_env:
-            dim = self.config.input_features[OBS_ENV_STATE].shape[0]
+            dim = input_features[OBS_ENV_STATE].shape[0]
             self.env_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
                 nn.Tanh(),
             )
         if self.has_state:
-            dim = self.config.input_features[OBS_STATE].shape[0]
+            dim = input_features[OBS_STATE].shape[0]
             self.state_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
@@ -345,7 +364,7 @@ class MLP(nn.Module):
                     layers.append(nn.Dropout(p=dropout_rate))
                 layers.append(nn.LayerNorm(out_dim))
                 act_cls = final_activation if is_last and final_activation else activations
-                act = act_cls if isinstance(act_cls, nn.Module) else getattr(nn, act_cls)()
+                act = getattr(nn, act_cls)() if isinstance(act_cls, str) else act_cls
                 layers.append(act)
 
             in_dim = out_dim
@@ -486,8 +505,12 @@ class Policy(nn.Module):
 
 
 class DefaultImageEncoder(nn.Module):
-    def __init__(self, config: GaussianActorConfig):
+    def __init__(self, config: GaussianActorConfig) -> None:
         super().__init__()
+        if config.input_features is None:
+            raise ValueError(
+                "`GaussianActorConfig.input_features` must be resolved before building the encoder."
+            )
         image_key = next(key for key in config.input_features if is_image_feature(key))
         self.image_enc_layers = nn.Sequential(
             nn.Conv2d(
@@ -541,7 +564,12 @@ class PretrainedImageEncoder(nn.Module):
         """Set up CNN encoder"""
         from transformers import AutoModel
 
-        self.image_enc_layers = AutoModel.from_pretrained(config.vision_encoder_name, trust_remote_code=True)
+        if config.vision_encoder_name is None:
+            raise ValueError("vision_encoder_name is required for a pretrained image encoder.")
+        repo_id, revision = split_hub_reference(config.vision_encoder_name)
+        self.image_enc_layers = AutoModel.from_pretrained(
+            repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
+        )
 
         if hasattr(self.image_enc_layers.config, "hidden_sizes"):
             self.image_enc_out_shape = self.image_enc_layers.config.hidden_sizes[-1]  # Last channel dimension

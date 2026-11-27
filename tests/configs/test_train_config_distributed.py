@@ -15,11 +15,13 @@
 # limitations under the License.
 """TrainPipelineConfig integration for the distributed fields: fail-fasts + config compat."""
 
+from types import SimpleNamespace
+
 import draccus
 import pytest
 
 from lerobot.configs.accelerator import ActivationCheckpointingMode
-from lerobot.configs.default import DatasetConfig, PeftConfig
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.parallelism import ContextParallelConfig, ParallelismConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.optim.optimizers import AdamConfig, MultiAdamConfig
@@ -69,18 +71,28 @@ class TestDistributedFailFasts:
         cfg.parallelism = sharded()
         cfg._validate_distributed()
 
-    def test_fp16_rejected_when_sharded(self):
+    @pytest.mark.parametrize("mixed_precision", ["no", "bf16", "fp16"])
+    def test_every_precision_is_allowed_when_sharded(self, mixed_precision):
+        """fp16 was rejected under sharding while the GradScaler-over-DTensor path was
+        unverified; accelerate builds a plain GradScaler for FSDP2 and torch reduces the
+        overflow flag across the mesh, so all three precisions are now in scope."""
         cfg = make_cfg(parallelism=sharded())
-        cfg.accelerator.mixed_precision = "fp16"
-        with pytest.raises(ValueError, match="fp16"):
-            cfg._validate_distributed()
-        cfg.accelerator.mixed_precision = "bf16"
+        cfg.accelerator.mixed_precision = mixed_precision
         cfg._validate_distributed()
 
-    def test_peft_rejected_when_sharded(self):
-        cfg = make_cfg(parallelism=sharded(), peft=PeftConfig())
-        with pytest.raises(ValueError, match="PEFT"):
+    def test_fp16_rejected_on_cpu(self):
+        """accelerate skips the whole fp16 branch on CPU, so the run would silently be fp32."""
+        cfg = make_cfg()
+        cfg.policy = SimpleNamespace(device="cpu")
+        cfg.accelerator.mixed_precision = "fp16"
+        with pytest.raises(ValueError, match="fp16 requires an accelerator device"):
             cfg._validate_distributed()
+
+        cfg.accelerator.mixed_precision = "bf16"
+        cfg._validate_distributed()
+        cfg.accelerator.mixed_precision = "fp16"
+        cfg.policy = SimpleNamespace(device="cuda")
+        cfg._validate_distributed()
 
     def test_env_eval_rejected_when_sharded(self):
         cfg = make_cfg(parallelism=sharded(), env_eval_freq=1000)
@@ -98,15 +110,8 @@ class TestDistributedFailFasts:
 
 class TestConfigCompat:
     def test_checkpoint_format_round_trip(self):
-        for fmt in CheckpointFormat:
-            assert draccus.decode(CheckpointFormat, draccus.encode(fmt)) is fmt
-
-    def test_wants_predicates(self):
-        assert CheckpointFormat.SAFETENSORS.wants_safetensors
-        assert not CheckpointFormat.SAFETENSORS.wants_dcp
-        assert CheckpointFormat.DCP.wants_dcp and not CheckpointFormat.DCP.wants_safetensors
-        both = CheckpointFormat.SAFETENSORS_AND_DCP
-        assert both.wants_safetensors and both.wants_dcp
+        for checkpoint_format in CheckpointFormat:
+            assert draccus.decode(CheckpointFormat, draccus.encode(checkpoint_format)) is checkpoint_format
 
 
 def test_reward_model_rejected_when_sharded():

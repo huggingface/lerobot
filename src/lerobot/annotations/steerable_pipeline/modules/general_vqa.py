@@ -148,11 +148,14 @@ class GeneralVqaModule:
         results = self.vlm.generate_json([m for _, _, _, m in per_call])
 
         rows: list[dict[str, Any]] = []
-        for (ts, camera, _qtype, _messages), result in zip(per_call, results, strict=True):
+        for (ts, camera, _qtype, messages), result in zip(per_call, results, strict=True):
             qa = self._postprocess(result)
             if qa is None:
                 continue
             question, answer = qa
+            scale = self.config.coordinate_scale
+            image = next(b["image"] for b in messages[0]["content"] if b.get("type") == "image")
+            answer = _to_unit_coordinates(answer, (scale, scale) if scale else image.size)
             rows.append(
                 {
                     "role": "user",
@@ -212,9 +215,11 @@ class GeneralVqaModule:
         frame_timestamp: float,
         camera_key: str,
     ) -> list[dict[str, Any]]:
+        scale = self.config.coordinate_scale
         prompt = load_prompt("vqa").format(
             episode_task=record.episode_task,
             question_type=question_type,
+            coordinate_space=f"on a 0-{scale:g} grid over the image" if scale else "in pixel coordinates",
         )
         images = self.frame_provider.frames_at(record, [frame_timestamp], camera_key=camera_key)
         content = [*to_image_blocks(images), {"type": "text", "text": prompt}]
@@ -234,6 +239,24 @@ class GeneralVqaModule:
         if classify_vqa_answer(answer) is None:
             return None
         return question.strip(), answer
+
+
+def _to_unit_coordinates(answer: dict[str, Any], extent: tuple[float, float]) -> dict[str, Any]:
+    """Map bbox / keypoint coordinates answered on a ``extent`` (w, h) grid to [0, 1] image fractions."""
+
+    def unit(coords: Any) -> Any:
+        if not isinstance(coords, list) or not all(isinstance(c, (int, float)) for c in coords):
+            return coords
+        return [round(min(max(c / extent[i % 2], 0.0), 1.0), 4) for i, c in enumerate(coords)]
+
+    if isinstance(answer.get("detections"), list):
+        dets = [
+            {**d, "bbox": unit(d.get("bbox"))} if isinstance(d, dict) else d for d in answer["detections"]
+        ]
+        return {**answer, "detections": dets}
+    if "point" in answer:
+        return {**answer, "point": unit(answer["point"])}
+    return answer
 
 
 def _has_image_block(messages: list[dict[str, Any]]) -> bool:

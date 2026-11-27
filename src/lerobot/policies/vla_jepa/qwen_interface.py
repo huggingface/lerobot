@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
 
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available
 
 if TYPE_CHECKING or _transformers_available:
@@ -34,21 +36,13 @@ class Qwen3VLInterface(torch.nn.Module):
     def __init__(self, config: VLAJEPAConfig) -> None:
         super().__init__()
         self.config = config
+        repo_id, revision = split_hub_reference(config.qwen_model_name)
         self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-            config.qwen_model_name,
-            torch_dtype=self._get_torch_dtype(config.torch_dtype),
+            repo_id, torch_dtype=config.dtype, revision=revision
         )
-        self.processor = AutoProcessor.from_pretrained(config.qwen_model_name)
+        self.processor = AutoProcessor.from_pretrained(repo_id, revision=revision, code_revision=revision)
         self.processor.tokenizer.padding_side = config.tokenizer_padding_side
         self.model.config.hidden_size = self.model.config.text_config.hidden_size
-
-    @staticmethod
-    def _get_torch_dtype(dtype_name: str) -> torch.dtype:
-        if dtype_name == "float32":
-            return torch.float32
-        if dtype_name == "float16":
-            return torch.float16
-        return torch.bfloat16
 
     def expand_tokenizer(self) -> tuple[list[str], list[int], int]:
         # starVLA/JEVLA checkpoints expand action tokens as action_horizon * 4,
@@ -70,7 +64,20 @@ class Qwen3VLInterface(torch.nn.Module):
             tokenizer.add_tokens([embodied_action_token], special_tokens=True)
         embodied_action_token_id = tokenizer.convert_tokens_to_ids(embodied_action_token)
 
-        if self.model.get_input_embeddings().weight.size(0) < len(tokenizer):
+        # Qwen3-VL-2B ships 267 spare embedding rows, so the `chunk_size * 4 + 1` added tokens fit
+        # without a resize up to chunk_size=66. Past that, resizing changes the `embed_tokens` /
+        # `lm_head` shapes and checkpoints stop loading across chunk sizes unless those prefixes are
+        # in `reinit_modules` — warn instead of failing silently.
+        current_rows = self.model.get_input_embeddings().weight.size(0)
+        if current_rows < len(tokenizer):
+            logging.warning(
+                f"chunk_size={self.config.chunk_size} needs {max_action_tokens + 1} added tokens, "
+                f"which exceeds the {current_rows} embedding rows of {self.config.qwen_model_name}. "
+                f"Resizing to {len(tokenizer)} rows changes the shapes of "
+                f"`model.qwen.model.model.language_model.embed_tokens` and "
+                f"`model.qwen.model.lm_head`, so this model will not load from a checkpoint trained "
+                f"with a different chunk_size unless those prefixes are in `reinit_modules`."
+            )
             self.model.resize_token_embeddings(len(tokenizer))
         return action_tokens, action_token_ids, embodied_action_token_id
 

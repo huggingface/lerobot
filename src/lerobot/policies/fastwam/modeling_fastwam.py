@@ -16,19 +16,24 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import torch
 from torch import Tensor
 
+from lerobot.configs import PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_STATE, PREDICTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_fastwam import FastWAMConfig
 from .wan import (
     ActionDiT,
     FastWAM,
+    LiteKVFusion,
     MoT,
     WanVideoDiT,
     build_wan_tokenizer,
@@ -91,7 +96,81 @@ class FastWAMPolicy(PreTrainedPolicy):
         self.reset()
 
     @classmethod
-    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        **kwargs: Any,
+    ) -> FastWAMPolicy:
+        """Load a checkpoint without silently changing its Faster-WAM architecture.
+
+        An explicit config can change embodiment dimensions or initialize Faster-WAM
+        from a default FastWAM backbone with ``strict=False``. Already converted
+        checkpoints must retain their Faster-WAM options and resolved action depth.
+        A weights-only checkpoint uses the explicit config without this comparison.
+        """
+        if config is not None:
+            if not isinstance(config, FastWAMConfig):
+                raise TypeError("FastWAM checkpoints require a FastWAMConfig.")
+            download_options = {
+                key: kwargs[key]
+                for key in (
+                    "force_download",
+                    "resume_download",
+                    "proxies",
+                    "token",
+                    "cache_dir",
+                    "local_files_only",
+                    "revision",
+                )
+                if key in kwargs
+            }
+            try:
+                saved_config = FastWAMConfig.from_pretrained(pretrained_name_or_path, **download_options)
+            except FileNotFoundError:
+                logging.warning(
+                    "FastWAM checkpoint config is unavailable; skipping architecture validation "
+                    "and using the explicit config."
+                )
+                return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
+            options = ("lite_kv_fusion", "retracted_1d_rope", "world_model_only_conditioning")
+            mismatched = [key for key in options if getattr(config, key) != getattr(saved_config, key)]
+            if config.action_dit_config is None or saved_config.action_dit_config is None:
+                raise ValueError("FastWAM action configs must be resolved before checkpoint loading.")
+            if config.action_dit_config["num_layers"] != saved_config.action_dit_config["num_layers"]:
+                mismatched.append("action_dit_config.num_layers")
+            if mismatched:
+                is_default_backbone = not any(getattr(saved_config, key) for key in options) and (
+                    saved_config.video_dit_config is not None
+                    and config.video_dit_config is not None
+                    and saved_config.action_dit_config["num_layers"]
+                    == saved_config.video_dit_config["num_layers"]
+                    == config.video_dit_config["num_layers"]
+                )
+                if (
+                    not is_default_backbone
+                    or not any(getattr(config, key) for key in options)
+                    or kwargs.get("strict", False)
+                    or config.action_dit_config["num_layers"] > saved_config.action_dit_config["num_layers"]
+                ):
+                    raise ValueError(
+                        "FastWAM checkpoint architecture conflicts with explicit config: "
+                        f"{', '.join(mismatched)}. Keep the checkpoint's Faster-WAM options and action "
+                        "depth, or initialize from a default FastWAM backbone with strict=False "
+                        "and unchanged video depth."
+                    )
+                logging.warning(
+                    "Initializing Faster-WAM from a default FastWAM backbone: retaining compatible "
+                    "weights and leading action layers, discarding unused action/text modules, "
+                    "and initializing new fusion logits to zero. Fine-tuning is required."
+                )
+        return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
+
+    @classmethod
+    def _load_checkpoint(
+        cls, model: FastWAMPolicy, checkpoint: SafetensorsCheckpoint, map_location: str, strict: bool
+    ) -> FastWAMPolicy:
         """Shape-aware load that supports cross-embodiment fine-tuning.
 
         `safetensors.load_model(strict=False)` ignores missing/unexpected keys but
@@ -103,27 +182,22 @@ class FastWAMPolicy(PreTrainedPolicy):
         initialized values — and load every compatible tensor. With `strict=True`
         the standard exact-match loader is used.
         """
-        from safetensors import safe_open
-
         model_state_dict = model.state_dict()
-        mismatched = []
-        with safe_open(model_file, framework="pt") as f:
-            checkpoint_keys = list(f.keys())
-            for key in checkpoint_keys:
-                if key in model_state_dict and tuple(model_state_dict[key].shape) != tuple(
-                    f.get_slice(key).get_shape()
-                ):
-                    mismatched.append(key)
+        mismatched = [
+            key
+            for key, shape in checkpoint.shapes().items()
+            if key in model_state_dict and tuple(model_state_dict[key].shape) != shape
+        ]
 
         if not mismatched:
-            return super()._load_as_safetensor(model, model_file, map_location, strict)
+            # The core model is already on the target device; stage weights on CPU
+            # to avoid holding a second full copy on the accelerator.
+            return super()._load_checkpoint(model, checkpoint, "cpu", strict)
         if strict:
             raise RuntimeError(
                 f"FastWAM: {len(mismatched)} checkpoint tensors have a shape mismatch under "
                 f"strict=True: {mismatched}"
             )
-
-        from safetensors.torch import load_file
 
         logging.warning(
             "FastWAM cross-embodiment load: reinitializing %d shape-mismatched tensor(s), keeping "
@@ -131,7 +205,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             len(mismatched),
             mismatched,
         )
-        state_dict = load_file(model_file, device="cpu")
+        state_dict = checkpoint.load_state_dict(device="cpu")
         for key in mismatched:
             state_dict.pop(key, None)
         model.load_state_dict(state_dict, strict=False)
@@ -139,7 +213,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             model.to(map_location)
         return model
 
-    def get_optim_params(self) -> list[Tensor]:
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
         # Return the trainable tensors directly (a single param group). The optimizer
         # builder wraps these in a param group; returning a bare {"params": [...]} dict
         # instead would make `list(...)` yield the key string "params".
@@ -153,6 +227,27 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         self._action_queue: deque[Tensor] = deque([], maxlen=self.config.n_action_steps)
+        # Per-episode text-embedding cache (mirrors LingBot-VA's `_prompt_embeds`). The task is
+        # fixed for an episode, so the ~11GB UMT5 encoder runs once on the first chunk and every
+        # later chunk reuses the result. Cleared here so a new episode's task is re-encoded.
+        # Only the text-only context is cached; proprio is still appended fresh per chunk.
+        self._cached_prompt: Any = None
+        self._cached_context: Tensor | None = None
+        self._cached_context_mask: Tensor | None = None
+        # return_predicted_video state
+        self._chunk_clip: Tensor | None = None
+        self._served = 0
+        self._shown_frame = -1
+
+    def _encode_prompt_cached(self, prompt: Any) -> tuple[Tensor, Tensor]:
+        """Encode `prompt` to `(context, context_mask)`, reusing the cache when the prompt is
+        unchanged so UMT5 runs at most once per episode (per distinct task)."""
+        if self._cached_context is None or self._cached_prompt != prompt:
+            context, context_mask = self.model.encode_prompt(prompt)
+            self._cached_prompt = prompt
+            self._cached_context = context
+            self._cached_context_mask = context_mask
+        return self._cached_context, self._cached_context_mask
 
     def _batch_to_training_sample(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Adapt a standard LeRobot batch to the FastWAM-native sample that
@@ -186,7 +281,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 sample["proprio"] = state.unsqueeze(1) if state.ndim == 2 else state
         return sample
 
-    def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any]]:
+    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, Any]]:
         """Compute FastWAM training loss for a LeRobot batch.
 
         Args:
@@ -194,55 +289,109 @@ class FastWAMPolicy(PreTrainedPolicy):
                 (`video`, `action`, `context`, `context_mask`) or LeRobot keys
                 that can be adapted (`observation.images.*`, `observation.state`,
                 `action`, `action_is_pad`).
+            reduction (str): "mean" returns the scalar loss (default); "none" returns per-sample
+                losses of shape (B,) for sample weighting (RA-BC).
 
         Returns:
-            tuple[Tensor, dict[str, Any]]: The scalar loss to backprop, and a dict of
-            logging metrics (e.g. `loss_video`, `loss_action`) — the `(loss, output_dict)`
-            contract the LeRobot training loop expects.
+            tuple[Tensor, dict[str, Any]]: The loss to backprop (scalar for "mean", per-sample (B,)
+            for "none"), and a dict of logging metrics (e.g. `loss_video`, `loss_action`) — the
+            `(loss, output_dict)` contract the LeRobot training loop expects.
         """
 
         sample = self._batch_to_training_sample(batch)
-        loss, metrics = self.model.training_loss(sample)
+        loss, metrics = self.model.training_loss(sample, reduction=reduction)
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
+            noise (Tensor | None): Optional starting action sample of shape
+                `[B, action_horizon, action_dim]`. When None, each sample draws it with
+                the seed in `batch["seed"]`, or `config.inference_seed` if the batch has none.
 
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
         """
-
         self.eval()
-        infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
-        batch_size = _infer_kwargs_batch_size(infer_kwargs)
-        if batch_size == 1:
-            action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
-        else:
-            action = torch.cat(
-                [
-                    _action_from_model_output(
-                        self.model.infer_action(
-                            **_slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size)
-                        )
-                    )
-                    for i in range(batch_size)
-                ],
-                dim=0,
-            )
+        per_item = self._per_item_infer_kwargs(batch, noise=noise)
+        action = torch.cat(
+            [_action_from_model_output(self.model.infer_action(**kwargs)) for kwargs in per_item], dim=0
+        )
         return action.to(device=batch_device(batch), dtype=torch.float32)
 
+    def _per_item_infer_kwargs(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None
+    ) -> list[dict[str, Any]]:
+        """Build the core inference kwargs, one dict per batch item (the core runs batch size 1)."""
+        infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
+        infer_kwargs["noise"] = noise
+        # Encode the task once per episode and reuse it (LingBot-VA parity): swap the raw `prompt`
+        # for the cached `context`/`context_mask` so `infer_action` skips `encode_prompt`. Skipped
+        # when the caller supplies its own precomputed `context` (the two are mutually exclusive
+        # downstream).
+        if infer_kwargs.get("context") is None and infer_kwargs.get("prompt") is not None:
+            context, context_mask = self._encode_prompt_cached(infer_kwargs["prompt"])
+            infer_kwargs["prompt"] = None
+            infer_kwargs["context"] = context
+            infer_kwargs["context_mask"] = context_mask
+        batch_size = _infer_kwargs_batch_size(infer_kwargs)
+        if batch_size == 1:
+            return [infer_kwargs]
+        return [_slice_infer_kwargs(infer_kwargs, index=i, batch_size=batch_size) for i in range(batch_size)]
+
+    def _predict_video(self, batch: dict[str, Tensor], actions: Tensor) -> Tensor:
+        """Predict the clip `[B, model_video_frames, H, W, 3]` (uint8, CPU) that `actions` lead to."""
+        per_item = self._per_item_infer_kwargs(batch, noise=None)
+        return torch.stack(
+            [
+                self.model.infer_video(
+                    **{key: kwargs[key] for key in _VIDEO_INFER_KEYS},
+                    action=actions[i : i + 1],
+                    num_video_frames=self.config.model_video_frames,
+                )
+                for i, kwargs in enumerate(per_item)
+            ]
+        )
+
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None
+    ) -> Tensor | PolicyOutput:
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
-            self._action_queue.extend(actions.transpose(0, 1))
-        return self._action_queue.popleft()
+            actions = self.predict_action_chunk(batch, noise=noise)
+            self._chunk_clip = (
+                self._predict_video(batch, actions) if self.config.return_predicted_video else None
+            )
+            self._action_queue.extend(actions[:, : self.config.n_action_steps].transpose(0, 1))
+            self._served = 0
+            self._shown_frame = -1
+        return self._with_predicted_frame(self._action_queue.popleft())
+
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
+        """Attach the predicted frame for `action`, only when it changes."""
+        served = self._served
+        self._served += 1
+        if self._chunk_clip is None:
+            return action
+        n_frames = self._chunk_clip.shape[1]
+        horizon = self.config.action_horizon
+        index = min(((served + 1) * (n_frames - 1) + horizon - 1) // horizon, n_frames - 1)
+        if index == self._shown_frame:
+            return action
+        self._shown_frame = index
+        frames = self._chunk_clip[:, index].permute(0, 3, 1, 2)
+        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
+
+    def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
+        """Inverse of the width-wise camera concat in `_stack_video_from_images` (equal widths)."""
+        keys = sorted(self.config.image_features)
+        width = int(self.config.image_size[1]) // len(keys)
+        return dict(zip(keys, frames[..., : width * len(keys)].split(width, dim=3), strict=True))
 
     def _build_core_model(self, config: FastWAMConfig) -> FastWAM:
         """Build the FastWAM core for training / inference.
@@ -255,17 +404,39 @@ class FastWAMPolicy(PreTrainedPolicy):
         across checkpoints) and are intentionally excluded from `model.safetensors`
         — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
         """
-        dtype = _dtype_from_name(config.torch_dtype)
+        dtype = config.dtype
         device = config.device
-        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
-        action_expert = ActionDiT(**config.action_dit_config).to(device=device, dtype=dtype)
+        if device is None:
+            # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
+            raise ValueError("`FastWAMConfig.device` is unset; cannot build the FastWAM core model.")
+        video_dit_config = config.video_dit_config
+        action_dit_config = config.action_dit_config
+        if video_dit_config is None or action_dit_config is None:
+            # FastWAMConfig.__post_init__ always fills both; None here is a programming error.
+            raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
+        video_expert = WanVideoDiT(**video_dit_config).to(device=device, dtype=dtype)
+        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
+        # Faster-WAM (arXiv 2608.02365) options, all opt-in. The fusion module exists only
+        # when enabled so default checkpoints keep their exact key layout.
+        lite_kv_fusion = (
+            LiteKVFusion(
+                num_action_layers=int(action_dit_config["num_layers"]),
+                num_heads=int(action_dit_config["num_heads"]),
+                num_video_layers=int(video_dit_config["num_layers"]),
+            ).to(device=device, dtype=dtype)
+            if config.lite_kv_fusion
+            else None
+        )
         mot = MoT(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
+            lite_kv_fusion=lite_kv_fusion,
+            retracted_1d_rope=config.retracted_1d_rope,
         )
+        text_encoder_device = config.text_encoder_device or device
         text_encoder = (
             load_pretrained_wan_text_encoder(
-                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=device
+                model_id=config.text_encoder_model_id, torch_dtype=dtype, device=text_encoder_device
             )
             if config.load_text_encoder
             else None
@@ -276,10 +447,11 @@ class FastWAMPolicy(PreTrainedPolicy):
             mot=mot,
             vae=load_pretrained_wan_vae(torch_dtype=dtype, device=device),
             text_encoder=text_encoder,
+            text_encoder_device=config.text_encoder_device,
             tokenizer=build_wan_tokenizer(
                 model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
             ),
-            text_dim=int(config.video_dit_config["text_dim"]),
+            text_dim=int(video_dit_config["text_dim"]),
             proprio_dim=config.proprio_dim,
             device=device,
             torch_dtype=dtype,
@@ -291,7 +463,22 @@ class FastWAMPolicy(PreTrainedPolicy):
             action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
             loss_lambda_video=float(config.loss["lambda_video"]),
             loss_lambda_action=float(config.loss["lambda_action"]),
+            world_model_only_conditioning=config.world_model_only_conditioning,
         )
+
+
+_VIDEO_INFER_KEYS = (
+    "prompt",
+    "input_image",
+    "proprio",
+    "context",
+    "context_mask",
+    "num_inference_steps",
+    "sigma_shift",
+    "seed",
+    "rand_device",
+    "tiled",
+)
 
 
 def _scalar(value: Any) -> Any:
@@ -314,6 +501,7 @@ def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> d
         "seed": batch.get("seed", config.inference_seed),
         "rand_device": batch.get("rand_device", config.rand_device),
         "tiled": bool(batch.get("tiled", config.tiled)),
+        "compile_action_infer": bool(batch.get("compile_action_infer", config.compile_action_infer)),
     }
 
 
@@ -363,13 +551,6 @@ def _slice_infer_value(value: Any, *, index: int, batch_size: int) -> Any:
     if isinstance(value, (list, tuple)) and len(value) == batch_size:
         return value[index]
     return value
-
-
-def _dtype_from_name(name: str) -> torch.dtype:
-    dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-    if name not in dtype_map:
-        raise ValueError(f"Unsupported torch dtype `{name}`.")
-    return dtype_map[name]
 
 
 def batch_device(batch: dict[str, Any]) -> torch.device:

@@ -24,40 +24,59 @@ its writes live in the same method.
 """
 
 import logging
+import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
-from huggingface_hub import HfApi, ModelCard, ModelCardData, snapshot_download
+from huggingface_hub import (
+    CommitInfo,
+    HfApi,
+    ModelCard,
+    ModelCardData,
+    is_offline_mode,
+    model_info,
+    snapshot_download,
+)
+from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from huggingface_hub.utils import httpx
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
+from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
+    load_sharded_ema,
     load_sharded_model,
     load_sharded_optimizer,
+    save_peft_adapter,
+    save_sharded_ema,
     save_sharded_model,
     save_sharded_optimizer,
 )
 from lerobot.distributed.utils import is_main_process
 from lerobot.optim import (
     load_optimizer_state,
+    load_scaler_state,
     load_scheduler_state,
     save_optimizer_state,
+    save_scaler_state,
     save_scheduler_state,
 )
+from lerobot.optim.ema import EMA, load_ema_state, save_ema_state
 from lerobot.policies import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
+    PRETRAINED_MODEL_EMA_DIR,
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
@@ -139,20 +158,22 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
 
     `step` counts loop iterations (= micro-batches), so
     the sampler resume offset is `step x batch_size x dp_world_size` with no grad-accum factor.
-    `grad_accum_steps` and the parallelism snapshot are recorded so a resume can warn precisely
-    when the optimizer-update cadence or the sharding topology changed.
+    `grad_accum_steps`, `mixed_precision` and the parallelism snapshot are recorded so a resume
+    can warn precisely when the optimizer-update cadence, the precision, or the sharding
+    topology changed.
 
     Args:
         step (int): The training step (micro-batch counter) to record.
         save_dir (Path): The `training_state/` directory to write `training_step.json` into.
         cfg (TrainPipelineConfig): The training config whose batch size, gradient-accumulation,
-            and parallelism settings are snapshotted alongside the step.
+            precision, and parallelism settings are snapshotted alongside the step.
     """
     state: dict[str, Any] = {
         "step": step,
         "dp_world_size": cfg.parallelism.dp_world_size,
         "batch_size": cfg.batch_size,
         "grad_accum_steps": cfg.accelerator.gradient_accumulation.steps,
+        "mixed_precision": cfg.accelerator.mixed_precision,
         "parallelism": {
             "dp_replicate": cfg.parallelism.dp_replicate,
             "dp_shard": cfg.parallelism.dp_shard,
@@ -173,8 +194,9 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         training_state_dir (Path): The checkpoint's `training_state/` directory.
 
     Returns:
-        dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps` and
-            `parallelism` snapshot recorded alongside it (None where not recorded).
+        dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps`,
+            `mixed_precision` and `parallelism` snapshot recorded alongside it (None where
+            not recorded).
     """
     state = load_json(training_state_dir / TRAINING_STEP)
     return {
@@ -182,6 +204,7 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         "dp_world_size": state.get("dp_world_size", state.get("num_processes")),
         "batch_size": state.get("batch_size"),
         "grad_accum_steps": state.get("grad_accum_steps"),
+        "mixed_precision": state.get("mixed_precision"),
         "parallelism": state.get("parallelism"),
     }
 
@@ -201,6 +224,7 @@ def save_checkpoint(
     preprocessor: PolicyProcessorPipeline | None = None,
     postprocessor: PolicyProcessorPipeline | None = None,
     accelerator: "Accelerator | None" = None,
+    ema: EMA | None = None,
 ) -> None:
     """This function creates the following directory structure:
 
@@ -209,18 +233,24 @@ def save_checkpoint(
     │   ├── config.json  # policy config
     │   ├── model.safetensors  # policy weights (checkpoint_format ∈ {safetensors, safetensors_dcp}, or any non-sharded run)
     │   ├── pytorch_model_fsdp_0/  # DCP model shards (checkpoint_format ∈ {dcp, safetensors_dcp})
+    │   ├── adapter_config.json  # PEFT runs: the adapter config, naming the base model
+    │   ├── adapter_model.safetensors  # PEFT runs: the adapter, in place of model.safetensors (the DCP shards hold the adapter only)
     │   ├── train_config.json  # train config
     │   ├── policy_preprocessor.json  # preprocessor config (if preprocessor provided)
     │   ├── policy_preprocessor_step_*.safetensors  # state of the stateful preprocessor steps
     │   ├── policy_postprocessor.json  # postprocessor config (if postprocessor provided)
     │   └── policy_postprocessor_step_*.safetensors  # state of the stateful postprocessor steps
+    ├── pretrained_model_ema/  # EMA runs: the files of pretrained_model/, written with the EMA weights
     └── training_state/
         ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
         ├── optimizer_state.safetensors  # optimizer state (non-sharded runs)
         ├── optimizer_0/  # DCP optimizer shards (sharded runs)
         ├── rng_state.safetensors  # rng states
         ├── scheduler_state.json  # scheduler state (if scheduler provided)
-        └── training_step.json  # training step + dp_world_size/batch_size/grad_accum + topology
+        ├── scaler_state.json  # fp16 loss-scaler state (mixed_precision=fp16 only)
+        ├── ema_state.safetensors  # EMA averages (EMA runs, non-sharded)
+        ├── ema_state/  # DCP shards of the EMA averages (EMA runs, sharded)
+        └── training_step.json  # step + dp_world_size/batch_size/grad_accum/precision + topology
 
     Collective: MUST be called on every rank. Rank-0-only writes are gated internally, so the
     call site needs no rank branches.
@@ -239,45 +269,88 @@ def save_checkpoint(
         accelerator (Accelerator | None, optional): The accelerator the policy was prepared with;
             used to unwrap the model and required on sharded runs, where it owns the DCP save
             channels. Defaults to None (plain single-process saves).
+        ema (EMA | None, optional): The EMA of the policy weights, saved to `pretrained_model_ema/`
+            and `training_state/`. Defaults to None.
     """
-    pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
-    fmt = cfg.checkpoint_format
     policy_to_save = accelerator.unwrap_model(policy) if accelerator is not None else policy
     sharded = is_sharded_module(policy_to_save)
+    save_pretrained_model(
+        checkpoint_dir / PRETRAINED_MODEL_DIR, cfg, policy_to_save, preprocessor, postprocessor, accelerator
+    )
+    if ema is not None:
+        if accelerator is not None:
+            accelerator.wait_for_everyone()
+        with ema.average_parameters(policy_to_save):
+            save_pretrained_model(
+                checkpoint_dir / PRETRAINED_MODEL_EMA_DIR,
+                cfg,
+                policy_to_save,
+                preprocessor,
+                postprocessor,
+                accelerator,
+            )
 
-    # -- model artifact(s): the two collective-capable calls ----------------------------------
-    if cfg.peft is not None:
-        # PeftModel.save_pretrained is an external API with no internal rank gate, and the
-        # adapters are replicated (PEFT x sharded is rejected at validation): main rank writes.
-        if is_main_process():
-            policy_to_save.save_pretrained(pretrained_dir)
-    elif fmt.wants_safetensors or not sharded:
-        # Collective when sharded (full gather); writes happen on the main process only in all
-        # multi-rank layouts (the gate lives inside _save_pretrained, next to its collective gather).
-        policy_to_save.save_pretrained(pretrained_dir)
-    if fmt.wants_dcp and sharded:
-        save_sharded_model(accelerator, policy_to_save, pretrained_dir)
+    save_training_state(
+        checkpoint_dir,
+        step,
+        cfg,
+        optimizer,
+        scheduler,
+        accelerator,
+        sharded=sharded,
+        model=policy_to_save,
+        ema=ema,
+    )
+    if accelerator is not None:
+        accelerator.wait_for_everyone()
 
-    # -- sidecar configs: ONE gate for the whole contiguous rank-0-only region ----------------
-    if is_main_process():
-        if fmt.wants_dcp and not fmt.wants_safetensors:
-            # save_pretrained did not run: keep the DCP-only checkpoint self-describing.
-            policy_to_save.config.save_pretrained(pretrained_dir)
-        cfg.save_pretrained(pretrained_dir)
+
+def save_pretrained_model(
+    pretrained_dir: Path,
+    cfg: TrainPipelineConfig,
+    policy: PreTrainedPolicy,
+    preprocessor: PolicyProcessorPipeline | None = None,
+    postprocessor: PolicyProcessorPipeline | None = None,
+    accelerator: "Accelerator | None" = None,
+) -> None:
+    """Write the loadable model directory of a checkpoint (`pretrained_model/` layout).
+
+    Collective: MUST be called on every rank when the policy is sharded.
+
+    Args:
+        pretrained_dir (Path): The directory to write.
+        cfg (TrainPipelineConfig): The training config used for this run.
+        policy (PreTrainedPolicy): The unwrapped policy to save.
+        preprocessor (PolicyProcessorPipeline | None, optional): The preprocessor to save. Defaults to None.
+        postprocessor (PolicyProcessorPipeline | None, optional): The postprocessor to save. Defaults to None.
+        accelerator (Accelerator | None, optional): Required on sharded runs, where it owns the DCP
+            save channel. Defaults to None.
+    """
+    sharded = is_sharded_module(policy)
+
+    # model artifact(s): the two collective-capable calls
+    if (
+        cfg.checkpoint_format in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_DCP)
+        or not sharded
+    ):
         if cfg.peft is not None:
-            # PEFT's save_pretrained writes only adapter weights + config; the policy config
-            # needed to reload the base model is written explicitly.
-            policy_to_save.config.save_pretrained(pretrained_dir)
+            save_peft_adapter(policy, pretrained_dir)
+        else:
+            policy.save_pretrained(pretrained_dir)
+    if cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP) and sharded:
+        save_sharded_model(accelerator, policy, pretrained_dir)
+
+    # sidecar configs: ONE gate for the whole contiguous rank-0-only region
+    if is_main_process():
+        if cfg.checkpoint_format == CheckpointFormat.DCP or cfg.peft is not None:
+            policy.config.save_pretrained(pretrained_dir)
+        if cfg.checkpoint_format == CheckpointFormat.DCP and cfg.peft is not None:
+            policy.active_peft_config.save_pretrained(pretrained_dir)
+        cfg.save_pretrained(pretrained_dir)
         if preprocessor is not None:
             preprocessor.save_pretrained(pretrained_dir)
         if postprocessor is not None:
             postprocessor.save_pretrained(pretrained_dir)
-
-    save_training_state(
-        checkpoint_dir, step, cfg, optimizer, scheduler, accelerator, sharded=sharded, model=policy_to_save
-    )
-    if accelerator is not None:
-        accelerator.wait_for_everyone()
 
 
 def save_training_state(
@@ -290,6 +363,7 @@ def save_training_state(
     *,
     sharded: bool = False,
     model: PreTrainedPolicy | None = None,
+    ema: EMA | None = None,
 ) -> None:
     """Write training_state/. Collective under sharding: call on every rank.
 
@@ -310,6 +384,7 @@ def save_training_state(
             channel: torch's optimizer DCP APIs are model-coupled (the state dict is keyed by
             model FQNs), so accelerate's `save_fsdp_optimizer` needs the sharded module
             alongside the optimizer. Defaults to None.
+        ema (EMA | None, optional): The EMA whose averages are saved. Defaults to None.
     """
     save_dir = checkpoint_dir / TRAINING_STATE_DIR
     # All ranks: the directory must exist before the DCP optimizer collective writes into it
@@ -321,6 +396,8 @@ def save_training_state(
             raise ValueError("Saving a sharded optimizer state requires the accelerator and model.")
         # Collective — all ranks write their DCP shards into optimizer_0/.
         save_sharded_optimizer(accelerator, optimizer, model, save_dir)
+    if ema is not None and sharded:
+        save_sharded_ema(ema, save_dir)  # collective
 
     if is_main_process():  # ONE grouped gate for the whole rank-0-only region
         save_training_metadata(step, save_dir, cfg)
@@ -329,11 +406,27 @@ def save_training_state(
             save_scheduler_state(scheduler, save_dir)
         if optimizer is not None and not sharded:
             save_optimizer_state(optimizer, save_dir)
+        # Only fp16 has a scaler (accelerate leaves it None otherwise), and its state is
+        # identical on every rank, so the rank-0 write is the whole story.
+        if accelerator is not None and accelerator.scaler is not None:
+            save_scaler_state(accelerator.scaler, save_dir)
+        if ema is not None and not sharded:
+            save_ema_state(ema, save_dir)
 
 
 # ---------------------------------------------------------------------------------------------
 # Two-phase resume
 # ---------------------------------------------------------------------------------------------
+
+
+def _resume_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
+    """Return the checkpoint directory a resumed run restores from."""
+    if cfg.checkpoint_path is None:
+        raise ValueError(
+            "cfg.checkpoint_path is unset: `--resume=true` needs `--config_path=<checkpoint>` and "
+            "cannot be combined with `--policy.path` / `--reward_model.path`."
+        )
+    return cfg.checkpoint_path
 
 
 def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
@@ -352,10 +445,10 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
-        ValueError: If the resumed topology crosses the sharded/non-sharded boundary relative
-            to the one recorded in the checkpoint.
+        ValueError: If `cfg.checkpoint_path` is unset, or if the resumed topology crosses the
+            sharded/non-sharded boundary relative to the one recorded in the checkpoint.
     """
-    training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
+    training_state_dir = _resume_checkpoint_dir(cfg) / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
@@ -375,7 +468,8 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
       a recorded snapshot skip this check.
     - **One warning** naming every other recorded setting that differs — those changes are
       legal (DCP reshards weights and optimizer state across topologies and the sampler offset
-      adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence, so the
+      adapts), but a changed ``grad_accum_steps`` shifts the optimizer-update cadence and a
+      changed ``mixed_precision`` decides whether the saved loss scale is used at all, so the
       resume says precisely what differs. The sampler-exactness warnings
       (``dp_world_size``/``batch_size``) live with the sampler math in the dataloader factory.
 
@@ -410,6 +504,10 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
             metadata["grad_accum_steps"],
             cfg.accelerator.gradient_accumulation.steps,
         ),
+        "mixed_precision": (
+            metadata["mixed_precision"],
+            cfg.accelerator.mixed_precision,
+        ),
     }
     if snapshot is not None:
         recorded.update(
@@ -431,7 +529,8 @@ def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) ->
         logging.warning(
             "Resuming with settings that differ from the checkpoint: " + "; ".join(changed) + ". "
             "Topology changes reshard safely via DCP; a changed grad_accum_steps shifts the "
-            "optimizer-update cadence (the step counter keeps counting micro-batches)."
+            "optimizer-update cadence (the step counter keeps counting micro-batches); leaving "
+            "fp16 discards the saved loss scale, and entering it starts from init_scale."
         )
 
 
@@ -441,14 +540,19 @@ def resume_after_prepare(
     policy: PreTrainedPolicy,
     optimizer: Optimizer | dict[str, Optimizer],
     scheduler: LRScheduler | None,
+    ema: EMA | None = None,
 ) -> None:
-    """Phase 2 — after `accelerator.prepare()`: model (DCP) -> optimizer -> scheduler.
+    """Phase 2 — after `accelerator.prepare()`: model (DCP) -> optimizer -> scheduler -> scaler -> EMA.
 
     Collective under sharding: call on every rank. The model-weight source follows the
     checkpoint's own recorded `checkpoint_format` (on resume, `cfg` was parsed from the
     checkpoint's train_config.json): DCP-bearing formats load shards here into the prepared
     model (whose construction skipped the safetensors load); the safetensors format was already
     loaded by `from_pretrained` before sharding — no model step here.
+
+    The order is a reading convention, not a constraint: the fp16 loss scaler restores last
+    because the DCP optimizer channel is deliberately kept off the scaler's code path
+    (`lerobot.distributed.checkpoint._inner_optimizer`), so nothing here can disturb it.
 
     Args:
         cfg (TrainPipelineConfig): The resumed training config; `cfg.checkpoint_path` locates
@@ -458,18 +562,21 @@ def resume_after_prepare(
         policy (PreTrainedPolicy): The prepared (possibly sharded) policy to load weights into.
         optimizer (Optimizer | dict[str, Optimizer]): The prepared optimizer(s) to restore.
         scheduler (LRScheduler | None): The scheduler to restore, or None if the run has none.
+        ema (EMA | None, optional): The EMA to restore. A checkpoint without EMA state restarts it
+            from the resumed weights. Defaults to None.
 
     Raises:
+        ValueError: If `cfg.checkpoint_path` is unset.
         FileNotFoundError: If the checkpoint format declares DCP model shards but the shard
             directory is missing (e.g. it was pruned before upload).
     """
-    checkpoint_dir = cfg.checkpoint_path
+    checkpoint_dir = _resume_checkpoint_dir(cfg)
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     unwrapped = accelerator.unwrap_model(policy)
     sharded = is_sharded_module(unwrapped)
 
-    if cfg.checkpoint_format.wants_dcp:
+    if cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP):
         from accelerate.utils.constants import FSDP_MODEL_NAME
 
         dcp_dir = pretrained_dir / f"{FSDP_MODEL_NAME}_0"
@@ -490,6 +597,15 @@ def resume_after_prepare(
 
     if scheduler is not None:
         load_scheduler_state(scheduler, training_state_dir)
+
+    if accelerator.scaler is not None:
+        load_scaler_state(accelerator.scaler, training_state_dir)
+
+    if ema is not None:
+        if sharded:
+            load_sharded_ema(ema, training_state_dir)
+        else:
+            load_ema_state(ema, training_state_dir)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -583,16 +699,19 @@ def publish_trained_model(
     dataset_meta: "LeRobotDatasetMetadata | None",
     *,
     peft_model: Any | None = None,
+    ema: EMA | None = None,
 ) -> None:
     """Publish the complete training bundle as a distributable model repo.
 
     Collective-safe: call on ALL ranks — the model commit gathers sharded weights through
-    `save_pretrained`; uploads happen on the main process only (gated inside
+    `save_pretrained` (the adapter through `save_peft_adapter` in the PEFT case); uploads happen
+    on the main process only (gated inside
     `HubMixin.push_to_hub` and here). Commits, in order: (1) the model (skipped for PEFT —
     adapters replace full weights), (2) the preprocessor, (3) the postprocessor, (4) the bundle
     sidecar: README.md model card + train_config.json (+ adapter weights and the wrapped
     policy's config in the PEFT case). Every commit uploads a freshly assembled directory, so
-    a published repo carries only the distributable artifacts.
+    a published repo carries only the distributable artifacts. With an EMA, these commits put the
+    EMA weights on `main`, then the live weights on a `live` branch created from `main`.
 
     Args:
         cfg (TrainPipelineConfig): The training config; saved as `train_config.json` and used
@@ -607,45 +726,20 @@ def publish_trained_model(
             available.
         peft_model (Any | None): The PEFT wrapper when training adapters; its adapter weights
             replace the full model weights in the published repo. Defaults to None.
+        ema (EMA | None): The EMA of the trained weights, published to `main`. Defaults to None.
 
     Raises:
         ValueError: If the model config carries no repo id (`--policy.repo_id`).
     """
-    model_cfg = model.config
-    repo_id = model_cfg.repo_id
-    if not repo_id:
-        raise ValueError("Publishing requires a repo id (--policy.repo_id).")
-    ignore = ["*.tmp", "*.log"]
-
-    if peft_model is None:
-        # Calls are made on the exact objects that own each method (never through PEFT's
-        # attribute forwarding), so the peft branch below never touches this path.
-        model.push_to_hub(repo_id, private=model_cfg.private, ignore_patterns=ignore)
-    if preprocessor is not None:
-        preprocessor.push_to_hub(repo_id, private=model_cfg.private)
-    if postprocessor is not None:
-        postprocessor.push_to_hub(repo_id, private=model_cfg.private)
-
-    if is_main_process():
-        api = HfApi()
-        repo_id = api.create_repo(repo_id=repo_id, private=model_cfg.private, exist_ok=True).repo_id
-        with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            saved_path = Path(tmp) / repo_id
-            saved_path.mkdir(parents=True, exist_ok=True)
-            if peft_model is not None:
-                peft_model.save_pretrained(saved_path)  # adapter weights + adapter config
-                model.config.save_pretrained(saved_path)  # PEFT cannot write the policy config
-            card = generate_model_card(model_cfg, cfg=cfg, dataset_meta=dataset_meta)
-            card.save(str(saved_path / "README.md"))
-            cfg.save_pretrained(saved_path)  # train_config.json
-            commit_info = api.upload_folder(
-                repo_id=repo_id,
-                repo_type="model",
-                folder_path=saved_path,
-                commit_message="Upload model card and train config",
-                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
-                ignore_patterns=ignore,
-            )
+    if ema is None:
+        commit_info = _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model)
+    else:
+        with ema.average_parameters(model if peft_model is None else peft_model):
+            commit_info = _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model)
+        if dist.is_initialized():
+            dist.barrier()
+        _push_bundle(cfg, model, preprocessor, postprocessor, dataset_meta, peft_model, branch="live")
+    if commit_info is not None:
         # Contract: lerobot.jobs.hf.submit_to_hf watches for this exact "Model pushed to <url>"
         # line to end a remote run early. Keep the wording and URL format in sync.
         logging.info(f"Model pushed to {commit_info.repo_url.url}")
@@ -654,25 +748,74 @@ def publish_trained_model(
         dist.barrier()
 
 
+def _push_bundle(
+    cfg: TrainPipelineConfig,
+    model: "PreTrainedPolicy | PreTrainedRewardModel",
+    preprocessor: PolicyProcessorPipeline | None,
+    postprocessor: PolicyProcessorPipeline | None,
+    dataset_meta: "LeRobotDatasetMetadata | None",
+    peft_model: Any | None,
+    branch: str | None = None,
+) -> CommitInfo | None:
+    """Make the commits of `publish_trained_model` to `branch`, created from `main` when missing.
+
+    Returns the last commit on the main process and None on the other ranks.
+    """
+    model_cfg = model.config
+    repo_id = model_cfg.repo_id
+    if not repo_id:
+        raise ValueError("Publishing requires a repo id (--policy.repo_id).")
+    ignore = ["*.tmp", "*.log"]
+
+    if branch is not None and is_main_process():
+        api = HfApi()
+        repo_id = api.create_repo(repo_id=repo_id, private=model_cfg.private, exist_ok=True).repo_id
+        api.create_branch(repo_id=repo_id, branch=branch, exist_ok=True)
+    if peft_model is None:
+        # Calls are made on the exact objects that own each method (never through PEFT's
+        # attribute forwarding), so the peft branch below never touches this path.
+        model.push_to_hub(repo_id, private=model_cfg.private, ignore_patterns=ignore, branch=branch)
+    if preprocessor is not None:
+        preprocessor.push_to_hub(repo_id, private=model_cfg.private, branch=branch)
+    if postprocessor is not None:
+        postprocessor.push_to_hub(repo_id, private=model_cfg.private, branch=branch)
+
+    with TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        saved_path = Path(tmp) / repo_id
+        saved_path.mkdir(parents=True, exist_ok=True)
+        if peft_model is not None:
+            save_peft_adapter(peft_model, saved_path)  # collective when sharded
+        if is_main_process():
+            api = HfApi()
+            repo_id = api.create_repo(repo_id=repo_id, private=model_cfg.private, exist_ok=True).repo_id
+            if peft_model is not None:
+                model.config.save_pretrained(saved_path)  # PEFT cannot write the policy config
+            card = generate_model_card(model_cfg, cfg=cfg, dataset_meta=dataset_meta)
+            card.save(str(saved_path / "README.md"))
+            cfg.save_pretrained(saved_path)  # train_config.json
+            return api.upload_folder(
+                repo_id=repo_id,
+                repo_type="model",
+                folder_path=saved_path,
+                commit_message="Upload model card and train config",
+                revision=branch,
+                allow_patterns=["*.safetensors", "*.json", "*.yaml", "*.md"],
+                ignore_patterns=ignore,
+            )
+    return None
+
+
 # ---------------------------------------------------------------------------------------------
 # Model card
 # ---------------------------------------------------------------------------------------------
-
-_BASE_MODEL_MAPPING = {
-    "smolvla": "lerobot/smolvla_base",
-    "pi0": "lerobot/pi0_base",
-    "pi05": "lerobot/pi05_base",
-    "pi0_fast": "lerobot/pi0fast-base",
-    "xvla": "lerobot/xvla-base",
-}
 
 
 def build_card_context(
     cfg: TrainPipelineConfig | None,
     dataset_meta: "LeRobotDatasetMetadata | None",
-    input_features: dict | None,
-    output_features: dict | None,
-) -> dict:
+    input_features: dict[str, PolicyFeature] | None,
+    output_features: dict[str, PolicyFeature] | None,
+) -> dict[str, Any]:
     """Collect optional data for the model-card template.
 
     Returns plain values only (no Markdown) — the template in
@@ -685,15 +828,17 @@ def build_card_context(
             if available.
         dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata supplying the dataset,
             robot-type, and camera sections, if available.
-        input_features (dict | None): The policy's input feature declarations, if any.
-        output_features (dict | None): The policy's output feature declarations, if any.
+        input_features (dict[str, PolicyFeature] | None): The policy's input feature
+            declarations, if any.
+        output_features (dict[str, PolicyFeature] | None): The policy's output feature
+            declarations, if any.
 
     Returns:
-        dict: Template context with `training`, `input_features`, `output_features`,
+        dict[str, Any]: Template context with `training`, `input_features`, `output_features`,
             `dataset`, `robot_type`, and `cameras` entries; unavailable pieces stay
             empty/None.
     """
-    context = {
+    context: dict[str, Any] = {
         "training": None,
         "input_features": input_features or {},
         "output_features": output_features or {},
@@ -727,6 +872,26 @@ def build_card_context(
     return context
 
 
+def _hub_parent(model_cfg: PreTrainedConfig | RewardModelConfig) -> tuple[str | None, str | None]:
+    """The Hub repo the model was fine-tuned from and its `license:` tag, as in transformers.
+
+    `pretrained_path` only counts as a parent once the Hub confirms the repo, so a local
+    checkpoint, a path from another machine, or no network give no parent rather than an
+    invalid `base_model`.
+    """
+    pretrained_path = model_cfg.pretrained_path
+    if pretrained_path is None or os.path.isdir(pretrained_path) or is_offline_mode():
+        return None, None
+    try:
+        info = model_info(str(pretrained_path))
+    except (httpx.HTTPError, HFValidationError, OfflineModeIsEnabled):
+        return None, None
+    license_tag = next(
+        (tag.removeprefix("license:") for tag in info.tags or [] if tag.startswith("license:")), None
+    )
+    return info.id, license_tag
+
+
 def generate_model_card(
     model_cfg: PreTrainedConfig | RewardModelConfig,
     cfg: TrainPipelineConfig | None = None,
@@ -742,7 +907,8 @@ def generate_model_card(
 
     Args:
         model_cfg (PreTrainedConfig | RewardModelConfig): The model config providing type,
-            license, tags, repo id, and — for policies — the feature declarations.
+            license, tags, repo id, the pretrained path (the card's `base_model`, whose license
+            an unset `license` inherits), and — for policies — the feature declarations.
         cfg (TrainPipelineConfig | None, optional): The training config for the training and
             dataset card sections. Defaults to None.
         dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
@@ -752,7 +918,10 @@ def generate_model_card(
         ModelCard: The rendered and validated LeRobot model card.
     """
     model_type = model_cfg.type
-    base_model = _BASE_MODEL_MAPPING.get(model_type)
+    # Like transformers' TrainingSummary: an unset license inherits the base repo's, and an
+    # unknown one is left out of the card rather than guessed.
+    base_model, parent_license = _hub_parent(model_cfg)
+    card_license = model_cfg.license or parent_license
 
     if isinstance(model_cfg, RewardModelConfig):
         tags = {"robotics", "lerobot", "reward-model", model_type}
@@ -773,13 +942,14 @@ def generate_model_card(
         context["base_model"] = base_model
 
     card_data = ModelCardData(
-        license=model_cfg.license or "apache-2.0",
+        license=card_license,
         library_name="lerobot",
         pipeline_tag="robotics",
         tags=list(tags.union(model_cfg.tags or [])),
         model_name=model_type,
         datasets=cfg.dataset.repo_id if cfg is not None else None,
         base_model=base_model,
+        base_model_relation="adapter" if base_model and getattr(model_cfg, "use_peft", False) else None,
     )
     card = ModelCard.from_template(card_data, template_str=template_card, **context)
     card.validate()

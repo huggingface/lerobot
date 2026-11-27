@@ -22,9 +22,9 @@ import time
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
-import cv2  # type: ignore  # TODO: add type stubs for OpenCV
-import numpy as np  # type: ignore  # TODO: add type stubs for numpy
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+import cv2
+import numpy as np
+from numpy.typing import NDArray
 
 from lerobot.utils.import_utils import _pyrealsense2_available, require_package
 

@@ -56,6 +56,8 @@ repos:
     hooks:
     -   id: pyupgrade
         args: [--py312-plus]
+        # Keep generated protobuf sources identical to protoc's output.
+        exclude: ^src/lerobot/transport/.*_pb2(?:_grpc)?\.py$
 
   ##### Markdown Quality #####
   - repo: https://github.com/rbubley/mirrors-prettier
@@ -91,14 +93,21 @@ repos:
       args: ["-c", "pyproject.toml"]
       additional_dependencies: ["bandit[toml]"]
 
-  # TODO(Steven): Uncomment when ready to use
   ##### Static Analysis & Typing #####
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v2.3.1
     hooks:
       - id: mypy
+        # Ignore ambient PYTHONPATH so unrelated global packages cannot shadow the hook's stubs.
+        entry: python -I -m mypy
         args: [--config-file=pyproject.toml]
-        exclude: ^(examples|benchmarks|tests)/
+        additional_dependencies:
+          - "numpy>=2.0.0,<2.3.0"
+          - "rustypot>=1.13.1,<2.0.0"
+          - "pyzmq>=26.2.1,<28.0.0"
+        pass_filenames: false
+        types_or: [python, pyi, toml]
+        files: ^(src/lerobot/|scripts/|utils/|conftest\.py$|setup\.py$|pyproject\.toml$)
 
   ##### Docstring Checks #####
   # - repo: https://github.com/akaihola/darglint2

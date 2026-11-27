@@ -30,7 +30,9 @@ The core components are:
 
 from __future__ import annotations
 
+import glob
 import importlib
+import inspect
 import json
 import re
 from abc import ABC, abstractmethod
@@ -38,7 +40,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -58,6 +60,13 @@ from lerobot.utils.hub import HubMixin
 
 from .converters import batch_to_transition, create_transition, transition_to_batch
 
+# Shared by the consent errors: the pipeline cannot tell which CLI scope loaded it.
+_TRUST_REMOTE_CODE_HINT = (
+    "After reviewing the checkpoint, pass --policy.trust_remote_code=true "
+    "(--reward_model.trust_remote_code=true for reward models, --model.trust_remote_code=true for "
+    "lerobot-policy-server) or trust_remote_code=True in Python."
+)
+
 # Generic type variables for pipeline input and output.
 TInput = TypeVar("TInput")
 TOutput = TypeVar("TOutput")
@@ -72,10 +81,10 @@ class ProcessorStepRegistry:
     hardcoding class imports.
     """
 
-    _registry: dict[str, type] = {}
+    _registry: dict[str, type[ProcessorStep]] = {}
 
     @classmethod
-    def register(cls, name: str | None = None):
+    def register[StepT: ProcessorStep](cls, name: str | None = None) -> Callable[[type[StepT]], type[StepT]]:
         """A class decorator to register a ProcessorStep.
 
         Args:
@@ -88,7 +97,7 @@ class ProcessorStepRegistry:
             ValueError: If a step with the same name is already registered.
         """
 
-        def decorator(step_class: type) -> type:
+        def decorator(step_class: type[StepT]) -> type[StepT]:
             """The actual decorator that performs the registration."""
             registration_name = name if name is not None else step_class.__name__
 
@@ -106,7 +115,7 @@ class ProcessorStepRegistry:
         return decorator
 
     @classmethod
-    def get(cls, name: str) -> type:
+    def get(cls, name: str) -> type[ProcessorStep]:
         """Retrieves a processor step class from the registry by its name.
 
         Args:
@@ -158,6 +167,8 @@ class ProcessorStep(ABC):
     """
 
     _current_transition: EnvTransition | None = None
+    # Set by `ProcessorStepRegistry.register`; absent on unregistered steps, so read it with `getattr`.
+    _registry_name: ClassVar[str]
 
     @property
     def transition(self) -> EnvTransition:
@@ -259,6 +270,13 @@ class ProcessorMigrationError(Exception):
             f"Model '{model_path}' requires migration to processor format. "
             f"Run: {migration_command}\n\nOriginal error: {original_error}"
         )
+
+
+def _require_component[T](component: T | None, name: str) -> T:
+    """Return a transition component, raising if a processor step dropped it (set it to `None`)."""
+    if component is None:
+        raise ValueError(f"A processor step dropped the {name} from the transition.")
+    return component
 
 
 @dataclass
@@ -651,6 +669,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
+        trust_remote_code: bool = False,
         **kwargs,
     ) -> DataProcessorPipeline[TInput, TOutput]:
         """Loads a pipeline from a local directory, single file, or Hugging Face Hub repository.
@@ -717,8 +736,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             config_filename: The name of the pipeline's JSON configuration file. Always required
                 to prevent ambiguity when multiple configs exist (e.g., preprocessor vs postprocessor).
             force_download: Whether to force (re)downloading the files.
-            resume_download: Whether to resume a previously interrupted download.
-            proxies: A dictionary of proxy servers to use.
+            resume_download: Kept for backward compatibility and ignored. Downloads resume automatically.
+            proxies: Kept for backward compatibility and ignored. Use HTTP_PROXY and HTTPS_PROXY instead.
             token: The token to use as HTTP bearer authorization for private Hub repositories.
             cache_dir: The path to a specific cache folder to store downloaded files.
             local_files_only: If True, avoid downloading files from the Hub.
@@ -727,6 +746,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                 match the step's class name or registry name.
             to_transition: A custom function to convert input data to `EnvTransition`.
             to_output: A custom function to convert the final `EnvTransition` to the output format.
+            trust_remote_code: Caller consent to import external step classes or run custom
+                tokenizer code. Defaults to False, including for local checkpoints.
             **kwargs: Additional arguments (not used).
 
         Returns:
@@ -744,8 +765,6 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         is_local_source = model_path.is_dir() or model_path.is_file()
         hub_download_kwargs = {
             "force_download": force_download,
-            "resume_download": resume_download,
-            "proxies": proxies,
             "token": token,
             "cache_dir": cache_dir,
             "local_files_only": local_files_only,
@@ -767,6 +786,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             config_filename,
             hub_download_kwargs,
             is_local_source,
+            trust_remote_code=trust_remote_code,
         )
 
         # 4. Validate that all overrides were used
@@ -791,6 +811,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         overrides: dict[str, Any] | None = None,
         to_transition: Callable[[TInput], EnvTransition] | None = None,
         to_output: Callable[[EnvTransition], TOutput] | None = None,
+        trust_remote_code: bool = False,
     ) -> DataProcessorPipeline[TInput, TOutput]:
         """Build a pipeline from an in-memory config and optional state tensors.
 
@@ -800,13 +821,17 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             overrides: Optional constructor overrides keyed by registry name or class name.
             to_transition: Optional converter from input data to `EnvTransition`.
             to_output: Optional converter from `EnvTransition` to output data.
+            trust_remote_code: Caller consent for external step imports and custom tokenizer code.
+                Config contents and already imported modules do not grant consent.
 
         Returns:
             A processor pipeline built from the config and optional state.
         """
         cls._validate_loaded_config("<in-memory config>", config, "<in-memory config>")
 
-        steps, remaining_override_keys = cls._build_steps_from_config(config, overrides or {})
+        steps, remaining_override_keys = cls._build_steps_from_config(
+            config, overrides or {}, trust_remote_code=trust_remote_code
+        )
         cls._validate_overrides_used(remaining_override_keys, config)
 
         pipeline = cls(
@@ -965,6 +990,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         config_filename: str,
         hub_download_kwargs: dict[str, Any],
         is_local_source: bool = False,
+        trust_remote_code: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build all processor steps with overrides and state loading.
 
@@ -1032,7 +1058,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             config_filename,
             hub_download_kwargs,
         )
-        steps, remaining_override_keys = cls._build_steps_from_config(loaded_config, overrides)
+        steps, remaining_override_keys = cls._build_steps_from_config(
+            loaded_config, overrides, trust_remote_code=trust_remote_code
+        )
 
         for step_instance, step_entry in zip(steps, loaded_config["steps"], strict=True):
             cls._load_step_state(
@@ -1082,11 +1110,12 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
                 resolved_path = base_path / artifact_path if base_path is not None else artifact_path
                 if not resolved_path.exists() and not is_local:
-                    repository_path = Path(config_filename).parent / artifact_path
+                    # Match the declared path and its children regardless of the name's suffix.
+                    pattern = glob.escape((Path(config_filename).parent / artifact_path).as_posix())
                     snapshot_download(
                         repo_id=model_id,
                         repo_type="model",
-                        allow_patterns=f"{repository_path.as_posix()}/**",
+                        allow_patterns=[pattern, f"{pattern}/**"],
                         **hub_download_kwargs,
                     )
 
@@ -1103,6 +1132,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         cls,
         loaded_config: dict[str, Any],
         overrides: dict[str, Any],
+        trust_remote_code: bool = False,
     ) -> tuple[list[ProcessorStep], set[str]]:
         """Build processor steps from config without loading tensor state.
 
@@ -1117,8 +1147,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         remaining_override_keys = set(overrides.keys())
 
         for step_entry in loaded_config["steps"]:
-            step_class, step_key = cls._resolve_step_class(step_entry)
-            processor_step = cls._instantiate_step(step_entry, step_class, step_key, overrides)
+            step_class, step_key = cls._resolve_step_class(step_entry, trust_remote_code=trust_remote_code)
+            processor_step = cls._instantiate_step(
+                step_entry, step_class, step_key, overrides, trust_remote_code=trust_remote_code
+            )
 
             if step_key in remaining_override_keys:
                 remaining_override_keys.discard(step_key)
@@ -1128,7 +1160,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         return processor_steps, remaining_override_keys
 
     @classmethod
-    def _resolve_step_class(cls, step_entry: dict[str, Any]) -> tuple[type[ProcessorStep], str]:
+    def _resolve_step_class(
+        cls, step_entry: dict[str, Any], trust_remote_code: bool = False
+    ) -> tuple[type[ProcessorStep], str]:
         """Resolve step class from registry or import path.
 
         This method implements a two-tier resolution strategy:
@@ -1160,6 +1194,8 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Args:
             step_entry: The step configuration dictionary (must have "registry_name" or "class")
+            trust_remote_code: Whether to allow importing custom processor step classes from
+                external modules that are not built into lerobot.
 
         Returns:
             Tuple of (step_class, step_key)
@@ -1168,22 +1204,37 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         Raises:
             ImportError: If step class cannot be loaded from registry or import path
+            ValueError: If class path is invalid or custom external import requires trust_remote_code
         """
         if "registry_name" in step_entry:
             try:
                 step_class = ProcessorStepRegistry.get(step_entry["registry_name"])
-                return step_class, step_entry["registry_name"]
+                step_key = step_entry["registry_name"]
             except KeyError as e:
                 raise ImportError(f"Failed to load processor step from registry. {str(e)}") from e
         else:
             # Fallback to dynamic import using the full class path
-            full_class_path = step_entry["class"]
+            full_class_path = step_entry.get("class", "")
+            if (
+                not isinstance(full_class_path, str)
+                or "." not in full_class_path
+                or not all(part.isidentifier() for part in full_class_path.split("."))
+            ):
+                raise ValueError(f"Invalid class path: {full_class_path!r}")
+
             module_path, class_name = full_class_path.rsplit(".", 1)
+
+            is_lerobot_module = module_path.startswith("lerobot.") or module_path == "lerobot"
+
+            if not (trust_remote_code or is_lerobot_module):
+                raise ValueError(
+                    f"Importing '{module_path}' requires `trust_remote_code=True`. {_TRUST_REMOTE_CODE_HINT}"
+                )
 
             try:
                 module = importlib.import_module(module_path)
                 step_class = getattr(module, class_name)
-                return step_class, class_name
+                step_key = class_name
             except (ImportError, AttributeError) as e:
                 raise ImportError(
                     f"Failed to load processor step '{full_class_path}'. "
@@ -1192,6 +1243,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     f"Error: {str(e)}"
                 ) from e
 
+        if not (isinstance(step_class, type) and issubclass(step_class, ProcessorStep)):
+            raise TypeError(f"Processor step '{step_key}' must resolve to a ProcessorStep subclass.")
+        return step_class, step_key
+
     @classmethod
     def _instantiate_step(
         cls,
@@ -1199,6 +1254,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         step_class: type[ProcessorStep],
         step_key: str,
         overrides: dict[str, Any],
+        trust_remote_code: bool = False,
     ) -> ProcessorStep:
         """Instantiate a single processor step with config overrides.
 
@@ -1231,17 +1287,30 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             step_class: The step class to instantiate (already resolved)
             step_key: The key used for overrides ("registry_name" or class name)
             overrides: User-provided parameter overrides (keyed by step_key)
+            trust_remote_code: Whether to allow steps requesting remote code execution.
 
         Returns:
             The instantiated processor step (ready for use)
 
         Raises:
-            ValueError: If step cannot be instantiated, with detailed error context
+            ValueError: If step cannot be instantiated or requests trust_remote_code without caller consent
         """
+        saved_cfg = step_entry.get("config", {})
+        step_overrides = overrides.get(step_key, {})
+        merged_cfg = {**saved_cfg, **step_overrides}
+
+        if not trust_remote_code and merged_cfg.get("trust_remote_code", False):
+            raise ValueError(
+                f"Step '{step_key}' needs custom code, which requires `trust_remote_code=True`. "
+                f"{_TRUST_REMOTE_CODE_HINT}"
+            )
+
+        # Enforce caller consent even when a registered step defaults to True,
+        # and let explicit pipeline/step consent take precedence over saved values.
+        if "trust_remote_code" in inspect.signature(step_class).parameters:
+            merged_cfg["trust_remote_code"] = step_overrides.get("trust_remote_code", trust_remote_code)
+
         try:
-            saved_cfg = step_entry.get("config", {})
-            step_overrides = overrides.get(step_key, {})
-            merged_cfg = {**saved_cfg, **step_overrides}
             return step_class(**merged_cfg)
         except Exception as e:
             step_name = step_entry.get("registry_name", step_entry.get("class", "Unknown"))
@@ -1316,10 +1385,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if base_path and (base_path / state_filename).exists():
             state_path = str(base_path / state_filename)
         elif is_local_source:
-            state_path = base_path / state_filename if base_path else Path(state_filename)
+            missing_path = base_path / state_filename if base_path else Path(state_filename)
             raise FileNotFoundError(
                 f"State file '{state_filename}' was not found for local processor pipeline "
-                f"'{model_id}' at '{state_path}'."
+                f"'{model_id}' at '{missing_path}'."
             )
         else:
             # Download from Hub
@@ -1766,7 +1835,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(observation=observation)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.OBSERVATION]
+        return _require_component(transformed_transition[TransitionKey.OBSERVATION], "observation")
 
     def process_action(
         self, action: PolicyAction | RobotAction | EnvAction
@@ -1781,7 +1850,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(action=action)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.ACTION]
+        return _require_component(transformed_transition[TransitionKey.ACTION], "action")
 
     def process_reward(self, reward: float | torch.Tensor) -> float | torch.Tensor:
         """Processes only the reward part of a transition through the pipeline.
@@ -1794,7 +1863,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(reward=reward)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.REWARD]
+        return _require_component(transformed_transition[TransitionKey.REWARD], "reward")
 
     def process_done(self, done: bool | torch.Tensor) -> bool | torch.Tensor:
         """Processes only the done flag of a transition through the pipeline.
@@ -1807,7 +1876,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(done=done)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.DONE]
+        return _require_component(transformed_transition[TransitionKey.DONE], "done flag")
 
     def process_truncated(self, truncated: bool | torch.Tensor) -> bool | torch.Tensor:
         """Processes only the truncated flag of a transition through the pipeline.
@@ -1820,7 +1889,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(truncated=truncated)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.TRUNCATED]
+        return _require_component(transformed_transition[TransitionKey.TRUNCATED], "truncated flag")
 
     def process_info(self, info: dict[str, Any]) -> dict[str, Any]:
         """Processes only the info dictionary of a transition through the pipeline.
@@ -1833,7 +1902,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(info=info)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.INFO]
+        return _require_component(transformed_transition[TransitionKey.INFO], "info dictionary")
 
     def process_complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
         """Processes only the complementary data part of a transition through the pipeline.
@@ -1846,7 +1915,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(complementary_data=complementary_data)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
+        return _require_component(
+            transformed_transition[TransitionKey.COMPLEMENTARY_DATA], "complementary data"
+        )
 
 
 # Type aliases for semantic clarity.
@@ -1964,7 +2035,7 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type (tensor), but got {type(action)}")
 
         processed_action = self.action(action)

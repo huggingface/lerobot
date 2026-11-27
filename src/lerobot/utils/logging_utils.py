@@ -65,6 +65,13 @@ class AverageMeter:
         return fmtstr.format(**self.__dict__)
 
 
+class _PolicyMetric(AverageMeter):
+    """A scalar reported by the policy, which may be absent on some ranks."""
+
+    def __init__(self, name: str):
+        super().__init__(name, ":.3f", reduction="mean")
+
+
 class MetricsTracker:
     """
     A helper class to track and log metrics over time.
@@ -105,8 +112,8 @@ class MetricsTracker:
     # display current metrics
     logging.info(train_metrics)
 
-    # export for wandb
-    wandb.log(train_metrics.to_dict())
+    # export for trackio
+    trackio.log(train_metrics.to_dict())
 
     # reset averages after logging
     train_metrics.reset_averages()
@@ -193,30 +200,51 @@ class MetricsTracker:
             if name in self._caller_metrics:
                 continue
             if name not in self.metrics:
-                self.metrics[name] = AverageMeter(name, ":.3f", reduction="mean")
+                self.metrics[name] = _PolicyMetric(name)
             self.metrics[name].update(float(value))
 
     def reduce_across_ranks(self) -> None:
         """
-        Synchronises the running averages of every metric whose ``reduction`` is not ``"none"``
-        across all distributed processes (in-place).
+        Synchronise running averages across the world group before logging.
 
-        This is a collective operation and MUST be invoked on every rank — typically just before
-        logging. Outside distributed runs it is a no-op. Without it, metrics reported by the
-        main process only reflect rank 0; for bottleneck-style timings (``dataloading_s``,
-        ``update_s``, ...) that means the slowest worker's stall is invisible.
+        Each scalar reported through an auto-registered policy meter counts once in the mean for
+        its name. A rank can receive a metric that only its peers reported. Caller-supplied meters
+        use their configured reductions on the per-rank averages. Supply the same reduced meter
+        names and reductions on all ranks.
 
-        Torch-native on purpose: metrics code carries no Accelerator dependency.
-        Note the reduction spans the WORLD group — correct for count-free averages (loss values
-        are identical within a context-parallel group, so including CP peers is a weighted
-        no-op).
+        All ranks must call this collective. Outside distributed runs it is a no-op.
         """
         if not dist.is_initialized() or dist.get_world_size() <= 1:
             return
 
+        # A mixed-supervision batch can produce different sub-losses on each rank.
+        # Exchange these short CPU summaries by name once per logging window.
+        world_size = dist.get_world_size()
+        local = {
+            name: (meter.sum, meter.count)
+            for name, meter in self.metrics.items()
+            if isinstance(meter, _PolicyMetric) and meter.count
+        }
+        gathered: list[dict[str, tuple[float, float]]] = [{} for _ in range(world_size)]
+        dist.all_gather_object(gathered, local)
+        sums: dict[str, float] = defaultdict(float)
+        counts: dict[str, float] = defaultdict(float)
+        for rank_metrics in gathered:
+            for name, (total, count) in rank_metrics.items():
+                sums[name] += total
+                counts[name] += count
+        for name, total in sums.items():
+            if name not in self.metrics:
+                self.metrics[name] = _PolicyMetric(name)
+            meter = self.metrics[name]
+            if isinstance(meter, _PolicyMetric):
+                meter.avg = total / counts[name]
+                # Retain the local observation count so a second reduction counts each update once.
+                meter.sum = meter.avg * meter.count
+
         buckets: dict[str, list[str]] = defaultdict(list)
-        for name, meter in self.metrics.items():
-            if meter.reduction != "none":
+        for name, meter in sorted(self.metrics.items()):
+            if not isinstance(meter, _PolicyMetric) and meter.reduction != "none":
                 buckets[meter.reduction].append(name)
         if not buckets:
             return

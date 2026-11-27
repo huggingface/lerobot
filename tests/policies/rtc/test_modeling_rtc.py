@@ -93,6 +93,19 @@ def test_rtc_processor_initialization_without_debug(rtc_config_debug_disabled):
     assert processor.tracker is None
 
 
+def test_rtc_processor_rejects_trained_mode_when_policy_does_not_support_it():
+    config = RTCConfig(mode="trained")
+
+    with pytest.raises(ValueError, match="requires a PI05-compatible checkpoint"):
+        RTCProcessor(config)
+
+    processor = RTCProcessor(config, trained_mode_supported=True)
+    assert processor.rtc_config.mode == "trained"
+
+    disabled = RTCProcessor(RTCConfig(enabled=False, mode="trained"))
+    assert disabled.rtc_config.enabled is False
+
+
 # ====================== Tracker Proxy Methods Tests ======================
 
 
@@ -365,6 +378,17 @@ def test_get_prefix_weights_with_total_less_than_start():
 
 
 # ====================== denoise_step Tests ======================
+
+
+def test_denoise_step_rejects_incompatible_prefix_batch(rtc_processor_debug_disabled):
+    with pytest.raises(ValueError, match="same size as the input tensor"):
+        rtc_processor_debug_disabled.denoise_step(
+            x_t=torch.zeros(1, 50, 6),
+            prev_chunk_left_over=torch.zeros(2, 50, 6),
+            inference_delay=0,
+            time=torch.tensor(0.5),
+            original_denoise_step_partial=lambda value: value,
+        )
 
 
 def test_denoise_step_without_prev_chunk(rtc_processor_debug_disabled):

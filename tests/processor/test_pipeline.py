@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 import torch
 import torch.nn as nn
+from huggingface_hub.utils import filter_repo_objects
 from safetensors.torch import load_file
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -40,6 +41,21 @@ from lerobot.processor import (
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, REWARD, TRUNCATED
 from tests.conftest import assert_contract_is_typed
+
+pytestmark = pytest.mark.dataset
+
+TRANSITION_KEYS = frozenset(
+    {
+        TransitionKey.OBSERVATION,
+        TransitionKey.ACTION,
+        TransitionKey.PREDICTION,
+        TransitionKey.REWARD,
+        TransitionKey.DONE,
+        TransitionKey.TRUNCATED,
+        TransitionKey.INFO,
+        TransitionKey.COMPLEMENTARY_DATA,
+    }
+)
 
 
 @dataclass
@@ -293,10 +309,10 @@ def test_step_through():
     assert "step1_counter" in results[1][TransitionKey.COMPLEMENTARY_DATA]  # After step1
     assert "step2_counter" in results[2][TransitionKey.COMPLEMENTARY_DATA]  # After step2
 
-    # Ensure all results are dicts (same format as input)
+    # Ensure all results are dicts keyed by the (string) transition keys
     for result in results:
         assert isinstance(result, dict)
-        assert all(isinstance(k, TransitionKey) for k in result)
+        assert all(isinstance(k, str) and k in TRANSITION_KEYS for k in result)
 
 
 def test_step_through_with_dict():
@@ -321,17 +337,9 @@ def test_step_through_with_dict():
     # Ensure all results are EnvTransition dicts (regardless of input format)
     for result in results:
         assert isinstance(result, dict)
-        # Check that keys are TransitionKey enums or at least valid transition keys
+        # Check that keys are valid transition keys
         for key in result:
-            assert key in [
-                TransitionKey.OBSERVATION,
-                TransitionKey.ACTION,
-                TransitionKey.REWARD,
-                TransitionKey.DONE,
-                TransitionKey.TRUNCATED,
-                TransitionKey.INFO,
-                TransitionKey.COMPLEMENTARY_DATA,
-            ]
+            assert key in TRANSITION_KEYS
 
     # Check that the processing worked - verify step counters in complementary_data
     assert results[1].get(TransitionKey.COMPLEMENTARY_DATA, {}).get("step1_counter") == 0
@@ -594,7 +602,9 @@ def test_save_and_load_pretrained():
         assert config["steps"][1]["config"]["counter"] == 10
 
         # Load pipeline
-        loaded_pipeline = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="testpipeline.json")
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="testpipeline.json", trust_remote_code=True
+        )
 
         assert loaded_pipeline.name == "TestPipeline"
         assert len(loaded_pipeline) == 2
@@ -623,7 +633,7 @@ def test_step_without_optional_methods():
     with tempfile.TemporaryDirectory() as tmp_dir:
         pipeline.save_pretrained(tmp_dir)
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json"
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
         )
         assert len(loaded_pipeline) == 1
 
@@ -654,7 +664,7 @@ def test_mixed_json_and_tensor_state():
 
         # Load and verify
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json"
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
         )
         loaded_step = loaded_pipeline.steps[0]
 
@@ -733,7 +743,9 @@ def test_from_config_round_trips_stateful_pipeline():
     config = pipeline.get_config()
     pipeline_state_dict = pipeline.state_dict()
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config, state_dict=pipeline_state_dict)
+    loaded_pipeline = DataProcessorPipeline.from_config(
+        config, state_dict=pipeline_state_dict, trust_remote_code=True
+    )
     loaded_step = loaded_pipeline.steps[0]
 
     assert len(loaded_pipeline) == 1
@@ -769,7 +781,7 @@ def test_from_config_preserves_state_metadata_for_empty_initial_state():
     config = pipeline.get_config()
     pipeline_state_dict = pipeline.state_dict()
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config)
+    loaded_pipeline = DataProcessorPipeline.from_config(config, trust_remote_code=True)
     loaded_step = loaded_pipeline.steps[0]
 
     assert isinstance(loaded_step, MockLazyTensorStateStep)
@@ -792,6 +804,7 @@ def test_from_config_applies_overrides_before_state_loading():
         config,
         state_dict=pipeline_state_dict,
         overrides={"MockLazyTensorStateStep": {"scale": 5.0}},
+        trust_remote_code=True,
     )
     loaded_step = loaded_pipeline.steps[0]
 
@@ -804,7 +817,7 @@ def test_load_state_dict_raises_on_missing_expected_state():
     """Test loading raises when serialized config expects missing state."""
     stateful_step = MockLazyTensorStateStep(initial_value=19.0)
     pipeline = DataProcessorPipeline([stateful_step], name="Missing Pipeline")
-    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config())
+    loaded_pipeline = DataProcessorPipeline.from_config(pipeline.get_config(), trust_remote_code=True)
 
     with pytest.raises(KeyError, match="missing_pipeline_step_0"):
         loaded_pipeline.load_state_dict({})
@@ -827,7 +840,9 @@ def test_stateless_pipeline_in_memory_serialization_returns_empty_state():
     assert pipeline.state_dict() == {}
     assert all("state_file" not in step_entry for step_entry in config["steps"])
 
-    loaded_pipeline = DataProcessorPipeline.from_config(config_without_name, state_dict={})
+    loaded_pipeline = DataProcessorPipeline.from_config(
+        config_without_name, state_dict={}, trust_remote_code=True
+    )
 
     assert loaded_pipeline.name == "DataProcessorPipeline"
     assert loaded_pipeline.state_dict() == {}
@@ -1120,6 +1135,7 @@ def test_from_pretrained_with_overrides():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         # Verify the pipeline was loaded correctly
@@ -1162,6 +1178,7 @@ def test_from_pretrained_with_partial_overrides():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         transition = create_transition(reward=1.0)
@@ -1186,7 +1203,10 @@ def test_from_pretrained_invalid_override_key():
 
         with pytest.raises(KeyError, match="Override keys.*do not match any step"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1203,7 +1223,10 @@ def test_from_pretrained_multiple_invalid_override_keys():
 
         with pytest.raises(KeyError) as exc_info:
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
         error_msg = str(exc_info.value)
@@ -1263,6 +1286,7 @@ def test_from_pretrained_mixed_registered_and_unregistered():
             overrides=overrides,
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         # Test both steps
@@ -1289,6 +1313,7 @@ def test_from_pretrained_no_overrides():
             config_filename="dataprocessorpipeline.json",
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1315,6 +1340,7 @@ def test_from_pretrained_empty_overrides():
             overrides={},
             to_transition=identity_transition,
             to_output=identity_transition,
+            trust_remote_code=True,
         )
 
         assert len(loaded_pipeline) == 1
@@ -1343,7 +1369,10 @@ def test_from_pretrained_override_instantiation_error():
 
         with pytest.raises(ValueError, match="Failed to instantiate processor step"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1369,7 +1398,7 @@ def test_from_pretrained_with_state_and_overrides():
         }
 
         loaded_pipeline = DataProcessorPipeline.from_pretrained(
-            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+            tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides, trust_remote_code=True
         )
         loaded_step = loaded_pipeline.steps[0]
 
@@ -1399,7 +1428,10 @@ def test_from_pretrained_override_error_messages():
 
         with pytest.raises(KeyError) as exc_info:
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
         error_msg = str(exc_info.value)
@@ -1553,7 +1585,9 @@ def test_save_with_custom_config_filename():
         assert config["name"] == "TestProcessor"
 
         # Load with specific filename
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="my_custom_config.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="my_custom_config.json", trust_remote_code=True
+        )
         assert loaded.name == "TestProcessor"
 
 
@@ -1576,8 +1610,12 @@ def test_multiple_processors_same_directory():
         assert (Path(tmp_dir) / "postprocessor.json").exists()
 
         # Load them back
-        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="preprocessor.json", trust_remote_code=True
+        )
+        loaded_post = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="postprocessor.json", trust_remote_code=True
+        )
 
         assert loaded_pre.name == "preprocessor"
         assert loaded_post.name == "postprocessor"
@@ -1594,7 +1632,9 @@ def test_explicit_config_filename_loading():
         pipeline.save_pretrained(tmp_dir)
 
         # Load with explicit config_filename (now required)
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="singleconfig.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="singleconfig.json", trust_remote_code=True
+        )
         assert loaded.name == "SingleConfig"
 
 
@@ -1608,8 +1648,12 @@ def test_explicit_config_selection_with_multiple_configs():
         proc2.save_pretrained(tmp_dir)
 
         # Can load specific configs explicitly
-        loaded1 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor1.json")
-        loaded2 = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="processor2.json")
+        loaded1 = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="processor1.json", trust_remote_code=True
+        )
+        loaded2 = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="processor2.json", trust_remote_code=True
+        )
 
         assert loaded1.name == "processor1"
         assert loaded2.name == "processor2"
@@ -1777,6 +1821,7 @@ def test_override_preserves_defaults():
                     "multiplier": 5.0  # Only override multiplier
                 }
             },
+            trust_remote_code=True,
         )
 
         # Check that name was preserved from saved config
@@ -1802,7 +1847,10 @@ def test_override_type_validation():
 
         with pytest.raises(ValueError, match="Failed to instantiate"):
             DataProcessorPipeline.from_pretrained(
-                tmp_dir, config_filename="dataprocessorpipeline.json", overrides=overrides
+                tmp_dir,
+                config_filename="dataprocessorpipeline.json",
+                overrides=overrides,
+                trust_remote_code=True,
             )
 
 
@@ -1880,6 +1928,7 @@ def test_override_multiple_same_class_warning():
             tmp_dir,
             config_filename="dataprocessorpipeline.json",
             overrides={"MockStepWithNonSerializableParam": {"multiplier": 10.0}},
+            trust_remote_code=True,
         )
 
         # Both steps get the same override
@@ -1935,8 +1984,12 @@ def test_state_file_naming_with_multiple_processors():
         assert (Path(tmp_dir) / "postprocessor_step_0.safetensors").exists()
 
         # Load both back and verify they work correctly
-        loaded_pre = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="preprocessor.json")
-        loaded_post = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="postprocessor.json")
+        loaded_pre = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="preprocessor.json", trust_remote_code=True
+        )
+        loaded_post = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="postprocessor.json", trust_remote_code=True
+        )
 
         assert loaded_pre.name == "PreProcessor"
         assert loaded_post.name == "PostProcessor"
@@ -1944,6 +1997,7 @@ def test_state_file_naming_with_multiple_processors():
         assert loaded_post.steps[0].window_size == 10
 
 
+@pytest.mark.gpu
 def test_override_with_device_strings():
     """Test overriding device parameters with string values."""
 
@@ -2056,7 +2110,9 @@ def test_save_load_with_custom_converter_functions():
         pipeline.save_pretrained(tmp_dir)
 
         # Load - should use default converters
-        loaded = DataProcessorPipeline.from_pretrained(tmp_dir, config_filename="dataprocessorpipeline.json")
+        loaded = DataProcessorPipeline.from_pretrained(
+            tmp_dir, config_filename="dataprocessorpipeline.json", trust_remote_code=True
+        )
 
         # Verify it uses default converters by checking with standard batch format
         batch = {
@@ -2436,3 +2492,55 @@ def test_initial_camera_not_overridden_by_step_image():
     key = f"{OBS_IMAGES}.front"
     assert key in out
     assert out[key]["shape"] == (240, 320, 3)  # from the step, not from initial
+
+
+def _artifact_config(relative_path: str) -> dict[str, Any]:
+    """Minimal loaded-config shape carrying one declared artifact."""
+    return {
+        "steps": [
+            {
+                "registry_name": "some_step",
+                "config": {},
+                "artifacts": {"asset": relative_path},
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("artifact", "filename"),
+    [
+        ("tokenizer", "tokenizer/vocab.json"),
+        ("action_tokenizer.safetensors", "action_tokenizer.safetensors"),
+        ("vocab", "vocab"),
+        ("tokenizer.v2", "tokenizer.v2/vocab.json"),
+        ("vocab[1]", "vocab[1]/vocab.json"),
+    ],
+)
+def test_artifact_download_pattern_matches_directories_and_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact: str, filename: str
+) -> None:
+    """Fetch the declared artifact from the config's directory without selecting sibling files."""
+    config_dir = tmp_path / "nested"
+    remote_file = f"nested/{filename}"
+
+    def download(*, allow_patterns: str | list[str], **kwargs: Any) -> str:
+        remote_files = [remote_file, f"nested/{artifact}.bak", "nested/vocab1/vocab.json", filename]
+        assert list(filter_repo_objects(remote_files, allow_patterns=allow_patterns)) == [remote_file]
+        target = tmp_path / remote_file
+        target.parent.mkdir(parents=True)
+        target.write_text("contents")
+        return str(tmp_path)
+
+    monkeypatch.setattr("lerobot.processor.pipeline.snapshot_download", download)
+    config = _artifact_config(artifact)
+    DataProcessorPipeline._resolve_artifact_paths(
+        config,
+        model_id="some/repo",
+        base_path=config_dir,
+        config_filename="nested/processor.json",
+        hub_download_kwargs={},
+    )
+
+    assert config["steps"][0]["config"]["asset"] == str(config_dir / artifact)
+    assert (config_dir / filename).read_text() == "contents"

@@ -105,7 +105,7 @@ def test_classifier_processor_normalization():
     # Check that data is processed
     assert processed[OBS_STATE].shape == (10,)
     assert processed[OBS_IMAGE].shape == (3, 224, 224)
-    assert processed[TransitionKey.ACTION.value].shape == (1,)
+    assert processed[TransitionKey.ACTION].shape == (1,)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -133,10 +133,10 @@ def test_classifier_processor_cuda():
     # Check that data is on CUDA
     assert processed[OBS_STATE].device.type == "cuda"
     assert processed[OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
+    assert processed[TransitionKey.ACTION].device.type == "cuda"
 
     # Process through postprocessor
-    postprocessed = postprocessor(processed[TransitionKey.ACTION.value])
+    postprocessed = postprocessor(processed[TransitionKey.ACTION])
 
     # Check that output is back on CPU
     assert postprocessed.device.type == "cpu"
@@ -168,7 +168,7 @@ def test_classifier_processor_accelerate_scenario():
     # Check that data stays on same GPU
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -197,7 +197,7 @@ def test_classifier_processor_multi_gpu():
     # Check that data stays on cuda:1
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 def test_classifier_processor_without_stats():
@@ -251,7 +251,7 @@ def test_classifier_processor_save_and_load():
         processed = loaded_preprocessor(batch)
         assert processed[OBS_STATE].shape == (10,)
         assert processed[OBS_IMAGE].shape == (3, 224, 224)
-        assert processed[TransitionKey.ACTION.value].shape == (1,)
+        assert processed[TransitionKey.ACTION].shape == (1,)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -288,7 +288,7 @@ def test_classifier_processor_mixed_precision():
     # Check that data is converted to float16
     assert processed[OBS_STATE].dtype == torch.float16
     assert processed[OBS_IMAGE].dtype == torch.float16
-    assert processed[TransitionKey.ACTION.value].dtype == torch.float16
+    assert processed[TransitionKey.ACTION].dtype == torch.float16
 
 
 def test_classifier_processor_batch_data():
@@ -315,7 +315,7 @@ def test_classifier_processor_batch_data():
     # Check that batch dimension is preserved
     assert processed[OBS_STATE].shape == (batch_size, 10)
     assert processed[OBS_IMAGE].shape == (batch_size, 3, 224, 224)
-    assert processed[TransitionKey.ACTION.value].shape == (batch_size, 1)
+    assert processed[TransitionKey.ACTION].shape == (batch_size, 1)
 
 
 def test_classifier_processor_postprocessor_identity():

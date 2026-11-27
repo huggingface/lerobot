@@ -52,7 +52,7 @@ OpenXR runtime the session connects to. By default LeTeleop **auto-launches the 
 for you** when you call `teleop_device.connect()` — you no longer have to run `python -m
 isaacteleop.cloudxr` and `source cloudxr.env` in a separate shell. All you need is a supported
 headset connected and the CloudXR firewall ports open. Follow the Isaac Teleop
-[Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html) for the
+[Quick Start](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html) for the
 headset-pairing and firewall details.
 
 **First run (EULA).** The very first launch must accept the NVIDIA CloudXR EULA. The auto-launch
@@ -107,7 +107,7 @@ finally:
     teleop_device.disconnect()
 ```
 
-See [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)
+See [System Requirements](https://nvidia.github.io/IsaacCapture/main/references/requirements.html)
 for supported OS / GPU / CloudXR versions and headsets.
 
 ## How it works
@@ -139,8 +139,8 @@ device can stay a thin reader:
   proportional to the trigger pull, which `MapXRControllerActionToRobotAction` maps to a jaw target.
 
 See the Isaac Teleop
-[Retargeting interface](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
-and [architecture overview](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html)
+[Retargeting interface](https://nvidia.github.io/IsaacCapture/main/references/retargeting/index.html)
+and [architecture overview](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 for how source nodes and retargeters compose.
 
 ```text
@@ -220,7 +220,7 @@ turns these into the absolute `ee_pose`, and the squeeze is thresholded by the l
 Calling `teleop_device.connect()` first auto-launches the CloudXR runtime (unless you opted out —
 see [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset); this blocks for
 ~30s and on the first run prompts for the EULA on stdin), then starts the Isaac Teleop
-[`TeleopSession`](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)
+[`TeleopSession`](https://nvidia.github.io/IsaacCapture/main/getting_started/teleop_session.html)
 (opens the OpenXR session and discovers the controllers). XR controllers are self‑calibrating, so
 there is no manual calibration step — the clutch handles re‑centering each time you engage. Pair
 `connect()` with a `try/finally` that calls `disconnect()` so the session tears down before the
@@ -265,7 +265,7 @@ clutch, no IK — the leader and follower share the SO-101 kinematics).
 
 The `so101_leader_plugin` binary is a C++ plugin that is **not** part of the `isaacteleop` pip
 package — you build it from the Isaac Teleop source tree. Follow
-[Build Isaac Teleop from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)
+[Build Isaac Teleop from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source/index.html)
 (in short, from your Isaac Teleop checkout: `cmake -B build && cmake --build build --parallel &&
 cmake --install build`); the build installs the plugins under `<IsaacTeleop>/install/plugins/`, so
 the binary lands at `install/plugins/so101_leader/so101_leader_plugin` — the `--launch_plugin` path
@@ -364,7 +364,7 @@ adapting the pipeline to other robots.
 - **No controllers found** — make sure the CloudXR runtime is running, the firewall ports are
   whitelisted, and the headset is connected (see
   [Set up CloudXR and connect a headset](#set-up-cloudxr-and-connect-a-headset) and the Isaac
-  Teleop [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)).
+  Teleop [Quick Start](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)).
 - **CloudXR auto-launch failed** — `connect()` raises a `RuntimeError` if the runtime does not
   come up within its startup timeout. Check the launcher logs under `~/.cloudxr/logs`. Common
   causes: the EULA was never accepted (run `python -m isaacteleop.cloudxr --accept-eula` once,
@@ -379,19 +379,19 @@ adapting the pipeline to other robots.
 
 ## Learn more
 
-NVIDIA Isaac Teleop documentation ([docs home](https://nvidia.github.io/IsaacTeleop/),
+NVIDIA Isaac Teleop documentation ([docs home](https://nvidia.github.io/IsaacCapture/),
 [GitHub](https://github.com/NVIDIA/IsaacTeleop)):
 
-- [Quick Start](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html) —
+- [Quick Start](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html) —
   install, run the CloudXR server, connect a headset, run a teleop example.
-- [TeleopSession](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html) —
+- [TeleopSession](https://nvidia.github.io/IsaacCapture/main/getting_started/teleop_session.html) —
   the session API `XRController` wraps.
-- [Retargeting interface](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
-  and [architecture overview](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html) —
+- [Retargeting interface](https://nvidia.github.io/IsaacCapture/main/references/retargeting/index.html)
+  and [architecture overview](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html) —
   how source nodes and retargeters compose into a pipeline.
-- [Build from source](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html) —
+- [Build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source/index.html) —
   build `isaacteleop` (and its C++ plugins, including the `so101_leader` plugin used above) from a
   local checkout.
-- [System Requirements](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html) and
+- [System Requirements](https://nvidia.github.io/IsaacCapture/main/references/requirements.html) and
   the [CloudXR SDK docs](https://docs.nvidia.com/cloudxr-sdk) — supported platforms, GPUs,
   CloudXR/OpenXR runtime versions, and headsets.

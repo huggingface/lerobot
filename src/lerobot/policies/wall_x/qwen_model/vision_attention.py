@@ -29,7 +29,7 @@ from __future__ import annotations
 import inspect
 import logging
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,9 @@ else:
     Qwen2_5_VLVisionAttention = nn.Module
     apply_rotary_pos_emb_vision = None
 
+if TYPE_CHECKING:
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLVisionConfig
+
 try:
     from torch.nn.attention.varlen import varlen_attn as _varlen_attn
 except ImportError:  # torch<2.10
@@ -56,6 +59,7 @@ _VARLEN_USES_WINDOW_SIZE = (
 
 
 VisionAttentionBackend = Literal["auto", "sdpa", "varlen"]
+ResolvedVisionAttentionBackend = Literal["sdpa", "varlen"]
 
 logger = logging.getLogger(__name__)
 
@@ -93,24 +97,24 @@ def _supports_varlen_attention(
 class WallXVisionAttention(Qwen2_5_VLVisionAttention):
     """Qwen2.5-VL vision attention with packed varlen and native SDPA fallback."""
 
-    def __init__(self, config, backend: VisionAttentionBackend):
+    def __init__(self, config: Qwen2_5_VLVisionConfig, backend: VisionAttentionBackend) -> None:
         super().__init__(config)
         self.wallx_backend = backend
-        self._resolved_backend_key = None
-        self._resolved_backend = None
+        self._resolved_backend_key: tuple[str, int | None, torch.dtype, bool] | None = None
+        self._resolved_backend: ResolvedVisionAttentionBackend | None = None
 
     def _resolve_backend(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
-    ) -> str:
+    ) -> ResolvedVisionAttentionBackend:
         key = (
             hidden_states.device.type,
             hidden_states.device.index,
             hidden_states.dtype,
             position_embeddings is not None,
         )
-        if self._resolved_backend_key == key:
+        if self._resolved_backend_key == key and self._resolved_backend is not None:
             return self._resolved_backend
 
         use_varlen = self.wallx_backend != "sdpa" and _supports_varlen_attention(
@@ -120,7 +124,7 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
             reason = _varlen_unavailable_reason(hidden_states, position_embeddings)
             raise RuntimeError(f"Wall-X vision_attn_implementation='varlen' cannot be used: {reason}")
 
-        resolved_backend = "varlen" if use_varlen else "sdpa"
+        resolved_backend: ResolvedVisionAttentionBackend = "varlen" if use_varlen else "sdpa"
         self._resolved_backend_key = key
         self._resolved_backend = resolved_backend
         _log_resolved_backend(self.wallx_backend, resolved_backend)
@@ -132,7 +136,7 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
         cu_seqlens: torch.Tensor,
         rotary_pos_emb: torch.Tensor | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> torch.Tensor:
         del rotary_pos_emb
 
@@ -149,6 +153,9 @@ class WallXVisionAttention(Qwen2_5_VLVisionAttention):
             self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
         )
 
+        if position_embeddings is None:
+            # `_resolve_backend` only selects varlen when the embeddings were precomputed.
+            raise RuntimeError("Wall-X packed varlen attention requires precomputed position embeddings.")
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb_vision(
             query_states,
