@@ -1,92 +1,108 @@
 # Cheat sheet
 
-All of the LeRobot commands in one place. If you forgot how to use a specific command or want to learn about a new one you can do it here.
-
-> [!WARNING]
-> For all of the commands listed below remember to change the ports/names/ids to your own values!
+Every command from the [tutorial](./il_robots), in order, for an SO-101. The IDs (`my_follower`, `my_leader`) and the dataset and policy names are the tutorial's, so the commands work one after another. Each section links to the tutorial step that explains it.
 
 > [!TIP]
-> Another great way to look at all the commands and get them configured for your specific setup is to use this [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb).
+> **Another robot?** Replace `so101_follower`, `so101_leader` and the ports with your robot's values from [Your robot's settings](./setup_your_robot#your-robots-settings). The tutorial pages show the same commands for other robots, in their **Other robots** tab.
 
-### Setup and installation
+## Install and log in[[setup-and-installation]]
 
-For installation please look at [LeRobot Installation](./installation).
+```bash
+pip install 'lerobot[core_scripts,training,feetech]'
+```
 
-### Useful tools
+Log in to the Hugging Face Hub, and save your user name in `HF_USER` for the commands below:
 
-###### Find port
+```bash
+hf auth login
+HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+```
 
-Use this to identify which serial ports your robots are connected to. Follow the instructions in your terminal: you will be asked to unplug the USB cable and press Enter. The script will then detect and print the correct serial port for that robot.
+Details: [Install LeRobot](./installation).
+
+## 1. Find the ports and calibrate[[calibration]]
+
+Find the port of each arm (the command asks you to unplug its USB cable), then, on Linux, give yourself access to the ports:
 
 ```bash
 lerobot-find-port
+sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1
 ```
 
-###### Find cameras
-
-Quickly find camera indices and verify their output. This command prints camera information to the terminal and saves test frames from each detected camera to `outputs/captured_images`
-
-```bash
-lerobot-find-cameras
-```
-
-### Calibration
-
-In most cases you will need to perform calibration just once for each robot and teleoperation device. Before performing the calibration make sure that all the joints are roughly in the middle position.
+Calibrate both arms, one after the other:
 
 ```bash
 lerobot-calibrate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.id=my_follower_arm
+    --robot.id=my_follower
 ```
 
-Make sure that you use the same IDs used during calibration later for the other scripts. That's how LeRobot finds the calibration files.
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader
+```
 
-### Teleoperation
+Every later command uses the same IDs: that's how LeRobot finds the calibration. Details: [1. Set up your robot](./setup_your_robot).
 
-Teleoperating with two cameras and displaying the data with Rerun.
+## 2. Teleoperate and add cameras[[teleoperation]]
+
+Find your cameras (it saves a test image from each one in `outputs/captured_images`):
+
+```bash
+lerobot-find-cameras opencv
+```
+
+Teleoperate with two cameras, and watch their images:
 
 ```bash
 lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.id=my_follower_arm \
-    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM1 \
-    --teleop.id=my_leader_arm \
+    --teleop.id=my_leader \
     --display_data=true
 ```
 
-### Recording a dataset
+Details: [2. Teleoperate and add cameras](./teleoperate).
 
-The dataset is automatically uploaded to the Hugging Face Hub under `repo_id`. Make sure you are logged in to your HF account with the CLI (you can get a token from [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)), and store your username in `HF_USER`, which the commands below use:
+## 3. Record a dataset[[recording-a-dataset]]
 
 ```bash
 lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.id=my_follower_arm \
-    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
     --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM1 \
-    --teleop.id=my_leader_arm \
-    --dataset.repo_id=${HF_USER}/so101_dataset_test \
-    --dataset.num_episodes=30 \
-    --dataset.single_task="put the red brick in a bowl" \
-    --dataset.streaming_encoding=true \
-    --display_data=true
+    --teleop.id=my_leader \
+    --display_data=true \
+    --dataset.repo_id=${HF_USER}/my_first_dataset \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=50 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.streaming_encoding=true
 ```
 
-While collecting the dataset you can control the process with your keyboard:
-
-- Press **Right Arrow (`→`)** or **`n`**: Save episode and move to the next.
-- Press **Left Arrow (`←`)** or **`r`**: Delete current episode and retry.
-- Press **Escape (`ESC`)** or **`q`**: Stop, encode videos, and upload.
+| Key                            | What it does                                            |
+| ------------------------------ | ------------------------------------------------------- |
+| <kbd>→</kbd> or <kbd>n</kbd>   | End the current episode (or reset) early and move on.   |
+| <kbd>←</kbd> or <kbd>r</kbd>   | Throw away the current episode and record it again.     |
+| <kbd>Esc</kbd> or <kbd>q</kbd> | Stop recording, save the videos and upload the dataset. |
 
 > [!WARNING]
-> `lerobot-record` adds the date and time of the session to the end of `--dataset.repo_id`, so `${HF_USER}/so101_dataset_test` is saved as `${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS`. Find the full name on your Hugging Face profile or with `ls ~/.cache/huggingface/lerobot/${HF_USER}`, and use it in the training commands below. Add `--dataset.no_stamp=true` to keep the exact name.
+> `lerobot-record` adds the date and time to the dataset's name: `${HF_USER}/my_first_dataset` is saved as `${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS`. Find the full name with `ls ~/.cache/huggingface/lerobot/${HF_USER}`, or add `--dataset.no_stamp=true` to keep the exact name.
+
+**Add more episodes** to the same dataset: run the command again with the full name in `--dataset.repo_id`, `--resume=true`, and `--dataset.num_episodes` set to the number of episodes to add.
+
+Details: [3. Record a dataset](./record_dataset).
 
 ### Recording depth
 
@@ -96,8 +112,8 @@ Intel RealSense cameras (`type: intelrealsense`) record a depth stream when you 
 lerobot-record \
     ... \
     --robot.cameras="{ head: {type: intelrealsense, serial_number_or_name: \"0123456789\", width: 640, height: 480, fps: 30, use_depth: true} }" \
-    --dataset.repo_id=${HF_USER}/so101_depth_test \
-    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.repo_id=${HF_USER}/my_depth_dataset \
+    --dataset.single_task="Pick up the cube and put it in the box" \
     --dataset.depth_encoder.depth_min=0.01 \
     --dataset.depth_encoder.depth_max=10.0 \
     --dataset.depth_encoder.shift=0.0 \
@@ -106,7 +122,7 @@ lerobot-record \
 
 ### Video encoding parameters
 
-RGB and depth streams are encoded independently via the `--dataset.rgb_encoder.*` and `--dataset.depth_encoder.*` keys.
+Color and depth videos are encoded separately, with the `--dataset.rgb_encoder.*` and `--dataset.depth_encoder.*` options. See [Video size and quality settings](./video_encoding_parameters).
 
 ```bash
 lerobot-record \
@@ -118,60 +134,147 @@ lerobot-record \
     --dataset.depth_encoder.extra_options='{"x265-params": "lossless=1"}'
 ```
 
-### Training
+## 4. Check your data
 
-Depending on your hardware training the policy might take a few hours. That's how you train simple `ACT` policy:
+Open an episode in the Dataset Visualizer (this prints its address):
+
+```bash
+echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS/episode_0"
+```
+
+Replay an episode on the robot:
+
+```bash
+lerobot-replay \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --dataset.episode=0
+```
+
+Save a copy of the dataset without the bad episodes:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id ${HF_USER}/my_first_dataset_YYYYMMDD_HHMMSS \
+    --new_repo_id ${HF_USER}/my_first_dataset_clean \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[3, 17, 41]" \
+    --push_to_hub true
+```
+
+Details: [4. Check your data](./check_dataset).
+
+## 5. Train a policy[[training]]
+
+Train ACT on your computer's GPU (`--policy.device=mps` on a Mac):
 
 ```bash
 lerobot-train \
-    --dataset.repo_id=${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
     --policy.type=act \
-    --output_dir=outputs/train/act_so101_test \
-    --job_name=act_so101_test \
     --policy.device=cuda \
-    --trackio.enable=true \
-    --policy.repo_id=${HF_USER}/policy_test \
-    --steps=20000
+    --policy.repo_id=${HF_USER}/my_first_policy \
+    --steps=30000 \
+    --save_freq=10000 \
+    --output_dir=outputs/train/my_first_policy \
+    --job_name=my_first_policy \
+    --trackio.enable=true
 ```
 
-- Common policy types: `act`, `diffusion`, `multi_task_dit`, `smolvla`, `pi0`, `pi05`, `pi0_fast`, `groot`, `xvla`. Each policy has its own page under **Policies** in the sidebar, and the [Compute & Hardware Guide](./hardware_guide) shows which ones fit your GPU.
-- Devices: `cuda` (NVIDIA), `mps` (Apple Silicon), `cpu`
-
-`--policy.type` creates a new policy of that type and trains it from scratch on your dataset (some policies still start from pretrained vision or language backbones, as set in their config). To fine-tune an existing model instead, pass `--policy.path` with a local checkpoint or a Hub repo id: the policy type and config are read from it, so `--policy.type` is not needed.
+Or on a rented GPU with [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs), billed per second (`hf jobs hardware` lists the GPUs and prices):
 
 ```bash
 lerobot-train \
-    --dataset.repo_id=${HF_USER}/so101_dataset_test_YYYYMMDD_HHMMSS \
-    --policy.path=username/the_policy_to_finetune \
-    --policy.device=cuda \
-    --policy.repo_id=${HF_USER}/policy_finetuned_test \
-    --output_dir=outputs/train/finetuned_so101_test \
-    --steps=20000
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
+    --policy.type=act \
+    --policy.repo_id=${HF_USER}/my_first_policy \
+    --steps=30000 \
+    --save_freq=10000 \
+    --job.target=a10g-small
 ```
 
-No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`) to either command and `lerobot-train` runs it on [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) instead — it uploads a local-only dataset for you and pushes the trained model. List flavors with `hf jobs hardware`. To track the job's metrics, add `--trackio.enable=true --trackio.space_id=<user>/<space>`: the pod's local Trackio database does not survive the job.
-
-To resume, point `--config_path` at a checkpoint and add `--resume=true`. It accepts a local path or a Hub repo id (the latest checkpoint is fetched), and works locally or on a job by adding `--job.target=<flavor>`:
+Watch the training curves in your browser:
 
 ```bash
-lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a10g-small
+trackio show --project lerobot
 ```
 
-### Inference
+Resume a stopped run from its last checkpoint:
 
-Inference means running the trained policy/model on a robot. For that we use `lerobot-rollout`. You will need to provide a path to your policy. It can be a local path or a Hugging Face repo id, for example `${HF_USER}/policy_test` from the training command above. Use the same port, `--robot.id`, camera configuration and task description as when collecting the dataset. `--duration` is in seconds; if unspecified, the policy runs until you stop it.
+```bash
+lerobot-train \
+    --config_path=outputs/train/my_first_policy/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true
+```
 
-> [!TIP]
-> On v0.5.x and earlier, `lerobot-rollout` does not exist and you need to use `lerobot-record` instead. More information [here](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy).
+**Fine-tune a pretrained policy** instead of training one from scratch: replace `--policy.type` with `--policy.path`. SmolVLA, for example, calls its cameras `camera1` and `camera2`, so map your camera names to them with `--rename_map` (see [Match camera names to a pretrained policy](./rename_map)):
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_first_dataset_clean \
+    --policy.path=lerobot/smolvla_base \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/my_smolvla \
+    --rename_map='{"observation.images.top": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
+    --batch_size=64 \
+    --steps=20000 \
+    --output_dir=outputs/train/my_smolvla \
+    --job_name=my_smolvla
+```
+
+Details: [5. Train a policy](./train_policy), [Choose a policy](./policies), [Which GPU do I need?](./hardware_guide).
+
+## 6. Run it on your robot[[inference]]
+
+Run the policy for 60 seconds:
 
 ```bash
 lerobot-rollout \
     --strategy.type=base \
-    --policy.path=${HF_USER}/policy_test \
+    --policy.path=${HF_USER}/my_first_policy \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.id=my_follower_arm \
-    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
-    --task="put the red brick in a bowl" \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube and put it in the box" \
     --duration=60
 ```
+
+Measure its success rate over 10 episodes, and record them:
+
+```bash
+lerobot-rollout \
+    --strategy.type=episodic \
+    --policy.path=${HF_USER}/my_first_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_my_first_policy \
+    --dataset.single_task="Pick up the cube and put it in the box" \
+    --dataset.num_episodes=10 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10
+```
+
+> [!TIP]
+> LeRobot 0.5 and older have no `lerobot-rollout`: run policies with `lerobot-record` instead, as in the [0.5 docs](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy).
+
+Details: [6. Run it on your robot](./run_policy), and [All ways to run a policy](./inference).
+
+## Without a robot: simulation
+
+Evaluate a policy in a simulation, and get its success rate:
+
+```bash
+lerobot-eval \
+    --policy.path=outputs/train/diffusion_pusht/checkpoints/last/pretrained_model \
+    --policy.device=cuda \
+    --env.type=pusht \
+    --eval.n_episodes=100 \
+    --output_dir=outputs/eval/diffusion_pusht
+```
+
+Details: [Train and evaluate in simulation](./train_in_sim).

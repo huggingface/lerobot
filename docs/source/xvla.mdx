@@ -1,5 +1,18 @@
 # X-VLA: The First Soft-Prompted Robot Foundation Model for Any Robot, Any Task
 
+| At a glance |                                                                             |
+| ----------- | --------------------------------------------------------------------------- |
+| Policy type | `--policy.type=xvla`                                                        |
+| Family      | Vision-language-action model (VLA)                                          |
+| Size        | 0.9B parameters                                                             |
+| GPU memory  | 24–40 GB to train                                                           |
+| Takes text  | Yes                                                                         |
+| Starts from | Pretrained: [`lerobot/xvla-base`](https://huggingface.co/lerobot/xvla-base) |
+| Install     | `pip install 'lerobot[xvla]'`                                               |
+| Guide shows | Simulation (LIBERO)                                                         |
+| License     | Apache 2.0                                                                  |
+| Paper       | [X-VLA](https://arxiv.org/abs/2510.10274) (Zheng et al., 2025)              |
+
 ## Overview
 
 For years, robotics has aspired to build agents that can follow natural human instructions and operate dexterously across many environments and robot bodies. Recent breakthroughs in LLMs and VLMs suggest a path forward: extend these foundation-model architectures to embodied control by grounding them in actions. This has led to the rise of Vision-Language-Action (VLA) models, with the hope that a single generalist model could combine broad semantic understanding with robust manipulation skills.

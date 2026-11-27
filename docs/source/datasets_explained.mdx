@@ -1,0 +1,111 @@
+# What's in a LeRobot dataset
+
+A [dataset](./glossary#dataset) holds the [episodes](./glossary#episode) recorded on a robot: what its cameras saw, where its joints were, and the [actions](./glossary#action) it was given, at every moment. LeRobot records, shares and trains on datasets in one format, `LeRobotDataset` (version 3.0), whatever the robot.
+
+> [!TIP]
+> Keep a dataset open in the [Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0) while you read. This one has 50 episodes of an SO-101 arm putting a brick into a box.
+
+## Episodes and frames
+
+- An **episode** is one attempt at the task, from start to end, with a task text such as "Pick up the cube and put it in the box". A dataset is a list of episodes.
+- A **frame** is one moment of an episode. Frames are recorded at a fixed rate, set by `fps`: 30 frames per second for most robots.
+
+<img
+  class="block dark:hidden"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-light.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+<img
+  class="hidden dark:block"
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/docs/episode-dark.png"
+  alt="One episode, frame by frame: at every frame LeRobot saves the camera images, the state of every joint, and the action sent to the motors"
+/>
+
+## What's in each frame
+
+Each frame holds the same **features**. Here are the features of [`lerobot/svla_so101_pickplace`](https://huggingface.co/datasets/lerobot/svla_so101_pickplace):
+
+| Feature                                            | What it is                                                                                                               | Example                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------ |
+| `observation.images.up`, `observation.images.side` | One image from each camera, named after the camera. They're stored as videos.                                            | A 480×640 color image          |
+| `observation.state`                                | The robot's joint positions, as measured                                                                                 | 6 numbers, one per joint       |
+| `action`                                           | The joint positions the robot was told to move to. When you record with a leader arm, these are the leader arm's joints. | 6 numbers, for the same joints |
+| `timestamp`                                        | Time since the start of the episode, in seconds                                                                          | `1.5`                          |
+| `frame_index`                                      | The frame's position in its episode                                                                                      | `45`                           |
+| `episode_index`                                    | The episode the frame belongs to                                                                                         | `3`                            |
+| `index`                                            | The frame's position in the whole dataset                                                                                | `1290`                         |
+| `task_index`                                       | The frame's task text, as a number                                                                                       | `0`                            |
+
+Every number has a name, which comes from the robot: `shoulder_pan.pos`, `shoulder_lift.pos`, …, `gripper.pos` for an SO-101. A policy is trained for these exact names and cameras, so a policy trained on one robot expects the same names on the robot it runs on. When camera names differ, see [Match camera names to a pretrained policy](./rename_map).
+
+Datasets from simulations follow the same pattern, with the names of the simulation. In PushT, for example, `observation.image` is a single camera and `observation.state` is the 2D position of the dot.
+
+## How it's stored
+
+A dataset is a folder with three parts:
+
+```text
+my_dataset/
+├── meta/
+│   ├── info.json         # the features, fps, robot type, and how the files are named
+│   ├── stats.json        # min, max, mean and standard deviation of every feature
+│   ├── tasks.parquet     # the task texts
+│   └── episodes/         # one row per episode: its length, task, and where its frames are
+├── data/                 # the numbers of every frame, in Parquet tables
+│   └── chunk-000/file-000.parquet
+└── videos/               # the camera images, one set of videos per camera
+    ├── observation.images.side/chunk-000/file-000.mp4
+    └── observation.images.up/chunk-000/file-000.mp4
+```
+
+- **Many episodes share each file**, so a dataset with thousands of episodes has only a few large files, which are fast to download and stream. `meta/episodes/` records where each episode starts and ends in them.
+- **Camera images are stored as MP4 videos**, which are much smaller than separate images. LeRobot decodes the frames it needs during training.
+- **`stats.json`** is used to normalize the data before training: policies learn better when every feature has a similar range. Newer datasets also store quantiles there.
+
+<div style="display:flex; justify-content:center;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobotdataset-v3/asset1datasetv3.png"
+    alt="Diagram: in version 3, the frames of many episodes are stored together in shared files"
+    width="220"
+  />
+</div>
+
+## Where datasets are saved
+
+- **On the [Hugging Face Hub](./glossary#hugging-face-hub)**, at `https://huggingface.co/datasets/YOUR_USER/YOUR_DATASET`. Recording uploads datasets there by default, as public datasets: see [3. Record a dataset](./record_dataset).
+- **On your computer:**
+  - datasets you record are in `~/.cache/huggingface/lerobot/YOUR_USER/YOUR_DATASET`;
+  - datasets you download from the Hub are in `~/.cache/huggingface/lerobot/hub/`.
+
+  To store them somewhere else, set the `HF_LEROBOT_HOME` environment variable to another folder.
+
+## Open a dataset in Python
+
+This downloads the first episode of the dataset above, then prints its first frame:
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+dataset = LeRobotDataset("lerobot/svla_so101_pickplace", episodes=[0])
+print(dataset.meta.total_episodes, "episodes at", dataset.fps, "fps")  # 50 episodes at 30 fps
+print(dataset.meta.camera_keys)  # ['observation.images.up', 'observation.images.side']
+
+frame = dataset[0]
+print(frame["task"])                         # pink lego brick into the transparent box
+print(frame["observation.state"])            # 6 joint positions
+print(frame["action"])                       # 6 joint targets
+print(frame["observation.images.up"].shape)  # torch.Size([3, 480, 640])
+```
+
+[Use datasets in Python](./lerobot-dataset-v3) shows more: loading several frames at once, training loops and image augmentation.
+
+## Older datasets
+
+This format is version 3.0, used since LeRobot 0.4. A dataset in the older version 2.1 must be converted first: see [Migrate v2.1 to v3.0](./lerobot-dataset-v3#migrate-v21--v30).
+
+## Next steps
+
+- **Record your own dataset:** [3. Record a dataset](./record_dataset).
+- **Delete, merge or split episodes:** [Edit, merge and split datasets](./using_dataset_tools).
+- **Convert data from another format:** [Convert other datasets to LeRobot](./porting_datasets_v3).
+- **Train on a large dataset without downloading it:** [Train without downloading the dataset (streaming)](./training_dataset_streaming).

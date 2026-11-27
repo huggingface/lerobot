@@ -1,0 +1,72 @@
+# Simulation: when and why
+
+A [simulation](./glossary#simulator) is a robot and its surroundings in software. **No robot? Start with [Train and evaluate in simulation](./train_in_sim):** it trains a policy in PushT, a small simulation that runs on any computer, and measures how well it works.
+
+## What simulation is good for
+
+- **Learning without a robot.** Record, train and evaluate the same way as on a real robot, for free, with nothing to build or set up.
+- **Measuring and comparing policies.** The computer runs a policy many times from the same starting positions and checks each episode for success. The result is a [success rate](./glossary#success-rate), which you can compare between policies. A standard set of such tasks is a [benchmark](./glossary#benchmark): papers report their results on benchmarks such as LIBERO, so you can reproduce them.
+- **Practising reinforcement learning.** A policy that learns by trial and error makes many mistakes first. In simulation, mistakes cost nothing.
+
+## What it can't do
+
+> [!WARNING]
+> **A policy trained in simulation won't run on your real robot**, and a policy trained on your robot won't run in a simulation. The images, the robot, the objects and the physics are all different, and policies learn exactly what they saw. A high success rate in simulation also doesn't guarantee that the same kind of policy will work on your robot: always test there.
+
+What does carry over is everything you learn about the workflow: recording, training, checkpoints and evaluating work the same way for real robots.
+
+## Which simulation should I use?
+
+| If you want to…                                       | Use                                                                                                      |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Train and evaluate your first policy, without a robot | **PushT**, in [Train and evaluate in simulation](./train_in_sim)                                         |
+| Evaluate a pretrained VLA, or reproduce a paper       | **[LIBERO](./libero)**: most policy pages show results on it                                             |
+| Test a policy on two-arm tasks                        | **ALOHA** for a quick start, **[RoboTwin 2.0](./robotwin)** for a large benchmark                        |
+| Practise reinforcement learning                       | **gym_hil**, in [Practice RL in simulation](./hilserl_sim)                                               |
+| Use your SO-101 leader arm with a simulated SO-101    | The **SO-101 tabletop** simulation on the Hub, in [Share a simulation on the Hub (EnvHub)](./envhub)     |
+| Evaluate on real robots instead                       | **[RoboColosseum](./robocolosseum)**, a benchmark run on real robots                                     |
+| Add your own simulation                               | [Share a simulation on the Hub (EnvHub)](./envhub), or [Add a simulation benchmark](./adding_benchmarks) |
+
+## All simulations
+
+- **Install** gives the extra to add to LeRobot (for example `pip install 'lerobot[pusht]'`), or says when the simulation runs in Docker, through `lerobot-env-server`: see [Simulated robots and environments](./simulation#serve-an-environment).
+- **Requirements** lists what the simulation's page says it needs. A dash means the page asks for nothing special.
+
+### To learn and practise
+
+| Simulation                  | Robot and task                                                        | Install          | Requirements                    |
+| --------------------------- | --------------------------------------------------------------------- | ---------------- | ------------------------------- |
+| PushT                       | A dot pushes a T-shaped block onto a target, in 2D                    | `pusht`          | Any computer (a GPU to train)   |
+| ALOHA                       | Two arms insert a peg into a socket, or pass a cube between them      | `aloha`          | -                               |
+| [gym_hil](./hilserl_sim)    | A Franka arm picks up a cube, for reinforcement learning              | `hilserl`        | NVIDIA GPU, gamepad or keyboard |
+| [SO-101 tabletop](./envhub) | An SO-101 arm with cubes and a box; your real leader arm can drive it | `remote`, Docker | Docker with GPU access          |
+
+### Benchmarks
+
+| Benchmark                    | Robot                    | What it tests                                                     | Install                   | Requirements      |
+| ---------------------------- | ------------------------ | ----------------------------------------------------------------- | ------------------------- | ----------------- |
+| [LIBERO](./libero)           | Franka arm               | 130 household tasks in 5 suites; the most used benchmark for VLAs | `libero`                  | Linux             |
+| [LIBERO-plus](./libero_plus) | Franka arm               | LIBERO with changed cameras, lighting, objects and instructions   | Manual install, or Docker | Linux             |
+| [RoboCerebra](./robocerebra) | Franka arm               | Long tasks that need planning and memory                          | `libero`                  | Linux             |
+| [Meta-World](./metaworld)    | Sawyer arm               | 50 tabletop tasks, to test learning many tasks at once            | `metaworld`               | -                 |
+| [RoboTwin 2.0](./robotwin)   | Two arms                 | 50 two-arm tasks, with strong visual variation                    | Docker                    | Linux, NVIDIA GPU |
+| [RoboCasa365](./robocasa)    | Mobile Franka arm        | 365 kitchen tasks in 2,500 kitchens                               | Manual install, or Docker | -                 |
+| [RoboLab](./robolab)         | Franka arm (DROID setup) | 120 tabletop tasks, rendered realistically with Isaac Sim         | Docker                    | NVIDIA RTX GPU    |
+| [RoboMME](./robomme)         | Franka arm               | 16 tasks that need memory: counting, remembering hidden objects   | Docker                    | Linux             |
+| [VLABench](./vlabench)       | Franka arm               | 43 tasks that need language understanding and reasoning           | Manual install, or Docker | Linux             |
+
+[Isaac Lab Arena](./envhub_isaaclab_arena) and [LeIsaac](./envhub_leisaac) are deprecated: they were written for LeRobot 0.4 and need Python 3.11, which the current LeRobot doesn't support. Updated versions are in progress.
+
+## How simulations work in LeRobot
+
+- **To evaluate a policy**, choose a simulation with `--env.type`, for example `--env.type=pusht`. `lerobot-eval` uses it, and so does `lerobot-train`, to evaluate the policy while it trains.
+- **To use a simulation as a robot**, use `--robot.type=sim`. Then `lerobot-teleoperate`, `lerobot-record` and `lerobot-rollout` work with it as with a real robot.
+- **Large simulations run in Docker**, so that their software doesn't conflict with LeRobot's. `lerobot-env-server` starts them, and LeRobot connects to them.
+
+All the details are in [Simulated robots and environments](./simulation).
+
+## Next steps
+
+- **Train your first policy without a robot:** [Train and evaluate in simulation](./train_in_sim).
+- **Evaluate a pretrained policy on a benchmark:** start with [LIBERO](./libero).
+- **Move to a real robot:** [Choose a robot](./robots).

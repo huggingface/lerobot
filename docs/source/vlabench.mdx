@@ -1,12 +1,10 @@
 # VLABench
 
-<Tip>
-  The commands below run the simulator locally. To keep its dependencies away
-  from your policy's, serve it instead with `lerobot-env-server
-  --config_path=docker/sim/configs/vlabench.yaml --sim.task=<task> --docker=true`, where `<task>`
-  is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
-  the command. A server runs the task it was started with (see [Simulation: local or served](./simulation)).
-</Tip>
+> [!TIP]
+> The commands below run the simulator locally. To keep its dependencies away
+> from your policy's, serve it instead with `lerobot-env-server --config_path=docker/sim/configs/vlabench.yaml --sim.task=<task> --docker=true`, where `<task>`
+> is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
+> the command. A server runs the task it was started with (see [Simulated robots and environments](./simulation)).
 
 [VLABench](https://github.com/OpenMOSS/VLABench) is a large-scale benchmark for **language-conditioned robotic manipulation with long-horizon reasoning**. The upstream suite covers 100 task categories across 2,000+ objects and evaluates six dimensions of robot intelligence: mesh & texture understanding, spatial reasoning, world-knowledge transfer, semantic instruction comprehension, physical-law understanding, and long-horizon planning. Built on MuJoCo / dm_control with a Franka Panda 7-DOF arm. LeRobot exposes **43 of these tasks** through `--env.task` (21 primitives + 22 composites, see [Available tasks](#available-tasks) below).
 
@@ -56,14 +54,12 @@ pip install "mujoco==3.2.2" "dm-control==1.0.22" \
 python ~/VLABench/scripts/download_assets.py
 ```
 
-<Tip>
-VLABench requires Linux (`sys_platform == 'linux'`) and Python 3.10+. Set the MuJoCo rendering backend before running:
-
-```bash
-export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
-```
-
-</Tip>
+> [!TIP]
+> VLABench requires Linux (`sys_platform == 'linux'`) and Python 3.10+. Set the MuJoCo rendering backend before running:
+>
+> ```bash
+> export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+> ```
 
 ## Evaluation
 

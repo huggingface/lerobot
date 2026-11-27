@@ -1,0 +1,41 @@
+# Reward models: what they are for
+
+A [reward model](./glossary#reward-model) watches a robot do a task, from its camera images and the task text, and scores how well it's going: whether it succeeded, or how far along it is, from 0 (not started) to 1 (done).
+
+**You don't need one to train your first policy.** Reach for one when your demonstrations are of mixed quality, or when you train with [reinforcement learning](./rl_overview).
+
+## Two ways LeRobot uses them
+
+### 1. Reward a robot during reinforcement learning
+
+In [reinforcement learning](./glossary#reinforcement-learning-rl), the policy improves from a reward: 1 when it succeeds, 0 when it fails. On a real robot, something has to give that reward. With [HIL-SERL](./hilserl), you can press a success or failure button at the end of each episode, or train a **reward classifier** that recognizes success from the camera images, so you don't have to.
+
+See [Training a reward classifier](./hilserl#training-a-reward-classifier).
+
+### 2. Weight your demonstrations by quality (RA-BC)
+
+Real demonstrations contain hesitations, mistakes and corrections, and a policy copies all of it. A reward model can score the progress of every moment of every episode. Training then counts the moments that make progress more, and the ones that don't less. This is **Reward-Aligned Behavior Cloning (RA-BC)**.
+
+It takes two steps:
+
+1. **Score your dataset:** each reward model's `compute_rabc_weights` script computes the progress of every frame, and saves it in the dataset's folder: `sarm_progress.parquet`, `robometer_progress.parquet` or `topreward_progress.parquet`.
+2. **Train with the scores:** add `--sample_weighting.type=rabc` to `lerobot-train`. It finds `sarm_progress.parquet` by itself; for the other files, add `--sample_weighting.progress_path` with the file's path. Not every policy supports RA-BC: the [SARM page](./sarm#step-5b-train-policy-with-ra-bc) lists π₀, π₀.₅, SmolVLA and FastWAM.
+
+Before you train, check the scores: [SARM](./sarm#step-4-visualize-predictions) and [TOPReward](./topreward#offline-dataset-labeling) show how to draw the progress curve over an episode's video. If the curve doesn't rise as the task gets done, the weights won't help.
+
+## Which reward model?
+
+| Reward model                                                | What it predicts                                         | Do you train it?                                                    | Use it for                               |
+| ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| [Reward classifier](./hilserl#training-a-reward-classifier) | Success or failure, from the cameras                     | Yes, on episodes of your task marked success or failure             | Reinforcement learning                   |
+| [SARM](./sarm)                                              | Progress from 0 to 1, and which step of the task it's at | Yes, on your dataset, optionally with the task's steps written down | RA-BC, for long tasks with several steps |
+| [Robometer](./robometer)                                    | Progress and success, for every frame                    | No: use the pretrained `lerobot/Robometer-4B`                       | RA-BC                                    |
+| [TOPReward](./topreward)                                    | How likely it is that the video completes the task       | No: it asks a general vision-language model, with no training       | RA-BC                                    |
+
+- **To try RA-BC quickly**, start with Robometer or TOPReward: they score your dataset without any training. Both run a large vision-language model (4 and 8 billion parameters), so they need a GPU with plenty of memory.
+- **For long tasks with several steps**, train SARM on your own dataset: it learns the steps of your task.
+
+## Next steps
+
+- **Practise reinforcement learning:** [Reinforcement learning: when to use it](./rl_overview).
+- **Improve a policy without a reward model:** collect more or better episodes, or correct the policy while it runs: see [7. Make it work better](./improve_policy).

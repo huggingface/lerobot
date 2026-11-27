@@ -1,5 +1,18 @@
 # OpenGalaxea G0.5
 
+| At a glance |                                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Policy type | `--policy.type=g05`                                                                                                                    |
+| Family      | Vision-language-action model (VLA)                                                                                                     |
+| Size        | 2.9B parameters                                                                                                                        |
+| GPU memory  | Not measured                                                                                                                           |
+| Takes text  | Yes                                                                                                                                    |
+| Starts from | Pretrained: [`lerobot/g05_base`](https://huggingface.co/lerobot/g05_base)                                                              |
+| Install     | `pip install 'lerobot[g05]'`                                                                                                           |
+| Guide shows | Real robot (SO-101), simulation (LIBERO)                                                                                               |
+| License     | Weights: [G0.5 Community License](https://huggingface.co/OpenGalaxea/G05/blob/main/licenses/LICENSE-G0.5), **non-commercial** use only |
+| Paper       | [G0](https://arxiv.org/abs/2509.00576) (Jiang et al., 2025), about the previous version                                                |
+
 G0.5 is a Qwen3.5-2B vision-language-action model that can generate embodied
 reasoning and actions in one stream. LeRobot exposes the action phase as System 1
 and the optional native chain-of-thought phase as System 2. They are not separate

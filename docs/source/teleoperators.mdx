@@ -1,0 +1,42 @@
+# Teleoperation devices
+
+A [teleoperation device](./glossary#teleoperation-device) is what you control a robot with, live: to show it a task while you record, or to take over while a policy runs. In commands, you choose it with `--teleop.type`.
+
+**Which one should I use?** The one your robot's guide uses. For a robot arm, that's almost always its **leader arm**: a copy of the arm that you move by hand, which is the easiest way to record good episodes.
+
+## Leader arms
+
+| Leader arm                                 | `--teleop.type`    | For            | Guide                                             |
+| ------------------------------------------ | ------------------ | -------------- | ------------------------------------------------- |
+| SO-101 leader arm                          | `so101_leader`     | SO-101, LeKiwi | [SO-101](./so101)                                 |
+| SO-100 leader arm                          | `so100_leader`     | SO-100, LeKiwi | [SO-100](./so100)                                 |
+| Koch leader arm                            | `koch_leader`      | Koch v1.1      | [Koch v1.1](./koch)                               |
+| OMX leader arm                             | `omx_leader`       | OMX            | [OMX](./omx)                                      |
+| reBot Arm 102                              | `rebot_102_leader` | reBot B601     | [reBot B601](./rebot_b601)                        |
+| OpenArm leader arm                         | `openarm_leader`   | OpenArm        | [OpenArm](./openarm)                              |
+| OpenArm Mini, a smaller leader with motors | `openarm_mini`     | OpenArm        | [Correct a running policy](./hil_data_collection) |
+
+Two-arm setups use the two-arm version of the leader: `bi_so_leader`, `bi_openarm_leader`, `bi_openarm_mini` or `bi_rebot_102_leader`.
+
+> [!TIP]
+> Leader arms with motors, such as the SO-100 and SO-101 leader arms and the OpenArm Mini, can also move by themselves to follow the robot. You need one to [correct a policy while it runs](./hil_data_collection).
+
+## Other devices
+
+| Device                      | `--teleop.type`                      | What it's for                                                                       | Guide                                                                       |
+| --------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Keyboard                    | `keyboard`                           | Drive LeKiwi's wheels, while its leader arm controls the arm                        | [LeKiwi](./lekiwi)                                                          |
+| Keyboard                    | `keyboard_rover`                     | Drive the EarthRover Mini Plus                                                      | [EarthRover Mini Plus](./earthrover_mini_plus)                              |
+| Keyboard                    | `keyboard_ee`                        | Move a robot's gripper in space (forward, sideways, up), for reinforcement learning | [RL on a real robot](./hilserl)                                             |
+| Gamepad                     | `gamepad`                            | Move a robot's gripper in space, for reinforcement learning                         | [RL on a real robot](./hilserl), [Practice RL in simulation](./hilserl_sim) |
+| Phone (iOS or Android)      | `phone`                              | Move an arm's gripper by moving your phone                                          | [Phone](./phone_teleop)                                                     |
+| VR headset or hand tracking | (through NVIDIA Isaac Teleop)        | Control an arm with VR controllers, hand tracking or gloves                         | [VR headset](./isaac_teleop)                                                |
+| Exoskeleton and glove       | `homunculus_arm`, `homunculus_glove` | Control the Hope Jr arm and hand                                                    | [Hope Jr](./hope_jr)                                                        |
+| Exoskeleton or gamepad      | `unitree_g1`                         | Control the Unitree G1 humanoid                                                     | [Unitree G1](./unitree_g1)                                                  |
+| Reachy 2 teleoperation      | `reachy2_teleoperator`               | Control Reachy 2                                                                    | [Reachy 2](./reachy2)                                                       |
+
+Moving the gripper "in space" means you control where the gripper goes, and LeRobot works out how to move each joint to get it there. It's how the phone, the gamepad and `keyboard_ee` work. On a real robot, it needs the robot's 3D model (a URDF file).
+
+## More devices
+
+The community has added more teleoperation devices as plugins: see [Community robots and controllers](./third_party_robots). To make your own device work with LeRobot, see [Add your own robot](./integrate_hardware), which covers teleoperators too.
