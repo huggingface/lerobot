@@ -39,7 +39,7 @@ from gymnasium import spaces
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]
 
 ROBOMME_TASKS = [
     "BinFill",
@@ -275,7 +275,7 @@ def env_fns(
     }
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+def sim_settings(task: str, **kwargs: Any) -> dict[str, Any]:
     """Return RoboMME's default fps, control mode, and state and action names."""
     joints = (*(f"joint_{i}.pos" for i in range(7)), "gripper.pos")
     joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"

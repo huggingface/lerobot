@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from queue import Empty
 from threading import Event
 from typing import Any, cast
@@ -27,6 +27,7 @@ from typing import Any, cast
 import numpy as np
 
 from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimConfig, SimSettings
+from lerobot.sim.local_vector_env import describe_suite
 from lerobot.transport.protocol import (
     Envelope,
     ErrorCode,
@@ -99,8 +100,8 @@ class EnvServerConfig:
 
     Args:
         sim (`SimSettings`, *optional*):
-            The simulator to serve. Settings left unset come from its integration's conventions when the server
-            starts. `sim.type` is required.
+            The simulator to serve. Settings left unset come from its integration's `sim_settings`, for the
+            suite each session runs. `sim.type` is required.
         deployment (`str`, *optional*, defaults to `""`):
             Name clients find this server under, e.g. `libero`. Required.
         zenoh (`ZenohConfig`, *optional*):
@@ -240,11 +241,11 @@ class EnvServer:
         self.limits = codec_limits(config.zenoh.max_payload_bytes)
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
-        # Built at startup to read the descriptor, then reused by the first session asking for the same batch.
+        # Created at startup to describe the env, then reused by the first session asking for the same batch.
         self._startup_env: LocalVectorEnv | None = None
-        # The simulator's full config, with its integration's conventions filled in at startup.
-        self.sim: SimConfig
+        # The first suite's descriptor, and each suite's once described.
         self.descriptor: EnvDescriptor
+        self._suite_descriptors: dict[str, EnvDescriptor] = {}
         self.ready = Event()
         self._stop = Event()
 
@@ -257,8 +258,17 @@ class EnvServer:
         try:
             # Open the transport first, so a port already in use fails before the slow simulator build.
             self.transport.open()
-            self.sim = SimConfig.resolve(asdict(self.config.sim))
-            self._startup_env = LocalVectorEnv(self.sim)
+            # Described from its declared features, nothing is built until a session opens a suite.
+            self._startup_env = LocalVectorEnv(self.config.sim)
+            if not self._startup_env.config.features:
+                # Info, not a warning, until the built-in simulators declare their features.
+                logger.info(
+                    "%s suite %r has no declared features (its observation and action shapes, returned by "
+                    "sim_settings), so its simulator was built at startup to describe it. With them, the server "
+                    "starts without building any and builds only the suites sessions open.",
+                    self.config.sim.type,
+                    self._startup_env.task_group,
+                )
             self.descriptor = self._startup_env.descriptor
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance_id)
@@ -276,8 +286,8 @@ class EnvServer:
             zenoh = self.config.zenoh
             logger.info(
                 "Serving %s task %r as deployment %r on %s",
-                self.sim.type,
-                self.sim.task,
+                self.config.sim.type,
+                self.config.sim.task,
                 self.config.deployment,
                 ", ".join(zenoh.listen_endpoints or zenoh.connect_endpoints),
             )
@@ -339,7 +349,7 @@ class EnvServer:
                 {
                     "deployment": self.config.deployment,
                     "instance_id": self.instance_id,
-                    "descriptor": encode_descriptor(self.descriptor),
+                    "descriptor": encode_descriptor(self._describe(message.body.get("task_group"))),
                 },
             )
         if message.instance_id != self.instance_id:
@@ -360,6 +370,22 @@ class EnvServer:
         return message.reply(
             MessageType.ACK, session.with_jpeg_frames(session.handle(operation, message.body))
         )
+
+    def _describe(self, task_group: str | None) -> EnvDescriptor:
+        """Describe suite `task_group` without building it, or the first suite if it names none of the env's.
+
+        A suite is described with its own settings, and with its declared features, else the first suite's
+        shapes. Its sessions are built against this description and refused if the simulator differs. An unknown
+        suite is refused when it is opened, naming the suites the env has.
+        """
+        if not task_group or task_group not in self.descriptor.tasks:
+            return self.descriptor
+        if task_group not in self._suite_descriptors:
+            config = SimConfig.resolve(self.config.sim, task_group)
+            self._suite_descriptors[task_group] = describe_suite(
+                config, self.descriptor.tasks, self.descriptor
+            )
+        return self._suite_descriptors[task_group]
 
     def _open(self, body: dict[str, Any]) -> dict[str, Any]:
         """Check an open request and start a session for it."""
@@ -383,7 +409,8 @@ class EnvServer:
             )
         seeds = _checked_seeds(body.get("seeds"), num_envs)
         batch_bytes = num_envs * sum(
-            int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
+            int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize
+            for f in self._describe(body.get("task_group")).features
         )
         # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
         limits = codec_limits(min(self.limits.max_payload_bytes, client_payload_bytes))
@@ -427,7 +454,10 @@ class EnvServer:
             if asked == (env.num_envs, env.task_group, env.task_id, env.use_async_envs):
                 return env
             env.close()
-        return LocalVectorEnv(self.sim, num_envs, task_group, task_id, use_async_envs)
+        # Built against the description clients were given, so a simulator that differs is refused.
+        return LocalVectorEnv(
+            self.config.sim, num_envs, task_group, task_id, use_async_envs, self._describe(task_group)
+        )
 
     def _reap_sessions(self) -> None:
         """Close sessions whose client left or never showed up."""

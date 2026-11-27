@@ -29,7 +29,7 @@ from gymnasium import spaces
 
 from .utils import RobotObservation, canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +318,7 @@ def env_fns(
     return {group: dict(task_map) for group, task_map in out.items()}
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+def sim_settings(task: str, **kwargs: Any) -> dict[str, Any]:
     """Return Meta-World's default fps, control mode, state and action names, and robot type."""
     return {
         "fps": 80,

@@ -15,8 +15,9 @@
 """Simulator integrations: one module per simulator, imported only when used.
 
 Each defines `env_fns(task, n_envs, **kwargs)`, returning `{suite: {task_id: [factory, ...]}}`, and
-`canonical_observation(obs)`, mapping observations to LeRobot keys. `conventions(kwargs)` is
-optional: the sim's default fps, control mode, names and robot type.
+`canonical_observation(obs)`, mapping observations to LeRobot keys. `sim_settings(suite, **kwargs)` is
+optional: one suite's default fps, control mode, names and robot type, and optionally its `features` (the
+shapes of its observations and action), which describe it without building it.
 
 A simulator that steps a whole batch at once (one GPU world with many envs) defines
 `vector_env_fns(task, n_envs, **kwargs)` instead, returning `{suite: {task_id: factory}}`: each

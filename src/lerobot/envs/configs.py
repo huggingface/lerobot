@@ -25,7 +25,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -92,10 +91,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         The default is the Gymnasium env ``gym_id`` with ``gym_kwargs`` and delta actions; override otherwise.
         """
         return _gym_settings(self, "delta")
-
-    def sim_config(self) -> SimConfig:
-        """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
-        return SimConfig.resolve(self.sim_settings())
 
     def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""

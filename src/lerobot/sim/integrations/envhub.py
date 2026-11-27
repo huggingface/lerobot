@@ -17,6 +17,7 @@
 import importlib.util
 import logging
 import os
+import warnings
 from collections.abc import Callable
 from difflib import get_close_matches
 from functools import partial
@@ -27,19 +28,20 @@ from huggingface_hub import snapshot_download
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "env_fns", "make_envs", "vector_env_fns"]
+__all__ = ["canonical_observation", "env_fns", "make_envs", "sim_settings", "vector_env_fns"]
 
 logger = logging.getLogger(__name__)
 
-# Settings an EnvHub env.py may set in a module-level LEROBOT_SIM dict. A key falls back to its default
-# here when neither the sim config nor the repository sets it.
-SIM_DEFAULTS: dict[str, Any] = {
+# Settings an EnvHub env.py's sim_settings may return. A key falls back to its default here when neither the
+# sim config nor the repository sets it.
+_DEFAULTS: dict[str, Any] = {
     "fps": 30,
     "control_mode": "position",
     "semantics": "envhub-v1",
     "state_names": [],
     "action_names": [],
     "robot_type": "",
+    "features": {},
 }
 
 
@@ -288,20 +290,44 @@ def _build_repo_vector_env(
     return module.vector_env_fns(task=task, n_envs=n_envs, **options)[suite][task_id]()
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Return the repo's `LEROBOT_SIM` over `SIM_DEFAULTS`; an unknown key raises, naming the closest."""
-    repo_id, module = _load_hub_module(
-        kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
-    )
-    declared = getattr(module, "LEROBOT_SIM", {})
-    unknown = sorted(set(declared) - set(SIM_DEFAULTS))
+def sim_settings(
+    task: str,
+    hub_path: str,
+    trust_remote_code: bool = False,
+    hub_cache_dir: str | None = None,
+    make_env_kwargs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the repo's `sim_settings(task, **make_env_kwargs)` over the EnvHub defaults.
+
+    An unknown key raises, naming the closest. A repo without `sim_settings` may set the dict as `LEROBOT_SIM`,
+    as LeRobot 0.7 reads it.
+    """
+    repo_id, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    declare = getattr(module, "sim_settings", None)
+    if declare is not None:
+        declared = declare(task, **(make_env_kwargs or {}))
+        if not isinstance(declared, dict):
+            raise TypeError(
+                f"{repo_id} sim_settings({task!r}) must return a dict, got {type(declared).__name__}"
+            )
+        source = "sim_settings"
+    else:
+        legacy = getattr(module, "LEROBOT_SIM", None)
+        declared, source = legacy or {}, "LEROBOT_SIM"
+        if legacy is not None:
+            warnings.warn(
+                f"{repo_id} sets LEROBOT_SIM, which is deprecated: define sim_settings(task, **make_env_kwargs) "
+                "returning the same dict instead (https://huggingface.co/docs/lerobot/envhub#sim_settings).",
+                FutureWarning,
+                stacklevel=2,
+            )
+    unknown = sorted(set(declared) - set(_DEFAULTS))
     if unknown:
         keys = []
         for key in unknown:
-            match = get_close_matches(key, SIM_DEFAULTS, n=1)
+            match = get_close_matches(key, _DEFAULTS, n=1)
             keys.append(f"{key!r} (did you mean {match[0]!r}?)" if match else repr(key))
-        raise ValueError(
-            f"{repo_id} LEROBOT_SIM has unknown keys {', '.join(keys)}; expected {list(SIM_DEFAULTS)}"
-        )
-    logger.info("EnvHub %s declares %s in LEROBOT_SIM", repo_id, sorted(declared))
-    return {**SIM_DEFAULTS, **declared}
+        raise ValueError(f"{repo_id} {source} has unknown keys {', '.join(keys)}; expected {list(_DEFAULTS)}")
+    # Called for each env built, so once per task.
+    logger.debug("EnvHub %s declares %s for %r in %s", repo_id, sorted(declared), task, source)
+    return {**_DEFAULTS, **declared}
