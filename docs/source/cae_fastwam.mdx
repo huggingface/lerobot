@@ -60,7 +60,7 @@ The checkpoint sets FastWAM's `policy.fp32_attention=false` (attention in the mo
 
 ## Training
 
-`lerobot-train` fine-tunes with FastWAM's joint flow-matching loss. The action targets are the frozen action-VAE encoder's latents of the normalized ground-truth chunk, and a latent token is padding if any of its 4 steps is. The mixture-of-transformers and the proprio encoder are trained; the Wan2.2 VAE, UMT5 and the action VAE stay frozen. `--policy.type=cae_fastwam` initializes from `amd/CAE-FastWAM-lerobot` (`policy.base_model_id`), as FastWAM does from `lerobot/fastwam_base`.
+`lerobot-train` fine-tunes with FastWAM's joint flow-matching loss (stage 2; to train a new action VAE first, see [Training the Action VAE on Your Data](#training-the-action-vae-on-your-data)). The action targets are the frozen action-VAE encoder's latents of the normalized ground-truth chunk, and a latent token is padding if any of its 4 steps is. The mixture-of-transformers and the proprio encoder are trained; the Wan2.2 VAE, UMT5 and the action VAE stay frozen. `--policy.type=cae_fastwam` initializes from `amd/CAE-FastWAM-lerobot` (`policy.base_model_id`), as FastWAM does from `lerobot/fastwam_base`.
 
 ```bash
 lerobot-train \
@@ -84,6 +84,41 @@ Multi-GPU training works as for FastWAM, through LeRobot's standard path (see th
 | FSDP2, float32 weights |                1.151 ± 0.120 |        1.096 ± 0.071 |
 
 Precision is handled as for FastWAM. On one GPU or with DDP, the weights and the optimizer states are stored in `policy.dtype` (bfloat16 by default) and `lerobot-train` updates them directly, so updates below bfloat16 resolution are lost; the original trained with DeepSpeed ZeRO-1, which keeps float32 master weights. FastWAM's `--policy.dtype=float32` together with `--accelerator.mixed_precision=bf16` keeps float32 weights and optimizer states while the matrix multiplications run under bfloat16 autocast; it needs about twice the GPU memory (118 GB instead of 59 GB on one MI355X at batch size 2) and saves float32 checkpoints. With FSDP2, `--policy.dtype=float32 --parallelism.dp_shard=N --accelerator.mixed_precision=bf16` gives float32 master weights with bfloat16 compute (see the [multi GPU training guide](./multi_gpu_training)), as in the FSDP2 float32 run above.
+
+## Training the Action VAE on Your Data
+
+The action VAE is trained per embodiment (stage 1), before the policy. `lerobot-train-tokenizer --tokenizer_type=cae_action_vae` trains a new one from any LeRobot dataset:
+
+```bash
+lerobot-train-tokenizer \
+  --tokenizer_type=cae_action_vae \
+  --repo_id=your-org/your-dataset \
+  --action_horizon=32 \
+  --sample_fraction=1.0 \
+  --normalization_mode=MIN_MAX \
+  --output_dir=outputs/cae_action_vae
+```
+
+Every frame starts a 32-step chunk of the dataset's actions, padded past the end of the episode as `lerobot-train` pads them, and the actions are min/max-normalized with the dataset statistics by the policy's own normalizer. The defaults (`--cae.*`) are the released VAE's: 8 latent tokens of width 16, a variational encoder with a free-bits KL, a velocity term, Adam, EMA weights, batch size 256 and its budget of about 54k optimizer steps (`--cae.steps`; the number of epochs follows from the dataset size). That takes about 7 minutes per LIBERO suite on one AMD Instinct MI355X. The output directory holds `config.json`, `model.safetensors`, `stats.json` (the statistics the actions were normalized with) and `metadata.json` (options and reconstruction metrics). Add `--push_to_hub=true --hub_repo_id=your-org/your-action-vae` to upload it.
+
+Then train the policy on the same dataset with the new VAE (stage 2):
+
+```bash
+lerobot-train \
+  --policy.path=amd/CAE-FastWAM-lerobot \
+  --policy.action_vae_path=outputs/cae_action_vae \
+  --policy.device=cuda \
+  --accelerator.mixed_precision=bf16 \
+  --dataset.repo_id=your-org/your-dataset \
+  --batch_size=8 \
+  --steps=20000
+```
+
+`policy.action_vae_path` (a directory or a Hub repo) gives the policy the VAE's architecture, its statistics (`policy.task_suite_stats`, one entry named after the dataset, set with `--cae.suite_name`) and its weights, in place of the checkpoint's LIBERO VAE. The video expert, the mixture-of-transformers and the action expert initialize from the checkpoint. A new VAE has a new latent space, so the action expert must be trained on it: the released checkpoint is only a warm start. The saved policy contains the VAE's weights and statistics and loads without `action_vae_path`. For a non-LIBERO robot, also set `--policy.toggle_action_dimensions='[]'` (the default toggles the LIBERO gripper) and, if the state is not 8-D, `--policy.proprio_dim` (FastWAM's loader keeps the checkpoint weights whose shapes still fit).
+
+The released LIBERO VAE is a single VAE conditioned on the four LIBERO suites, each with its own statistics. `lerobot-train-tokenizer` trains on one dataset, so it trains one single-suite VAE per dataset.
+
+Retrained from scratch with this command on each LIBERO suite (`yuanty/LIBERO-fastwam`), the VAE reconstructs the action chunks with 1.06x, 1.16x, 1.20x and 1.35x the error of the released VAE on `libero_spatial`, `libero_object`, `libero_goal` and `libero_10` (normalized MSE, posterior mean). With the retrained `libero_spatial` VAE, the policy needs a real stage 2: after 10,300 steps (batch size 8, action expert only, video expert frozen with `--policy.freeze_video_expert=true` and `--policy.loss='{"lambda_video": 0.0, "lambda_action": 1.0}'`) it succeeded in 189 of 200 `libero_spatial` episodes, against 193 of 200 for `amd/CAE-FastWAM-lerobot`; after 1,800 steps it was at 167 of 200.
 
 ## Results
 
