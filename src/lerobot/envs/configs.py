@@ -92,13 +92,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """
         return _gym_settings(self, "delta")
 
-    def sim_config(self) -> NoReturn:
-        """Removed: settings differ per suite, resolve them with ``SimConfig.resolve(sim_settings(), suite)``."""
-        raise RuntimeError(
-            "EnvConfig.sim_config() was removed, since each suite has its own settings: resolve one suite's with "
-            "lerobot.sim.SimConfig.resolve(config.sim_settings(), suite)"
-        )
-
     def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
         raise RuntimeError(
