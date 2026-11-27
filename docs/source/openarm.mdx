@@ -47,7 +47,11 @@ The hardware repositories are available at [github.com/enactic/openarm](https://
 
 ## CAN Bus Setup
 
-OpenArm uses CAN bus communication with Damiao motors. Once you have the CAN bus USB adapter plugged into your Linux PC, follow the [Damiao Motors and CAN Bus guide](./damiao) to configure the interface.
+OpenArm uses CAN bus communication with Damiao motors, driven through the
+[`motorbridge`](https://pypi.org/project/motorbridge/) controller (the same backend used by the
+reBot B601).
+
+Once you have the CAN bus USB adapter plugged into your Linux PC, follow the [Damiao Motors and CAN Bus guide](./damiao) to configure the interface.
 
 Quick setup:
 
@@ -59,12 +63,21 @@ lerobot-setup-can --mode=setup --interfaces=can0,can1
 lerobot-setup-can --mode=test --interfaces=can0,can1
 ```
 
+<Tip warning={true}>
+  With the `motorbridge` backend the CAN interface bitrate is configured at the
+  OS level, so the interface must be brought up **before** connecting (the
+  command above handles this). The `can_bitrate` / `can_data_bitrate` config
+  fields are informational and are not passed to the controller. When
+  `use_can_fd=True` (the default), OpenArm opens the channel with CAN FD via
+  `motorbridge`'s `from_socketcanfd`.
+</Tip>
+
 ## Install LeRobot 🤗
 
-Follow our [Installation Guide](./installation), then install the Damiao motor support:
+Follow our [Installation Guide](./installation), then install the OpenArm support:
 
 ```bash
-pip install -e ".[damiao]"
+pip install -e ".[openarms]"
 ```
 
 ## Usage

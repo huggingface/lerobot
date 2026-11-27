@@ -19,9 +19,10 @@ import time
 
 from lerobot.lerobot_types import RobotAction
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.damiao import DamiaoMotorsBus
+from lerobot.motors.damiao import MotorBridgeDamiaoBus
 from lerobot.motors.damiao.damiao import MotorState
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import require_package
 
 from ..teleoperator import Teleoperator
 from .config_openarm_leader import OpenArmLeaderConfig
@@ -41,6 +42,7 @@ class OpenArmLeader(Teleoperator):
     name = "openarm_leader"
 
     def __init__(self, config: OpenArmLeaderConfig):
+        require_package("motorbridge", extra="openarms")
         super().__init__(config)
         self.config = config
 
@@ -54,7 +56,7 @@ class OpenArmLeader(Teleoperator):
             motor.motor_type_str = motor_type_str
             motors[motor_name] = motor
 
-        self.bus = DamiaoMotorsBus(
+        self.bus = MotorBridgeDamiaoBus(
             port=self.config.port,
             motors=motors,
             calibration=self.calibration,
