@@ -14,6 +14,7 @@
 
 """lerobot-env-server: configuration overrides, Docker launch, and the shipped server configurations."""
 
+import json
 import signal
 import socket
 import subprocess
@@ -71,6 +72,8 @@ def test_a_config_needs_a_simulator_and_a_deployment():
 
 
 def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypatch):
+    # An unrelated host variable must not change the built-in image's user.
+    monkeypatch.setenv("SIM_USER", "unexpected-host-user")
     config = tmp_path / "sim.yaml"
     config.write_text("deployment: libero\nsim:\n  type: libero\n  task: libero_spatial\n")
     calls = []
@@ -90,6 +93,7 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
     command, options = calls[1]
     assert command[-4:] == ["up", "-d", "--wait", "sim"]
     assert options["env"]["SIM"] == "libero"
+    assert options["env"]["SIM_USER"] == "user_lerobot"
     mounted = yaml.safe_load(Path(options["env"]["SIM_CONFIG"]).read_text())
     assert mounted["sim"]["task"] == "libero_goal"
     # The container gets the server's config, not the launch options.
@@ -172,11 +176,29 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     assert "ENVHUB_IMAGE" not in env
 
 
-def test_docker_launch_builds_the_repository_image_first(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "image_config,expected_user,expected_workdir",
+    [
+        (
+            {"User": "simulator:simulators", "WorkingDir": "/opt/my simulator"},
+            "simulator:simulators",
+            "/opt/my simulator",
+        ),
+        ({"User": "12345:23456", "WorkingDir": "/opt/sim"}, "12345:23456", "/opt/sim"),
+        ({"User": "", "WorkingDir": ""}, "0", "/"),
+        ({}, "0", "/"),
+    ],
+)
+def test_docker_launch_builds_the_repository_image_first(
+    tmp_path, monkeypatch, image_config, expected_user, expected_workdir
+):
     calls = []
-    monkeypatch.setattr(
-        lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
-    )
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(stdout=json.dumps(image_config))
+
+    monkeypatch.setattr(lerobot_env_server.subprocess, "run", run)
     monkeypatch.delenv("ENVHUB_IMAGE", raising=False)
     (tmp_path / "env.py").write_text("")
     (tmp_path / "envhub.Dockerfile").write_text("FROM python:3.12-slim\n")
@@ -189,12 +211,15 @@ def test_docker_launch_builds_the_repository_image_first(tmp_path, monkeypatch):
     ]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
-    build, compose = calls[-2][0], calls[-1]
+    build, inspect, compose = calls[-3][0], calls[-2][0], calls[-1]
     image = f"lerobot-envhub-simulator:local-{tmp_path.name.lower()}"
     assert build == ["docker", "build", "-f", str(tmp_path / "envhub.Dockerfile"), "-t", image, str(tmp_path)]
+    assert inspect == ["docker", "image", "inspect", "--format", "{{json .Config}}", image]
     # The server's image builds on top of it.
     assert compose[0][-5:] == ["up", "-d", "--wait", "--build", "sim"]
     assert compose[1]["env"]["ENVHUB_IMAGE"] == image
+    assert compose[1]["env"]["SIM_USER"] == expected_user
+    assert compose[1]["env"]["ENVHUB_WORKDIR"] == expected_workdir
 
 
 def test_serving_an_envhub_repository_needs_explicit_consent(tmp_path):

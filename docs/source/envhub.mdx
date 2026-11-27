@@ -117,6 +117,10 @@ RUN python -m venv "$VIRTUAL_ENV" && pip install --no-cache-dir gymnasium numpy
 - set `VIRTUAL_ENV` to the Python 3.12 (or newer) environment `env.py` runs in, with its `bin` first on `PATH`. The server is installed there, along with the requirements it is missing. Packages already installed keep their versions, and one outside the range the server needs fails the build.
 - set what the simulator needs to start with `ENV`, or in its `ENTRYPOINT`, which runs the server.
 
+The server image preserves the simulator image's `USER`, `WORKDIR` and `ENTRYPOINT`. Installation runs as
+root during the build; the server then runs as the image's original user, in its original working directory.
+The image does not need a `user_lerobot` account or user-management tools.
+
 ### `make_env`
 
 `env.py` must define `make_env(n_envs: int = 1, use_async_envs: bool = False, **kwargs)`, which returns `{suite_name: {task_id: vector_env}}`, each vector env holding `n_envs` environments of that task:

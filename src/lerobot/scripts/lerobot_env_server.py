@@ -22,6 +22,7 @@ Every key of the config takes a nested override, e.g. `--sim.task=libero_10`.
 """
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -143,7 +144,8 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         raise ValueError(f"Unsupported backend {backend!r}; choose from {sorted(supported)}")
     directory = HF_LEROBOT_HOME / "sim"
     directory.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "SIM": backend}
+    # Built-in stages use user_lerobot; repository images supply their own user after being built.
+    env = {**os.environ, "SIM": backend, "SIM_USER": "user_lerobot"}
     # The container reads the server's config; the launch options stay on this side.
     values = asdict(cfg)
     data = {item.name: values[item.name] for item in fields(EnvServerConfig)}
@@ -187,6 +189,16 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
                         env["ENVHUB_IMAGE"],
                     ]
                     subprocess.run([*build, str(context)], env=env, check=True)  # nosec B603
+                    # Installation uses root, but the server runs in the simulator image's execution context.
+                    metadata = subprocess.run(  # nosec B603,B607
+                        ["docker", "image", "inspect", "--format", "{{json .Config}}", env["ENVHUB_IMAGE"]],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    image_config = json.loads(metadata.stdout)
+                    env["SIM_USER"] = image_config.get("User") or "0"
+                    env["ENVHUB_WORKDIR"] = image_config.get("WorkingDir") or "/"
         command.append("sim")
     subprocess.run(command, env=env, check=True)  # nosec B603
 
