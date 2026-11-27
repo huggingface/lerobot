@@ -110,6 +110,7 @@ def _yam_gripper_params(config: YamFollowerConfig, calibration: MotorCalibration
         kd=config.gripper_kd,
         max_speed=config.max_gripper_speed,
         force_limit_n=config.gripper_force_limit_n,
+        float_kd=config.gripper_float_kd,
         finger_stroke_m=_GRIPPER_FINGER_STROKE_M,
     )
 

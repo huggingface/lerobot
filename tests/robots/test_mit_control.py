@@ -32,6 +32,7 @@ def gripper(closed=1.0, opened=3.0):
         max_speed=1.0,
         force_limit_n=10.0,
         finger_stroke_m=0.1,
+        float_kd=0.02,
     )
 
 
@@ -256,12 +257,13 @@ def test_float_step_compensates_gravity_and_friction_without_stiffness():
     command, commands = mit_control._float_step(
         params(), gripper(), state, np.array([0.0, 0.0, 0.8]), np.array([8.0, 1.5])
     )
-    np.testing.assert_allclose(command, [0.2, 0.5, 0.8])  # the joints follow the arm, the gripper holds
+    np.testing.assert_allclose(command, [0.2, 0.5, 0.5])  # the command follows the arm and the gripper
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
     assert_mit_command(commands[0], position=0.2, velocity=0, kp=0, kd=0.2, torque=5.5)
     # Gravity 1.5 Nm doubled by its factor, plus friction 0.2.
     assert_mit_command(commands[1], position=0.5, velocity=0, kp=0, kd=0.1, torque=3.2)
-    assert len(commands) == 2  # the gripper keeps its own limiter
+    # The gripper is limp at its measured raw position (mid-stroke of 1 to 3 rad).
+    assert_mit_command(commands[2], position=2.0, velocity=0, kp=0, kd=0.02, torque=0)
 
 
 def run_cycles(controller, cycles):
@@ -291,6 +293,20 @@ def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_
     assert set(joint_stiffness(bus)) == {50.0, 20.0}
     shoulder_goal = dict(bus.sent)["shoulder"].position
     assert shoulder_goal == pytest.approx(measured[0], abs=0.5 * 0.05)  # no jump from a stale command
+
+
+def test_float_mode_leaves_the_gripper_limp_then_tracks_it_from_where_it_was_moved():
+    bus = FakeBus()
+    controller = make_controller(bus, idle_mode="float")
+    controller._gripper.blocked = True  # a grasp from before the arm went idle
+    bus.states = motor_states([0.2, 0.5, 2.5])  # gripper moved by hand to 0.75 open
+    run_cycles(controller, 1)
+    assert_mit_command(dict(bus.sent)["gripper"], position=2.5, velocity=0, kp=0, kd=0.02, torque=0)
+    assert not controller._gripper.blocked
+
+    controller.set_target(controller.state.position)
+    run_cycles(controller, 1)
+    assert_mit_command(dict(bus.sent)["gripper"], position=2.5, velocity=0, kp=4, kd=0.1, torque=0)
 
 
 def test_float_mode_floats_again_after_the_command_timeout():

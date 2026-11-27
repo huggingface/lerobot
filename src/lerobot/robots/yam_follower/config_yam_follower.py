@@ -48,6 +48,7 @@ class YamFollowerConfig:
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
     gripper_kp: float = 20.0
     gripper_kd: float = 0.5
+    gripper_float_kd: float = 0.05
     gripper_force_limit_n: float = 50.0
     max_joint_speed_deg_s: float = 17.0
     max_gripper_speed: float = 12.0
@@ -125,6 +126,8 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             MIT position gain of the gripper, from I2RT.
         gripper_kd (`float`, *optional*, defaults to 0.5):
             MIT damping gain of the gripper, from I2RT.
+        gripper_float_kd (`float`, *optional*, defaults to 0.05):
+            MIT damping gain of the gripper in float mode, where it has no stiffness.
         gripper_force_limit_n (`float`, *optional*, defaults to 50.0):
             Finger force, in newtons, once the gripper is blocked on an object.
         max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0):
@@ -140,7 +143,7 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             which the model doesn't include.
         idle_mode (`Literal["hold", "float"]`, *optional*, defaults to `"hold"`):
             What the arm does before the first action and after `command_timeout_s` without one: `hold`
-            keeps the position, `float` lets you move the arm by hand.
+            keeps the position, `float` lets you move the arm and the gripper by hand.
         float_kd (`list[float]`, *optional*):
             Damping gains in float mode, from I2RT.
         friction_compensation (`bool`, *optional*, defaults to `False`):
