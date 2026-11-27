@@ -61,7 +61,7 @@ class RolloutStrategyConfig(draccus.ChoiceRegistry, abc.ABC):
     # --dataset.* flags are given (``ctx.data.dataset`` may be None).  "required":
     # --dataset.repo_id is mandatory.
     dataset_mode: ClassVar[str] = "none"
-    # Whether --teleop.type is mandatory (human-in-the-loop strategies).
+    # Whether a teleoperator (--teleop.type) is mandatory.
     requires_teleop: ClassVar[bool] = False
     # Whether the strategy can drive a sim robot: it must start a new episode when one ends.
     supports_sim_robot: ClassVar[bool] = False

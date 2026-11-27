@@ -162,6 +162,8 @@ class EpisodicStrategy(RolloutStrategy):
                         log_say("Reset the environment", play_sounds)
 
                         if teleop:
+                            # The policy moved the robot: drop targets held from the previous reset.
+                            ctx.processors.teleop_action_processor.reset()
                             # Smooth handover so the transition to teleop control is jerk-free.
                             # For actuated teleops: drive the leader arm to the follower's current
                             # position so the operator takes over without fighting the arm.

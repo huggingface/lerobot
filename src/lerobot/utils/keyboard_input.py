@@ -44,7 +44,7 @@ import select
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -396,7 +396,7 @@ def create_key_listener(dispatch: Callable[[str], None], *, controls_help: str =
     return None
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(*, reserved_keys: Collection[str] = ()):
     """Initialize a non-blocking keyboard listener for interactive recording controls.
 
     Backend selection:
@@ -413,7 +413,8 @@ def init_keyboard_listener():
     Both backends accept the same controls: Right/Left/Esc, plus the single-byte letter
     equivalents ``n`` (next), ``r`` (re-record) and ``q`` (quit). The letters are the most
     reliable choice over high-latency SSH/VNC links, where arrow-key escape sequences can
-    be split, delayed, or intercepted by the terminal.
+    be split, delayed, or intercepted by the terminal. Keys reserved by the
+    teleoperator are ignored by this listener.
 
     Returns:
         A tuple ``(listener, events)`` where ``listener`` exposes ``.stop()`` or is
@@ -425,12 +426,15 @@ def init_keyboard_listener():
         "rerecord_episode": False,
         "stop_recording": False,
     }
+    reserved = {key.lower() for key in reserved_keys}
 
     # Accept the single-byte letter equivalents n/r/q alongside the arrow/Esc keys: the
     # letters are immune to the escape-sequence split/delay/interception that affects arrows
     # over laggy SSH/VNC links. Case-insensitive so Shift+letter still works.
     def on_key(name: str) -> None:
         key = name.lower()
+        if key in reserved:
+            return
         if key in ("right", "n"):
             apply_recording_control("right", events)
         elif key in ("left", "r"):
@@ -439,5 +443,14 @@ def init_keyboard_listener():
             apply_recording_control("esc", events)
         # other keys (incl. up/down) are intentionally ignored
 
-    listener = create_key_listener(on_key, controls_help="Right/Left/Esc, or n=next, r=re-record, q=quit")
+    controls = [
+        ("right", "next"),
+        ("left", "re-record"),
+        ("esc", "quit"),
+        ("n", "next"),
+        ("r", "re-record"),
+        ("q", "quit"),
+    ]
+    controls_help = ", ".join(f"{key}={action}" for key, action in controls if key not in reserved)
+    listener = create_key_listener(on_key, controls_help=controls_help)
     return listener, events

@@ -15,20 +15,28 @@
 # limitations under the License.
 
 import re
-from unittest.mock import patch
+import subprocess
+import sys
+from unittest.mock import MagicMock, PropertyMock, patch
 
+import draccus
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.configs.dataset import DatasetRecordConfig
-from lerobot.processor import make_default_processors
+from lerobot.processor import make_default_processors, make_default_teleop_action_processor
 from lerobot.robots import make_robot_from_config
+from lerobot.robots.lekiwi import LeKiwiClient
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
+from lerobot.teleoperators.composite import CompositeTeleoperator, CompositeTeleoperatorConfig
+from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.teleoperators.so_leader import SO100Leader
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
@@ -69,6 +77,35 @@ def test_teleoperate(cadence_log):
     assert summary.startswith("Cadence summary — whole run · target 30 Hz (33.3 ms budget per tick):")
     for step in ("observe", "teleop", "send"):
         assert step in summary, step
+
+
+def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
+    # The base teleop commands motor_1; with no arm teleop, motor_2 and motor_3 hold their first reading.
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record_base",
+        num_episodes=1,
+        episode_time_s=0.2,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=MockRobotConfig(),
+        dataset=dataset_cfg,
+        teleop=CompositeTeleoperatorConfig(
+            base=MockTeleopConfig(n_motors=1, random_values=False, static_values=[12.0])
+        ),
+        play_sounds=False,
+    )
+
+    dataset = record(cfg)
+
+    actions = dataset.hf_dataset["action"]
+    assert len(actions) > 1
+    first_observation = dataset.hf_dataset[0]["observation.state"]
+    assert all(list(a[1:]) == list(first_observation[1:]) for a in actions)
+    assert all(float(a[0]) == 12.0 for a in actions)
 
 
 def test_record_and_resume(tmp_path):
@@ -255,3 +292,108 @@ def test_record_loop_without_a_teleoperator_paces_and_terminates():
 
     # 0.1 s at 30 Hz is 3 ticks; the upper bound is what proves the phase was paced.
     assert 1 <= calls <= 6
+
+
+def test_lekiwi_keyboard_cli_drives_the_base_and_holds_the_arm() -> None:
+    cfg = draccus.parse(
+        TeleoperateConfig,
+        args=[
+            "--robot.type=lekiwi_client",
+            "--robot.remote_ip=unused",
+            "--teleop.type=composite",
+            "--teleop.base.type=keyboard",
+            "--fps=200",
+            "--teleop_time_s=0.02",
+        ],
+    )
+    robot = MagicMock(spec=LeKiwiClient)
+    robot.config = cfg.robot
+    robot.name = "lekiwi_client"
+    obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
+    robot.action_features = dict.fromkeys(obs, float)
+    robot.get_observation.return_value = obs
+
+    def connect_keyboard(self, calibrate=True):
+        self.event_queue.put(("w", True))
+
+    with (
+        patch("lerobot.scripts.lerobot_teleoperate.make_robot_from_config", return_value=robot),
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"),
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True),
+        patch.object(KeyboardTeleop, "connect", connect_keyboard),
+    ):
+        teleoperate(cfg)
+
+    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0, "arm_shoulder.pos": 10.0}
+    assert robot.send_action.call_count > 0
+    assert all(call.args[0] == expected for call in robot.send_action.call_args_list)
+
+
+def test_keyboard_pipeline_speed_survives_recording_and_reset_phases():
+    robot = MagicMock(spec=LeKiwiClient)
+    robot.arm_action_prefix = "arm_"
+    obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
+    robot.action_features = dict.fromkeys(obs, float)
+    robot.get_observation.return_value = obs
+    arm = MagicMock(spec=SO100Leader)
+    arm.get_action.return_value = {"shoulder.pos": 10.0}
+    dataset = MagicMock()
+    dataset.fps = 200
+    dataset.features = {
+        **hw_to_dataset_features(robot.action_features, "action"),
+        **hw_to_dataset_features(robot.action_features, "observation"),
+    }
+    processors = make_default_processors()
+    events = {"exit_early": False}
+
+    def send_action(action):
+        events["exit_early"] = True
+        return action
+
+    robot.send_action.side_effect = send_action
+    with (
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"),
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True),
+    ):
+        keyboard = KeyboardTeleop(KeyboardTeleopConfig())
+        keyboard.event_queue.put(("w", True))
+        teleop = CompositeTeleoperator([(keyboard, ""), (arm, "")])
+        teleop_processor = make_default_teleop_action_processor(teleop, robot, processors[0])
+        for phase, speed_key_pressed in enumerate((True, False, True, True)):
+            keyboard.event_queue.put(("+", speed_key_pressed))
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=200,
+                teleop_action_processor=teleop_processor,
+                robot_action_processor=processors[1],
+                robot_observation_processor=processors[2],
+                dataset=dataset if phase % 2 == 0 else None,
+                teleop=teleop,
+                control_time_s=1.0,
+                single_task="Move to the table",
+            )
+    assert [call.args[0]["x.vel"] for call in robot.send_action.call_args_list] == [0.2, 0.2, 0.3, 0.3]
+    assert dataset.add_frame.call_count == 2
+
+
+@pytest.mark.parametrize("command", ["teleoperate", "record", "rollout"])
+def test_lekiwi_cli_registration_in_a_fresh_process(command):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            f"lerobot.scripts.lerobot_{command}",
+            "--robot.type=lekiwi_client",
+            "--teleop.type=composite",
+            "--teleop.base.type=keyboard",
+            "--teleop.mapping.type=keyboard",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "--robot.remote_ip" in result.stdout
+    assert "--teleop.mapping.layout" in result.stdout
+    assert "--teleop.base.calibration_dir" in result.stdout

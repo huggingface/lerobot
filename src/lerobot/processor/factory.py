@@ -14,9 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -24,6 +24,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
+from .base_action_processor import BaseActionProcessorStep
 from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
     batch_to_transition,
@@ -36,6 +37,7 @@ from .converters import (
     transition_to_robot_action,
 )
 from .device_processor import DeviceProcessorStep
+from .hold_joints_processor import HoldUncommandedJointsProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 from .pipeline import (
     IdentityProcessorStep,
@@ -46,16 +48,47 @@ from .pipeline import (
 from .relative_action_processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from .rename_processor import RenameObservationsProcessorStep
 
+if TYPE_CHECKING:
+    from lerobot.robots import Robot
+    from lerobot.teleoperators import Teleoperator
 
-def make_default_teleop_action_processor() -> RobotProcessorPipeline[
-    tuple[RobotAction, RobotObservation], RobotAction
-]:
+
+def make_default_teleop_action_processor(
+    teleop: "Teleoperator | None" = None,
+    robot: "Robot | None" = None,
+    action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None = None,
+) -> RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]:
     teleop_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction](
         steps=[IdentityProcessorStep()],
         to_transition=robot_action_observation_to_transition,
         to_output=transition_to_robot_action,
     )
-    return teleop_action_processor
+    pipeline = action_processor if action_processor is not None else teleop_action_processor
+    from lerobot.teleoperators.composite import CompositeTeleoperator
+
+    if isinstance(teleop, CompositeTeleoperator):
+        if robot is None:
+            raise ValueError("A robot is required to configure composite action processors.")
+        if len(teleop.devices) == 2:
+            arm, prefix = teleop.devices[1]
+            teleop.devices[1] = (arm, prefix or getattr(robot, "arm_action_prefix", ""))
+        base = teleop.devices[0][0]
+        mapping_type = BaseActionProcessorStep.get_known_choices().get(base.name)
+        mapping = teleop.mapping
+        if mapping is None:
+            mapping = mapping_type() if mapping_type is not None else None
+        elif mapping_type is None or not isinstance(mapping, mapping_type):
+            raise ValueError(f"The base mapping must match the {base.name!r} base input.")
+        steps = list(pipeline.steps)
+        if mapping is not None:
+            steps.insert(0, replace(mapping))
+        steps.append(
+            HoldUncommandedJointsProcessorStep(
+                tuple(key for key in robot.action_features if key.endswith(".pos"))
+            )
+        )
+        pipeline = replace(pipeline, steps=steps)
+    return pipeline
 
 
 def make_default_robot_action_processor() -> RobotProcessorPipeline[
@@ -78,8 +111,8 @@ def make_default_robot_observation_processor() -> RobotProcessorPipeline[RobotOb
     return robot_observation_processor
 
 
-def make_default_processors():
-    teleop_action_processor = make_default_teleop_action_processor()
+def make_default_processors(teleop: "Teleoperator | None" = None, robot: "Robot | None" = None):
+    teleop_action_processor = make_default_teleop_action_processor(teleop, robot)
     robot_action_processor = make_default_robot_action_processor()
     robot_observation_processor = make_default_robot_observation_processor()
     return (teleop_action_processor, robot_action_processor, robot_observation_processor)

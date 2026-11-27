@@ -67,6 +67,16 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+Example driving a mobile robot's base from the keyboard, with no leader arm (the arm holds its position):
+
+```shell
+lerobot-teleoperate \
+  --robot.type=lekiwi_client \
+  --robot.remote_ip=172.18.134.136 \
+  --teleop.type=composite \
+  --teleop.base.type=keyboard
+```
+
 """
 
 import logging
@@ -94,6 +104,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
@@ -112,6 +123,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_openarm_mini,
     bi_rebot_102_leader,
     bi_so_leader,
+    composite,
     gamepad,
     homunculus,
     keyboard,
@@ -137,9 +149,8 @@ from lerobot.utils.visualization_utils import (
 
 @dataclass
 class TeleoperateConfig:
-    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
-    teleop: TeleoperatorConfig
     robot: RobotConfig
+    teleop: TeleoperatorConfig
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -199,10 +210,6 @@ def teleop_loop(
             loop_start = time.perf_counter()  # for the live readout below
 
             with timer.section("observe"):
-                # Get robot observation
-                # Not really needed for now other than for visualization
-                # teleop_action_processor can take None as an observation
-                # given that it is the identity processor as default
                 obs = robot.get_observation()
 
                 if robot.name == "unitree_g1":
@@ -272,10 +279,12 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
-    teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.fps, "--fps")
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    teleop = make_teleoperator_from_config(cfg.teleop)
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors(
+        teleop, robot
+    )
 
     teleop.connect()
     robot.connect()

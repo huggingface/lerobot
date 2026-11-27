@@ -90,23 +90,6 @@ class LeKiwiClientConfig(RobotConfig):
     port_zmq_cmd: int = 5555
     port_zmq_observations: int = 5556
 
-    teleop_keys: dict[str, str] = field(
-        default_factory=lambda: {
-            # Movement
-            "forward": "w",
-            "backward": "s",
-            "left": "a",
-            "right": "d",
-            "rotate_left": "z",
-            "rotate_right": "x",
-            # Speed control
-            "speed_up": "r",
-            "speed_down": "f",
-            # quit teleop
-            "quit": "q",
-        }
-    )
-
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
     polling_timeout_ms: int = 15

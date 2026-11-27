@@ -18,6 +18,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_record import record_loop
+from lerobot.teleoperators.composite import CompositeTeleoperator
 from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.constants import ACTION, OBS_STR
@@ -74,8 +75,9 @@ def main():
         if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
             raise ValueError("Robot or teleop is not connected!")
 
+        teleop = CompositeTeleoperator([(keyboard, ""), (leader_arm, "arm_")])
         teleop_action_processor, robot_action_processor, robot_observation_processor = (
-            make_default_processors()
+            make_default_processors(teleop, robot)
         )
 
         print("Starting record loop...")
@@ -92,7 +94,7 @@ def main():
                 robot_action_processor=robot_action_processor,
                 robot_observation_processor=robot_observation_processor,
                 dataset=dataset,
-                teleop=[leader_arm, keyboard],
+                teleop=teleop,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
@@ -110,7 +112,7 @@ def main():
                     teleop_action_processor=teleop_action_processor,
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
-                    teleop=[leader_arm, keyboard],
+                    teleop=teleop,
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,

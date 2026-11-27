@@ -247,7 +247,7 @@ Then on your laptop, also run `conda activate lerobot` and run the API example, 
 python examples/lekiwi/teleoperate.py
 ```
 
-Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (+,-) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
@@ -263,11 +263,28 @@ Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward,
 | D   | Move right     |
 | Z   | Turn left      |
 | X   | Turn right     |
-| R   | Increase speed |
-| F   | Decrease speed |
+| +   | Increase speed |
+| -   | Decrease speed |
 
 > [!TIP]
-> If you use a different keyboard, you can change the keys for each command in the [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py).
+> To change keys or speeds, use the composite teleoperator’s `mapping` configuration below.
+
+### From the command line
+
+Use a composite teleoperator to combine the keyboard and leader arm. Omit `--teleop.arm` to drive only the base; the arm holds its initial position.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip=172.18.134.136 \
+    --teleop.type=composite \
+    --teleop.arm.type=so100_leader \
+    --teleop.arm.port=/dev/tty.usbmodem585A0077581 \
+    --teleop.arm.id=my_awesome_leader_arm \
+    --teleop.base.type=keyboard
+```
+
+The same flags work with `lerobot-record` and `lerobot-rollout`. Customize controls through `--teleop.mapping`, e.g. `--teleop.mapping.linear_speeds='[0.05,0.1,0.2]'`. Select `--teleop.mapping.layout=azerty` or `qwertz` for those keyboards (`qwerty` is the default). Translation keys are WASD / ZQSD / WASD, and rotation keys are ZX / WX / YX, respectively. A complete `key_bindings` mapping overrides the preset.
 
 ### Wired version
 
