@@ -1251,6 +1251,52 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
 
 
 @require_h264
+def test_stream_copy_keeps_source_time_base(tmp_path, empty_lerobot_dataset_factory):
+    """A trimmed video keeps the time base of its source, like every other video of the dataset."""
+    import av
+
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)
+    video_key = src_dataset.meta.video_keys[0]
+    src_video_path = src_dataset.root / src_dataset.meta.get_video_file_path(0, video_key)
+    output_path = tmp_path / "kept.mp4"
+
+    assert _try_keep_episodes_from_video_by_stream_copy(
+        src_video_path, output_path, [(0, 10), (20, 30)], src_dataset.meta.fps
+    )
+
+    with av.open(str(src_video_path)) as src_container, av.open(str(output_path)) as out_container:
+        assert out_container.streams.video[0].time_base == src_container.streams.video[0].time_base
+
+
+@require_h264
+@pytest.mark.parametrize("edited_first", [False, True], ids=["recorded-first", "edited-first"])
+def test_merge_after_delete_episodes_keeps_videos_readable(
+    edited_first, tmp_path, empty_lerobot_dataset_factory
+):
+    """Merging a dataset trimmed by `delete_episodes` with an untouched one keeps every frame."""
+    recorded = _make_packed_video_dataset(tmp_path / "recorded", empty_lerobot_dataset_factory)
+    untrimmed = _make_packed_video_dataset(tmp_path / "untrimmed", empty_lerobot_dataset_factory)
+    video_key = recorded.meta.video_keys[0]
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "edited")
+        edited = delete_episodes(untrimmed, [1, 3], output_dir=tmp_path / "edited")
+
+        sources = [edited, recorded] if edited_first else [recorded, edited]
+        mock_snapshot_download.return_value = str(tmp_path / "merged")
+        merged = merge_datasets(sources, output_repo_id="merged", output_dir=tmp_path / "merged")
+
+    assert merged.meta.total_frames == 80  # 30 + 50
+    expected = torch.stack([source[i][video_key] for source in sources for i in range(len(source))])
+    actual = torch.stack([merged[i][video_key] for i in range(len(merged))])
+    assert torch.equal(actual, expected)
+
+
+@require_h264
 def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(tmp_path, empty_lerobot_dataset_factory):
     """A range starting mid-GOP is refused so the caller can re-encode instead."""
     src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory)

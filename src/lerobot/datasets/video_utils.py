@@ -690,6 +690,36 @@ def reencode_video(
         raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
 
 
+_CONCATENATED_STREAM_TYPES = ("video", "audio", "subtitle")
+
+
+def _concatenated_stream_time_bases(video_path: Path | str) -> list[Fraction | None]:
+    """Time base of each stream that `concatenate_video_files` copies from ``video_path``."""
+    with av.open(str(video_path)) as container:
+        return [stream.time_base for stream in container.streams if stream.type in _CONCATENATED_STREAM_TYPES]
+
+
+def _remux_to_time_bases(
+    input_path: Path | str, output_path: Path, time_bases: Sequence[Fraction | None]
+) -> None:
+    """Copy ``input_path`` to ``output_path`` without re-encoding, with its streams on ``time_bases``."""
+    with av.open(str(input_path)) as input_container, av.open(str(output_path), mode="w") as output_container:
+        input_streams = [s for s in input_container.streams if s.type in _CONCATENATED_STREAM_TYPES]
+        stream_map = {}
+        for input_stream, time_base in zip(input_streams, time_bases, strict=True):
+            stream_map[input_stream.index] = output_container.add_stream_from_template(
+                template=input_stream, opaque=True
+            )
+            stream_map[input_stream.index].time_base = time_base
+
+        for packet in input_container.demux(input_streams):
+            if packet.dts is None:
+                continue
+            # Muxing rescales the packet's timestamps from its source time base to the output stream's.
+            packet.stream = stream_map[packet.stream.index]
+            output_container.mux(packet)
+
+
 def concatenate_video_files(
     input_video_paths: Sequence[Path | str],
     output_video_path: Path,
@@ -742,59 +772,75 @@ def concatenate_video_files(
                     f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
                 )
 
-    # Create a temporary .ffconcat file to list the input video paths
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".ffconcat", delete=False
-    ) as tmp_concatenate_file:
-        tmp_concatenate_file.write("ffconcat version 1.0\n")
-        for input_path in input_video_paths:
-            # FFmpeg single-quoted tokens require quotes to be escaped outside the token.
-            path = Path(input_path).resolve().as_posix().replace("'", "'\\''")
-            tmp_concatenate_file.write(f"file '{path}'\n")
-        tmp_concatenate_file.flush()
-        tmp_concatenate_path = tmp_concatenate_file.name
+    # The concat demuxer reads every input's timestamps in the first input's time base, without
+    # rescaling them. Inputs on another time base (e.g. a video trimmed by a stream copy that kept the
+    # muxer default) are first remuxed onto the first input's. All temporary files go in one directory,
+    # which is removed even if the concatenation fails.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        concat_video_paths = list(input_video_paths)
+        reference_time_bases = _concatenated_stream_time_bases(input_video_paths[0])
+        for i, input_path in enumerate(input_video_paths[1:], start=1):
+            time_bases = _concatenated_stream_time_bases(input_path)
+            if time_bases == reference_time_bases:
+                continue
+            if len(time_bases) != len(reference_time_bases):
+                logger.warning(
+                    f"{input_path} has {len(time_bases)} streams and {input_video_paths[0]} has "
+                    f"{len(reference_time_bases)}, so its time bases are not converted to those of the first "
+                    "input. The timestamps of the concatenated video may be wrong."
+                )
+                continue
+            remuxed_path = Path(tmp_dir) / f"{i}.mp4"
+            _remux_to_time_bases(input_path, remuxed_path, reference_time_bases)
+            concat_video_paths[i] = remuxed_path
 
-    # Create input and output containers
-    input_container = av.open(
-        tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
-    )  # safe = 0 allows absolute paths as well as relative paths
+        # List the input video paths in a .ffconcat file
+        concatenate_file_path = Path(tmp_dir) / "inputs.ffconcat"
+        with open(concatenate_file_path, "w", encoding="utf-8") as concatenate_file:
+            concatenate_file.write("ffconcat version 1.0\n")
+            for input_path in concat_video_paths:
+                # FFmpeg single-quoted tokens require quotes to be escaped outside the token.
+                path = Path(input_path).resolve().as_posix().replace("'", "'\\''")
+                concatenate_file.write(f"file '{path}'\n")
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
-        tmp_output_video_path = tmp_named_file.name
+        # Create input and output containers. They are closed before the temporary directory is removed.
+        # safe = 0 allows absolute paths as well as relative paths. faststart moves the metadata to the
+        # beginning of the file to speed up loading.
+        tmp_output_video_path = Path(tmp_dir) / "output.mp4"
+        with (
+            av.open(
+                str(concatenate_file_path), mode="r", format="concat", options={"safe": "0"}
+            ) as input_container,
+            av.open(
+                str(tmp_output_video_path), mode="w", options={"movflags": "faststart"}
+            ) as output_container,
+        ):
+            # Replicate input streams in output container
+            stream_map = {}
+            for input_stream in input_container.streams:
+                if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
+                    stream_map[input_stream.index] = output_container.add_stream_from_template(
+                        template=input_stream, opaque=True
+                    )
 
-    output_container = av.open(
-        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
-    )  # faststart is to move the metadata to the beginning of the file to speed up loading
+                    # set the time base to the input stream time base (missing in the codec context)
+                    stream_map[input_stream.index].time_base = input_stream.time_base
 
-    # Replicate input streams in output container
-    stream_map = {}
-    for input_stream in input_container.streams:
-        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
-            stream_map[input_stream.index] = output_container.add_stream_from_template(
-                template=input_stream, opaque=True
-            )
+            # Demux + remux packets (no re-encode)
+            for packet in input_container.demux():
+                # Skip packets from un-mapped streams
+                if packet.stream.index not in stream_map:
+                    continue
 
-            # set the time base to the input stream time base (missing in the codec context)
-            stream_map[input_stream.index].time_base = input_stream.time_base
+                # Skip demux flushing packets
+                if packet.dts is None:
+                    continue
 
-    # Demux + remux packets (no re-encode)
-    for packet in input_container.demux():
-        # Skip packets from un-mapped streams
-        if packet.stream.index not in stream_map:
-            continue
+                output_stream = stream_map[packet.stream.index]
+                packet.stream = output_stream
+                output_container.mux(packet)
 
-        # Skip demux flushing packets
-        if packet.dts is None:
-            continue
-
-        output_stream = stream_map[packet.stream.index]
-        packet.stream = output_stream
-        output_container.mux(packet)
-
-    input_container.close()
-    output_container.close()
-    shutil.move(tmp_output_video_path, output_video_path)
-    Path(tmp_concatenate_path).unlink()
+        shutil.move(tmp_output_video_path, output_video_path)
 
 
 class _CameraEncoderThread(threading.Thread):

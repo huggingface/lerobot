@@ -17,7 +17,9 @@
 """Unit tests for ``lerobot.datasets.video_utils`` encoding functions and ``lerobot.configs.video.VideoEncoderConfig`` config class."""
 
 import json
+import logging
 import shutil
+import tempfile
 from fractions import Fraction
 from pathlib import Path
 
@@ -636,6 +638,71 @@ class TestConcatenateVideoFiles:
         assert info["video.fps"] == 30
         assert info["video.codec"] == "av1"
         assert info["video.pix_fmt"] == "yuv420p"
+
+    @require_libsvtav1
+    @pytest.mark.parametrize("remuxed_first", [False, True], ids=["encoded-first", "remuxed-first"])
+    def test_inputs_with_different_time_bases(self, tmp_path, remuxed_first):
+        """Frames keep their timestamps when the inputs do not share a stream time base."""
+        fps = 30
+        encoded = _encode_video(tmp_path / "encoded.mp4", num_frames=4, fps=fps)
+        # A stream copy that leaves the time base unset gets the MP4 muxer's default, 1/90000.
+        remuxed = tmp_path / "remuxed.mp4"
+        with av.open(str(encoded)) as src, av.open(str(remuxed), mode="w") as dst:
+            in_stream = src.streams.video[0]
+            out_stream = dst.add_stream_from_template(in_stream, opaque=True)
+            for packet in src.demux(in_stream):
+                if packet.dts is None:
+                    continue
+                packet.stream = out_stream
+                dst.mux(packet)
+
+        time_bases = []
+        for path in (encoded, remuxed):
+            with av.open(str(path)) as container:
+                time_bases.append(container.streams.video[0].time_base)
+        assert time_bases[0] != time_bases[1], "the two inputs must not share a time base"
+
+        out = tmp_path / "out.mp4"
+        concatenate_video_files([remuxed, encoded] if remuxed_first else [encoded, remuxed], out)
+
+        with av.open(str(out)) as container:
+            times = [frame.time for frame in container.decode(video=0)]
+        assert times == pytest.approx([i / fps for i in range(8)], abs=1e-6)
+
+    @require_libsvtav1
+    def test_warns_on_different_stream_count(self, tmp_path, caplog):
+        """An input that cannot be remuxed onto the first input's time bases is reported."""
+        encoded = _encode_video(tmp_path / "encoded.mp4", num_frames=4)
+        two_streams = tmp_path / "two_streams.mp4"
+        sources = [av.open(str(encoded)) for _ in range(2)]
+        with av.open(str(two_streams), mode="w") as dst:
+            out_streams = [dst.add_stream_from_template(src.streams.video[0], opaque=True) for src in sources]
+            for src, out_stream in zip(sources, out_streams, strict=True):
+                for packet in src.demux(src.streams.video[0]):
+                    if packet.dts is None:
+                        continue
+                    packet.stream = out_stream
+                    dst.mux(packet)
+                src.close()
+
+        with caplog.at_level(logging.WARNING, logger="lerobot.datasets.video_utils"):
+            concatenate_video_files([encoded, two_streams], tmp_path / "out.mp4")
+        assert "has 2 streams" in caplog.text
+
+    @require_libsvtav1
+    def test_temporary_files_removed_on_failure(self, tmp_path, monkeypatch):
+        tmp_root = tmp_path / "tmp"
+        tmp_root.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_root))
+        encoded = _encode_video(tmp_path / "encoded.mp4", num_frames=4)
+
+        def fail(*args, **kwargs):
+            raise OSError("move failed")
+
+        monkeypatch.setattr(shutil, "move", fail)
+        with pytest.raises(OSError, match="move failed"):
+            concatenate_video_files([encoded, encoded], tmp_path / "out.mp4")
+        assert list(tmp_root.iterdir()) == []
 
     def test_compatibility_check_raises_on_different_codec(self, tmp_path):
         with pytest.raises(ValueError):
