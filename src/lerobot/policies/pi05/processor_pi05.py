@@ -93,6 +93,14 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
 
+    def get_config(self) -> dict[str, Any]:
+        # Saved with the pipeline so a reloaded checkpoint builds the same prompt it was trained on.
+        return {
+            "max_state_dim": self.max_state_dim,
+            "task_key": self.task_key,
+            "include_state_in_prompt": self.include_state_in_prompt,
+        }
+
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:

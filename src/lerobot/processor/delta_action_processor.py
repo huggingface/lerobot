@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -57,6 +58,9 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
         if self.use_gripper:
             delta_action["gripper"] = action[3].item()
         return delta_action
+
+    def get_config(self) -> dict[str, Any]:
+        return {"use_gripper": self.use_gripper}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -130,6 +134,9 @@ class MapDeltaActionToRobotActionStep(RobotActionProcessorStep):
         }
 
         return action
+
+    def get_config(self) -> dict[str, Any]:
+        return {"position_scale": self.position_scale, "noise_threshold": self.noise_threshold}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
