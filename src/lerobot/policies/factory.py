@@ -451,6 +451,8 @@ def make_policy(
                 config=peft_config,
                 revision=cfg.pretrained_revision,
                 is_trainable=True,
+                # PEFT otherwise maps the adapter file on the accelerator it finds, not where the policy is.
+                torch_device="cpu",
             )
 
     else:

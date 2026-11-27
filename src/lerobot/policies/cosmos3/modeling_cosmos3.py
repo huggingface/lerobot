@@ -38,7 +38,6 @@ from lerobot.policies.common.vla_utils import pad_vector
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import log_model_loading_keys
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from .configuration_cosmos3 import (
@@ -203,9 +202,7 @@ class Cosmos3Policy(PreTrainedPolicy):
         action_modules = model.model.network._action_modules
         state_dict = {
             key: value
-            for key, value in checkpoint.load_state_dict(
-                device=resolve_safetensors_device(map_location)
-            ).items()
+            for key, value in checkpoint.load_state_dict(device="cpu").items()
             if not any(part in action_modules for part in key.split("."))
         }
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)

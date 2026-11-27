@@ -463,6 +463,7 @@ def test_load_pretrained_peft_policy_keeps_adapter_and_base_revisions_separate(m
         "user/adapter",
         config=peft_config,
         revision="adapter-sha",
+        torch_device="cpu",
     )
 
 

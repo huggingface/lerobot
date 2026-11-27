@@ -29,6 +29,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.policies.checkpoint import SafetensorsCheckpoint
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.g05.configuration_g05 import (
     G05_CAMERA_PROFILES,
@@ -2280,3 +2281,51 @@ def test_recipe_training_uses_the_rendered_task_rephrasing():
 
     assert rephrased["command"] == "gather every cube in the blue square"
     assert canonical["command"] == "operator task"
+
+
+def _record_moves(monkeypatch) -> list[torch.dtype]:
+    """The dtypes of the tensors the loader moves, the CPU standing in for the GPU this test does not have."""
+    monkeypatch.setattr(
+        "lerobot.policies.g05.modeling_g05.resolve_safetensors_device", lambda location: "cpu:0"
+    )
+    moved = []
+    to = torch.Tensor.to
+
+    def recording_to(tensor, *args, **kwargs):
+        # Only the loader's move names the stand-in device, however it passes it.
+        device = kwargs.get("device", args[0] if args else None)
+        if isinstance(device, str | torch.device) and torch.device(device) == torch.device("cpu:0"):
+            moved.append(tensor.dtype)
+        return to(tensor, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "to", recording_to)
+    return moved
+
+
+def test_a_bfloat16_policy_reaches_the_gpu_with_its_weights_already_cast(tmp_path, monkeypatch):
+    # Cast after the move, the whole float32 checkpoint would be on the GPU first.
+    saved = G05Policy(_config(), backend=TinyG05Backend()).state_dict()
+    files = [tmp_path / "model.safetensors"]
+    save_file(saved, files[0])
+    with torch.device("meta"):
+        policy = G05Policy(_config(dtype=torch.bfloat16), backend=TinyG05Backend())
+    moved = _record_moves(monkeypatch)
+    G05Policy._load_checkpoint(policy, SafetensorsCheckpoint(files), "cuda", strict=True)
+    assert moved == [torch.bfloat16, torch.bfloat16]
+    for name, tensor in policy.state_dict().items():
+        assert torch.equal(tensor, saved[name].to(torch.bfloat16))
+
+
+def test_a_float32_policy_loads_for_the_gpu_with_its_exact_weights(tmp_path, monkeypatch):
+    # The CPU stands in for the GPU this test does not have.
+    monkeypatch.setattr(
+        "lerobot.policies.g05.modeling_g05.resolve_safetensors_device", lambda location: "cpu"
+    )
+    saved = G05Policy(_config(), backend=TinyG05Backend()).state_dict()
+    files = [tmp_path / "model.safetensors"]
+    save_file(saved, files[0])
+    with torch.device("meta"):
+        policy = G05Policy(_config(dtype=torch.float32), backend=TinyG05Backend())
+    G05Policy._load_checkpoint(policy, SafetensorsCheckpoint(files), "cuda", strict=True)
+    assert policy.backend.proj.weight.dtype == torch.float32
+    assert torch.equal(policy.backend.proj.weight, saved["backend.proj.weight"])
