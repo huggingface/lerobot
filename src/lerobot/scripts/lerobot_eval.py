@@ -484,7 +484,7 @@ def eval_policy(
         env: The batch of environments.
         policy: The policy.
         n_episodes: The number of episodes to evaluate.
-        max_episodes_rendered: Maximum number of episodes to render into videos.
+        max_episodes_rendered: Maximum number of evaluated episodes to render into videos.
         videos_dir: Where to save rendered videos.
         return_episode_data: Whether to return episode data for online training. Incorporates the data into
             the "episodes" key of the returned dictionary.
@@ -495,6 +495,8 @@ def eval_policy(
     """
     if max_episodes_rendered > 0 and not videos_dir:
         raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
+    # A partial final rollout batch can contain more trajectories than requested.
+    max_episodes_rendered = min(max_episodes_rendered, n_episodes)
 
     # World-model policies (e.g. LingBot-VA) opt into predicted-video saving via their config.
     save_predicted_video = save_predicted_video or bool(
