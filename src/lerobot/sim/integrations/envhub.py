@@ -72,6 +72,15 @@ def _parse_hub_url(hub_uri: str):
     return repo_id, revision, file_path
 
 
+def _split_local_path(cfg_str: str) -> tuple[str, str]:
+    """Split a local `directory[:file_path]` spec without splitting Windows drive letters."""
+    if os.path.isdir(cfg_str):
+        return cfg_str, ""
+    drive, path = os.path.splitdrive(cfg_str)
+    directory, _, local_path = path.partition(":")
+    return drive + directory, local_path
+
+
 def _download_hub_file(
     cfg_str: str,
     trust_remote_code: bool,
@@ -83,7 +92,7 @@ def _download_hub_file(
     they do in a local directory and in a simulator image.
     """
     # A local copy of the repository, e.g. one baked into a simulator Docker image.
-    directory, _, local_path = cfg_str.partition(":")
+    directory, local_path = _split_local_path(cfg_str)
     if not trust_remote_code:
         # A local folder has no commit to pin.
         read = (

@@ -17,6 +17,8 @@
 import builtins
 import contextlib
 import logging
+import ntpath
+import os
 import threading
 import warnings
 from collections.abc import Iterator
@@ -682,3 +684,75 @@ def test_envhub_batched_repository_runs_in_a_worker_process(tmp_path, monkeypatc
         assert env.step(np.zeros((2, 2), np.float32))[4]["task"] == ("reach 1.0", "reach 1.0")
     finally:
         env.close()
+
+
+@pytest.mark.parametrize("filename", ["env.py", "custom.py", "subdir/custom.py"])
+def test_envhub_local_path_with_optional_filename(tmp_path, monkeypatch, filename):
+    target = tmp_path / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_ENVHUB_ENV)
+
+    def no_download(**kwargs):
+        raise AssertionError("A local path must not trigger a Hub download")
+
+    monkeypatch.setattr(envhub, "snapshot_download", no_download)
+    hub_path = str(tmp_path) if filename == "env.py" else f"{tmp_path}:{filename}"
+
+    repo_id, resolved_name, resolved_path, revision = envhub._download_hub_file(hub_path, True, None)
+    assert repo_id == tmp_path.name
+    assert resolved_name == filename
+    assert resolved_path == os.path.join(str(tmp_path), filename)
+    assert revision is None
+
+    with pytest.raises(RuntimeError, match="Refusing to run") as exc_info:
+        envhub._download_hub_file(hub_path, False, None)
+    assert "pin the commit" not in str(exc_info.value)
+
+    if filename == "custom.py":
+        env = LocalVectorEnv(_envhub(hub_path=hub_path))
+        try:
+            assert env.tasks == {"reach_suite": [0]}
+        finally:
+            env.close()
+
+
+def test_envhub_windows_drive_and_unc_paths_cross_platform(monkeypatch):
+    def no_download(**kwargs):
+        raise AssertionError("A local path must not trigger a Hub download")
+
+    monkeypatch.setattr(envhub, "snapshot_download", no_download)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(os.path, "splitdrive", ntpath.splitdrive)
+        mp.setattr(os.path, "isdir", lambda p: False)
+
+        assert envhub._split_local_path(r"C:\envs\reach") == (r"C:\envs\reach", "")
+        assert envhub._split_local_path(r"C:\envs\reach:custom.py") == (r"C:\envs\reach", "custom.py")
+        assert envhub._split_local_path("C:/envs/reach:subdir/custom.py") == (
+            "C:/envs/reach",
+            "subdir/custom.py",
+        )
+        assert envhub._split_local_path(r"C:rel\reach:custom.py") == (r"C:rel\reach", "custom.py")
+        assert envhub._split_local_path(r"\\server\share\envs\reach:custom.py") == (
+            r"\\server\share\envs\reach",
+            "custom.py",
+        )
+        assert envhub._split_local_path(r"\\?\C:\envs\reach:custom.py") == (
+            r"\\?\C:\envs\reach",
+            "custom.py",
+        )
+        assert envhub._split_local_path("user/reach@v1:custom.py") == ("user/reach@v1", "custom.py")
+
+        mp.setattr(os.path, "isdir", lambda p: p == r"C:\envs\reach")
+        for hub_path, expected_name in (
+            (r"C:\envs\reach", "env.py"),
+            (r"C:\envs\reach:custom.py", "custom.py"),
+        ):
+            _, resolved_name, resolved_path, revision = envhub._download_hub_file(hub_path, True, None)
+            assert resolved_name == expected_name
+            assert resolved_path == os.path.join(r"C:\envs\reach", expected_name)
+            assert revision is None
+
+            with pytest.raises(RuntimeError, match="Refusing to run") as exc_info:
+                envhub._download_hub_file(hub_path, False, None)
+            assert "pin the commit" not in str(exc_info.value)
