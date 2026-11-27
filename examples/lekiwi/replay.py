@@ -35,6 +35,7 @@ def main():
     # Fetch the dataset to replay
     dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[EPISODE_IDX])
     actions = dataset.select_columns(ACTION)
+    action_names = dataset.meta.names[ACTION]
 
     # Connect to the robot
     robot.connect()
@@ -49,10 +50,7 @@ def main():
             t0 = time.perf_counter()
 
             # Get recorded action from dataset
-            action = {
-                name: float(actions[idx][ACTION][i])
-                for i, name in enumerate(dataset.features[ACTION]["names"])
-            }
+            action = {name: float(actions[idx][ACTION][i]) for i, name in enumerate(action_names)}
 
             # Send action to robot
             _ = robot.send_action(action)

@@ -46,6 +46,7 @@ from lerobot.policies.groot.processor_groot import (
     GrootN17PackInputsStep,
     GrootN17VLMEncodeStep,
     _make_relative_action_training_stats,
+    _resolve_action_feature_names_from_dataset_meta,
     _transform_n1_7_image_for_vlm_albumentations,
     _transform_n1_7_image_for_vlm_torch,
     make_groot_pre_post_processors,
@@ -3150,3 +3151,14 @@ def test_gr00t_n1_7_model_forward_with_mocked_backbone():
     inference_inputs = {key: value for key, value in inputs.items() if key != "action"}
     action_output = model.get_action(inference_inputs)
     assert action_output["action_pred"].shape == (2, config.action_horizon, config.max_action_dim)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["x", "y", "gripper"], {"motors": ["x", "y", "gripper"]}],
+    ids=["flat", "grouped"],
+)
+def test_resolve_action_feature_names_flattens_grouped_names(names):
+    dataset_meta = SimpleNamespace(features={ACTION: {"shape": (3,), "names": names}})
+    assert _resolve_action_feature_names_from_dataset_meta(dataset_meta) == ["x", "y", "gripper"]
+    assert _resolve_action_feature_names_from_dataset_meta(None) is None

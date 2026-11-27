@@ -233,6 +233,26 @@ def test_property_accessors_reflect_info(tmp_path):
     assert set(meta.image_keys + meta.video_keys) == set(meta.camera_keys)
 
 
+def test_names_flattens_grouped_names(tmp_path):
+    """``names`` flattens grouped names and maps unnamed features and images to None."""
+    features = {
+        **IMAGE_FEATURES,
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": {"motors": ["m0", "m1"]}},
+    }
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/names",
+        fps=DEFAULT_FPS,
+        features=features,
+        robot_type=DUMMY_ROBOT_TYPE,
+        root=tmp_path / "names_ds",
+        use_videos=False,
+    )
+
+    assert meta.names["observation.state"] == ["m0", "m1"]
+    assert meta.names["action"] is None
+    assert meta.names["observation.images.laptop"] is None
+
+
 def test_data_path_is_formattable(tmp_path):
     """data_path contains format placeholders that can be .format()-ed."""
     root = tmp_path / "fmt_ds"

@@ -495,14 +495,13 @@ robot.connect()
 
 dataset = LeRobotDataset("<hf_username>/<dataset_repo_id>", episodes=[episode_idx])
 actions = dataset.select_columns("action")
+action_names = dataset.meta.names["action"]
 
 log_say(f"Replaying episode {episode_idx}")
 for idx in range(dataset.num_frames):
     t0 = time.perf_counter()
 
-    action = {
-        name: float(actions[idx]["action"][i]) for i, name in enumerate(dataset.features["action"]["names"])
-    }
+    action = {name: float(actions[idx]["action"][i]) for i, name in enumerate(action_names)}
     robot.send_action(action)
 
     precise_sleep(max(1.0 / dataset.fps - (time.perf_counter() - t0), 0.0))
