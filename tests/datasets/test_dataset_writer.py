@@ -16,7 +16,7 @@
 """Contract tests for DatasetWriter."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -25,7 +25,7 @@ from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.configs import VideoEncoderConfig
+from lerobot.configs import RGBEncoderConfig, VideoEncoderConfig
 from lerobot.datasets.dataset_writer import _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
@@ -306,3 +306,114 @@ def test_finalize_then_read_roundtrip(tmp_path):
     for i in range(5):
         item = dataset[i]
         assert torch.allclose(item["state"], known_states[i], atol=1e-5)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_interrupted_video_save_does_not_write_episode(tmp_path, streaming):
+    """An encoding interruption must leave no orphaned data rows or episode metadata."""
+    features = {
+        **SIMPLE_FEATURES,
+        "observation.images.camera": {
+            "dtype": "video",
+            "shape": (32, 32, 3),
+            "names": ["height", "width", "channels"],
+        },
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=tmp_path / "ds"
+    )
+    writer = dataset.writer
+    encoder = Mock()
+    encoder.finish_episode.side_effect = KeyboardInterrupt("encoding interrupted")
+    if streaming:
+        writer._streaming_encoder = encoder
+    for _ in range(3):
+        dataset.add_frame(_make_frame(features))
+    try:
+        with (
+            patch.object(writer, "_save_episode_data", wraps=writer._save_episode_data) as save_data,
+            patch.object(dataset.meta, "save_episode", wraps=dataset.meta.save_episode) as save_meta,
+            patch.object(
+                writer,
+                "_encode_temporary_episode_video",
+                side_effect=KeyboardInterrupt("encoding interrupted"),
+            ),
+        ):
+            with pytest.raises(KeyboardInterrupt, match="encoding interrupted"):
+                writer.save_episode(parallel_encoding=False)
+            save_data.assert_not_called()
+            save_meta.assert_not_called()
+            assert dataset.meta.total_episodes == 0
+            assert dataset.meta.total_frames == 0
+            assert not list((tmp_path / "ds" / "data").rglob("*.parquet"))
+    finally:
+        writer._streaming_encoder = None
+        writer.finalize()
+
+
+@pytest.mark.parametrize("saved_episodes", [0, 1])
+def test_interrupted_second_camera_preserves_saved_videos(tmp_path, saved_episodes):
+    """Failed encoding must not create or extend any committed camera video."""
+    camera_keys = ["observation.images.front", "observation.images.wrist"]
+    features = {
+        **SIMPLE_FEATURES,
+        **{
+            key: {"dtype": "video", "shape": (32, 32, 3), "names": ["height", "width", "channels"]}
+            for key in camera_keys
+        },
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", preset="ultrafast"),
+        encoder_threads=1,
+    )
+    writer = dataset.writer
+
+    def add_episode(value: int) -> None:
+        for _ in range(3):
+            frame = _make_frame(features)
+            frame["action"] = torch.full((6,), float(value))
+            for key in camera_keys:
+                frame[key] = np.full((32, 32, 3), value, dtype=np.uint8)
+            dataset.add_frame(frame)
+
+    try:
+        for _ in range(saved_episodes):
+            add_episode(30)
+            writer.save_episode(parallel_encoding=False)
+        video_dir = dataset.root / "videos"
+        saved_videos = {p: p.read_bytes() for p in video_dir.rglob("*.mp4")}
+        encode = writer._encode_temporary_episode_video
+
+        def interrupt_second_camera(video_key: str, episode_index: int) -> Path:
+            if video_key == camera_keys[1]:
+                raise KeyboardInterrupt("second camera interrupted")
+            return encode(video_key, episode_index)
+
+        add_episode(120)
+        with (
+            patch.object(writer, "_encode_temporary_episode_video", side_effect=interrupt_second_camera),
+            pytest.raises(KeyboardInterrupt, match="second camera interrupted"),
+        ):
+            writer.save_episode(parallel_encoding=False)
+
+        assert {p: p.read_bytes() for p in video_dir.rglob("*.mp4")} == saved_videos
+        assert dataset.meta.total_episodes == saved_episodes
+        assert dataset.meta.total_frames == 3 * saved_episodes
+
+        writer.clear_episode_buffer(delete_images=False)
+        add_episode(220)
+        writer.save_episode(parallel_encoding=False)
+        dataset.finalize()
+        assert len(dataset) == 3 * (saved_episodes + 1)
+        for index in range(len(dataset)):
+            expected = 30 if index < 3 * saved_episodes else 220
+            item = dataset[index]
+            assert torch.all(item["action"] == expected)
+            for key in camera_keys:
+                assert item[key].mean().item() == pytest.approx(expected / 255, abs=2 / 255)
+    finally:
+        writer.finalize()
