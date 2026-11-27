@@ -9,9 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
-from types import SimpleNamespace
+from importlib.machinery import ModuleSpec
+from threading import Barrier, Event
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -19,9 +21,20 @@ import torch
 from lerobot.datasets.video_utils import VideoDecoderCache, decode_video_frames_torchcodec
 
 
+@pytest.fixture
+def fake_decoders(monkeypatch):
+    # These tests exercise cache synchronization, not native video decoding.
+    package = ModuleType("torchcodec")
+    package.__spec__ = ModuleSpec("torchcodec", loader=None, is_package=True)
+    decoders = ModuleType("torchcodec.decoders")
+    package.decoders = decoders
+    monkeypatch.setitem(sys.modules, "torchcodec", package)
+    monkeypatch.setitem(sys.modules, "torchcodec.decoders", decoders)
+    return decoders
+
+
 @pytest.mark.parametrize("operation", ["evict", "clear"])
-def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, operation):
-    import torchcodec.decoders
+def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, operation, fake_decoders):
 
     reading = Event()
     resume = Event()
@@ -43,7 +56,7 @@ def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, opera
                 pts_seconds=torch.tensor(indices, dtype=torch.float64) / 30,
             )
 
-    monkeypatch.setattr(torchcodec.decoders, "VideoDecoder", Decoder)
+    monkeypatch.setattr(fake_decoders, "VideoDecoder", Decoder, raising=False)
     paths = [tmp_path / name for name in ("a.mp4", "b.mp4")]
     for path in paths:
         path.write_bytes(b"video")
@@ -65,7 +78,10 @@ def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, opera
                 handle = cache._cache[str(paths[0])][1]
                 mutation = pool.submit(mutate)
                 assert mutation_started.wait(5)
-                assert not mutation_done.wait(0.2)
+                # Eviction and clear must not wait for the reader; they hand
+                # the handle to it instead, so the mutation completes at once
+                # while the file stays open until the read finishes.
+                assert mutation_done.wait(5)
                 assert not handle.closed
             finally:
                 resume.set()
@@ -78,8 +94,7 @@ def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, opera
         cache.clear()
 
 
-def test_decode_error_releases_cache_lock(tmp_path, monkeypatch):
-    import torchcodec.decoders
+def test_decode_error_releases_cache_lock(tmp_path, monkeypatch, fake_decoders):
 
     class Decoder:
         def __init__(self, handle, **kwargs):
@@ -88,7 +103,7 @@ def test_decode_error_releases_cache_lock(tmp_path, monkeypatch):
         def get_frames_at(self, indices):
             raise ValueError("decode failed")
 
-    monkeypatch.setattr(torchcodec.decoders, "VideoDecoder", Decoder)
+    monkeypatch.setattr(fake_decoders, "VideoDecoder", Decoder, raising=False)
     path = tmp_path / "video.mp4"
     path.write_bytes(b"video")
     cache = VideoDecoderCache(max_size=1)
@@ -97,3 +112,36 @@ def test_decode_error_releases_cache_lock(tmp_path, monkeypatch):
     with ThreadPoolExecutor(max_workers=1) as pool:
         pool.submit(cache.clear).result(timeout=5)
     assert cache.size() == 0
+
+def test_distinct_videos_decode_concurrently(tmp_path, monkeypatch, fake_decoders):
+    both_decoding = Barrier(2, timeout=5)
+
+    class Decoder:
+        def __init__(self, handle, **kwargs):
+            self.handle = handle
+            self.metadata = SimpleNamespace(average_fps=30)
+
+        def get_frames_at(self, indices):
+            # A cache-wide lock held for the whole decode keeps the second reader
+            # out and trips the barrier timeout.
+            both_decoding.wait()
+            return SimpleNamespace(
+                data=torch.zeros(len(indices), 3, 2, 2, dtype=torch.uint8),
+                pts_seconds=torch.tensor(indices, dtype=torch.float64) / 30,
+            )
+
+    monkeypatch.setattr(fake_decoders, "VideoDecoder", Decoder, raising=False)
+    paths = [tmp_path / name for name in ("a.mp4", "b.mp4")]
+    for path in paths:
+        path.write_bytes(b"video")
+    cache = VideoDecoderCache(max_size=4)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(decode_video_frames_torchcodec, path, [0.0], 0.01, decoder_cache=cache)
+            for path in paths
+        ]
+        for future in futures:
+            future.result(timeout=10)
+
+    assert cache.size() == 2
