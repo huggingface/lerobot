@@ -464,3 +464,114 @@ def test_actor_side_algorithm_select_action_and_load_weights():
     # Simulate receiving weights from learner
     fake_weights = algorithm.get_weights()
     algorithm.load_weights(fake_weights, device="cpu")
+
+
+def test_resume_preserves_validated_config_and_cli_overrides(tmp_path, monkeypatch):
+    """Regression test for #3584.
+
+    ``train()`` runs ``cfg.validate()`` (which resolves ``checkpoint_path`` from
+    ``--config_path``) and then ``handle_resume_logic(cfg)``. The latter used to reload
+    ``train_config.json`` and return a fresh config, discarding the resolved checkpoint
+    path and every CLI override already applied while parsing the checkpoint config.
+    """
+    from lerobot.configs import parser
+    from lerobot.rl.learner import handle_resume_logic
+
+    pretrained_dir = tmp_path / "checkpoints" / "last" / "pretrained_model"
+    pretrained_dir.mkdir(parents=True)
+
+    # train_config.json written by the original run: batch_size=8, no checkpoint_path.
+    saved_cfg = TrainRLServerPipelineConfig()
+    saved_cfg.policy = GaussianActorConfig()
+    saved_cfg.output_dir = tmp_path
+    saved_cfg.batch_size = 8
+    saved_cfg.save_pretrained(pretrained_dir)
+
+    # Config after parser.wrap() + validate(): loaded from the checkpoint, with a CLI
+    # override applied and checkpoint_path resolved by _resolve_resume_checkpoint().
+    cfg = TrainRLServerPipelineConfig()
+    cfg.policy = GaussianActorConfig()
+    cfg.output_dir = tmp_path
+    cfg.resume = True
+    cfg.batch_size = 32  # simulate --batch_size=32 from the CLI
+    cfg.seed = 123  # simulate --seed=123 from the CLI
+    cfg.policy.device = "cuda"  # simulate --policy.device=cuda from the CLI
+    monkeypatch.setattr(
+        parser,
+        "parse_arg",
+        lambda name: str(pretrained_dir / "train_config.json") if name == "config_path" else None,
+    )
+    cfg._resolve_resume_checkpoint()
+    assert cfg.checkpoint_path == pretrained_dir.parent
+
+    resumed = handle_resume_logic(cfg)
+
+    assert resumed.resume is True
+    assert resumed.checkpoint_path == cfg.checkpoint_path
+    assert resumed.output_dir == cfg.output_dir
+    assert resumed.batch_size == 32
+    assert resumed.seed == 123
+    assert resumed.policy.device == "cuda"
+
+
+def test_resume_uses_resolved_checkpoint_path_not_output_dir(tmp_path):
+    """A resolved ``checkpoint_path`` wins over ``output_dir/checkpoints/last``.
+
+    This mirrors a Hub resume (the checkpoint is downloaded under a fresh output dir) or a
+    caller pointing ``--config_path`` at a checkpoint outside the saved run directory.
+    """
+    from lerobot.rl.learner import handle_resume_logic
+
+    original_run = tmp_path / "original_run"
+    checkpoint_dir = original_run / "checkpoints" / "000010"
+    pretrained_dir = checkpoint_dir / "pretrained_model"
+    pretrained_dir.mkdir(parents=True)
+
+    saved_cfg = TrainRLServerPipelineConfig()
+    saved_cfg.policy = GaussianActorConfig()
+    saved_cfg.output_dir = original_run
+    saved_cfg.batch_size = 8
+    saved_cfg.save_pretrained(pretrained_dir)
+
+    fresh_output_dir = tmp_path / "fresh_output_dir"
+    fresh_output_dir.mkdir()  # deliberately has no checkpoints/last
+
+    cfg = TrainRLServerPipelineConfig()
+    cfg.policy = GaussianActorConfig()
+    cfg.output_dir = fresh_output_dir
+    cfg.checkpoint_path = checkpoint_dir
+    cfg.resume = True
+    cfg.batch_size = 32  # simulate a CLI override
+
+    resumed = handle_resume_logic(cfg)
+
+    assert resumed.resume is True
+    assert resumed.checkpoint_path == checkpoint_dir
+    assert resumed.output_dir == fresh_output_dir
+    assert resumed.batch_size == 32
+
+
+def test_resume_programmatic_fallback_populates_checkpoint_path(tmp_path):
+    """Without ``validate()``, the fallback reload must still populate ``checkpoint_path``."""
+    from lerobot.rl.learner import handle_resume_logic
+
+    checkpoint_dir = tmp_path / "checkpoints" / "last"
+    pretrained_dir = checkpoint_dir / "pretrained_model"
+    pretrained_dir.mkdir(parents=True)
+
+    saved_cfg = TrainRLServerPipelineConfig()
+    saved_cfg.policy = GaussianActorConfig()
+    saved_cfg.output_dir = tmp_path
+    saved_cfg.batch_size = 8
+    saved_cfg.save_pretrained(pretrained_dir)
+
+    cfg = TrainRLServerPipelineConfig()
+    cfg.output_dir = tmp_path
+    cfg.resume = True
+    assert cfg.checkpoint_path is None
+
+    resumed = handle_resume_logic(cfg)
+
+    assert resumed.resume is True
+    assert resumed.checkpoint_path == checkpoint_dir
+    assert resumed.batch_size == 8  # comes from the saved train_config.json

@@ -689,8 +689,18 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
         return cfg
 
     # Case 2: Resuming training
-    checkpoint_dir = os.path.join(out_dir, CHECKPOINTS_DIR, LAST_CHECKPOINT_LINK)
-    if not os.path.exists(checkpoint_dir):
+    if cfg.checkpoint_path is not None:
+        # `validate()` already resolved the exact checkpoint (a local step directory or a Hub
+        # snapshot). It need not live under `cfg.output_dir/checkpoints/last`: Hub resumes
+        # download into a fresh output_dir, and callers may point `--config_path` at a specific
+        # checkpoint.
+        checkpoint_dir = Path(cfg.checkpoint_path)
+    else:
+        # Programmatic caller that did not run `validate()`: fall back to the conventional
+        # last-checkpoint location under output_dir.
+        checkpoint_dir = Path(cfg.output_dir) / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK
+
+    if not checkpoint_dir.exists():
         raise RuntimeError(f"No model checkpoint found in {checkpoint_dir} for resume=True")
 
     # Log that we found a valid checkpoint and are resuming
@@ -702,16 +712,23 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
         )
     )
 
-    # Load config using Draccus
-    checkpoint_cfg_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR, "train_config.json")
-    checkpoint_cfg = TrainRLServerPipelineConfig.from_pretrained(checkpoint_cfg_path)
+    if cfg.checkpoint_path is not None:
+        # `cfg` was already parsed from this checkpoint by `parser.wrap()` (including CLI
+        # overrides) and resolved by `cfg.validate()`. Reloading train_config.json here would
+        # drop checkpoint_path, output_dir and every override; keep the validated config.
+        checkpoint_cfg = cfg
+    else:
+        # Direct/programmatic call without `validate()`: load the saved config as before.
+        checkpoint_cfg_path = checkpoint_dir / PRETRAINED_MODEL_DIR / "train_config.json"
+        checkpoint_cfg = TrainRLServerPipelineConfig.from_pretrained(checkpoint_cfg_path)
 
-    # Keep the caller's tracking settings (including CLI overrides), recovering only the saved run name.
-    checkpoint_cfg.trackio = replace(
-        cfg.trackio, run_name=cfg.trackio.run_name or checkpoint_cfg.trackio.run_name
-    )
+        # Keep the caller's tracking settings (including CLI overrides), recovering only the saved run name.
+        checkpoint_cfg.trackio = replace(
+            cfg.trackio, run_name=cfg.trackio.run_name or checkpoint_cfg.trackio.run_name
+        )
 
-    # Ensure resume flag is set in returned config
+    # Ensure resume flag and the resolved checkpoint path are always populated.
+    checkpoint_cfg.checkpoint_path = checkpoint_dir
     checkpoint_cfg.resume = True
     return checkpoint_cfg
 
