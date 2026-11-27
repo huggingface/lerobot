@@ -82,3 +82,18 @@ def test_prefill_exports_without_concat():
     """The first update must not concatenate onto an empty tensor (that op stops export, e.g. to OpenVINO)."""
     exported = torch.export.export(_Prefill(), _kv(PREFIX, 0))
     assert "aten.cat" not in str(exported.graph)
+
+
+def test_exported_prefill_replays_dynamic_batch_and_prefix():
+    """The exported prefill returns the same keys/values for other batch sizes and prefix lengths."""
+    batch = torch.export.Dim("batch", min=1, max=4)
+    sequence = torch.export.Dim("sequence", min=1, max=16)
+    shapes = ({0: batch, 2: sequence}, {0: batch, 2: sequence})
+    module = torch.export.export(_Prefill(), _kv(PREFIX, 0), dynamic_shapes=shapes).module()
+    for batch_size, prefix_length in [(1, 1), (3, 11), (4, 16)]:
+        g = torch.Generator().manual_seed(100 + prefix_length)
+        k = torch.randn(batch_size, 5, prefix_length, 8, generator=g)
+        v = torch.randn(batch_size, 5, prefix_length, 8, generator=g)
+        out_k, out_v = module(k, v)
+        torch.testing.assert_close(out_k, k, rtol=0, atol=0)
+        torch.testing.assert_close(out_v, v, rtol=0, atol=0)
