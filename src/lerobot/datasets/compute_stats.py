@@ -775,22 +775,42 @@ def compute_relative_action_stats(
     running_stats = RunningQuantileStats()
 
     if num_workers > 1:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from collections import deque
+        from concurrent.futures import Future, ThreadPoolExecutor
 
+        # Bound the number of materialized action chunks and reduce in dataset order.
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            futures = [
-                pool.submit(
-                    _compute_relative_chunk_batch,
-                    batch,
-                    all_actions,
-                    all_states,
-                    chunk_size,
-                    relative_mask,
-                )
-                for batch in batches
-            ]
-            for future in as_completed(futures):
-                running_stats.update(future.result())
+            pending: deque[Future[np.ndarray]] = deque()
+            batch_iterator = iter(batches)
+            max_pending = 2 * num_workers
+
+            def fill_pending() -> None:
+                while len(pending) < max_pending:
+                    batch = next(batch_iterator, None)
+                    if batch is None:
+                        break
+                    pending.append(
+                        pool.submit(
+                            _compute_relative_chunk_batch,
+                            batch,
+                            all_actions,
+                            all_states,
+                            chunk_size,
+                            relative_mask,
+                        )
+                    )
+
+            try:
+                fill_pending()
+                while pending:
+                    future = pending.popleft()
+                    running_stats.update(future.result())
+                    del future
+                    fill_pending()
+            finally:
+                # On failure, leave only already-running work for executor shutdown.
+                while pending:
+                    pending.popleft().cancel()
     else:
         for batch in batches:
             running_stats.update(
