@@ -132,8 +132,10 @@ class VLMToLAMQFormer(nn.Module):
         for norm_q, norm_kv, xattn, ffn in zip(
             self.norm_qs, self.norm_kvs, self.cross_attns, self.ffns, strict=True
         ):
-            q = norm_q(queries)
-            kv = norm_kv(context)
+            # Without autocast nothing casts bfloat16 inputs for a float32 head. Cast up, never down, at the
+            # norm inputs, as CUDA autocast does, so nothing changes under CUDA autocast.
+            q = norm_q(queries.to(dtype=torch.promote_types(queries.dtype, self.query.dtype)))
+            kv = norm_kv(context.to(dtype=torch.promote_types(context.dtype, self.query.dtype)))
             attn_out, _ = xattn(q, kv, kv)
             queries = queries + attn_out
             queries = queries + ffn(queries)
