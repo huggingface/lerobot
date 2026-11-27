@@ -35,7 +35,7 @@ from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
 from lerobot.policies.fastwam.wan import LiteKVFusion
-from lerobot.utils.constants import ACTION, NOISE, PREDICTION
+from lerobot.utils.constants import ACTION, NOISE
 
 DOT_FLAGS = {
     "action_expert_layers": 1,
@@ -286,12 +286,12 @@ def test_predicted_video_pairs_frames_with_unchanged_actions(offline_components,
     expected = rollout(False)
     outputs = rollout(True)
 
-    assert all(PREDICTION not in output for output in expected)
+    assert all(output.keys() == {ACTION} for output in expected)
     for output, reference in zip(outputs, expected, strict=True):
         torch.testing.assert_close(output[ACTION], reference[ACTION], rtol=0, atol=0)
         # Of the 4 executed actions, the first and the third start a new predicted frame.
-        assert output[PREDICTION]["observation_steps"] == [0, 2]
-        frames = output[PREDICTION]["observation"]["observation.images.image"]
+        assert output["prediction.images.image_steps"] == [0, 2]
+        frames = output["prediction.images.image"]
         assert frames.shape == (1, 2, 3, 16, 32)
         assert frames.dtype == torch.uint8
         assert frames.unique().numel() > 1

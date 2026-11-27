@@ -50,7 +50,7 @@ from .contracts import (
 )
 from .execution import ChunkRuntime, HoldState
 from .history import ExecutionRecord, apply_history, policy_history, recorded_names, rename_history
-from .prediction import chunk_inference_context, predict_chunk
+from .prediction import chunk_inference_context, predict_chunk, rename_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,7 @@ class RTCInferenceEngine(InferenceEngine):
                 if isinstance(step, RenameObservationsProcessorStep)
             ),
         )
+        self._recorded_names = recorded
         canonical_dim = self._canonical_action_dim
         self._record = ExecutionRecord(
             rename_history(policy_history(policy.config), recorded),
@@ -699,7 +700,9 @@ class RTCInferenceEngine(InferenceEngine):
                     canonical_actions=processed,
                     execution_steps=len(processed),
                     provenance=ActionProvenance(capture_time, task, task_version),
-                    prediction=prediction.prediction,
+                    prediction=rename_prediction(prediction.prediction, self._recorded_names)
+                    if prediction.prediction
+                    else None,
                 )
                 with self._task_lock:
                     accepted = self._runtime.accept(request, chunk, task_version=self._task_version)

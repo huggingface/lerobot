@@ -54,7 +54,7 @@ from .history import (
     rename_history,
 )
 from .policy_runner import PolicyRunner
-from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk
+from .prediction import ChunkPrediction, chunk_inference_context, predict_chunk, rename_prediction
 from .rtc import RTCInferenceEngine, supports_rtc_inference, validate_local_chunk_policy
 from .sync import SyncInferenceEngine
 
@@ -101,6 +101,7 @@ __all__ = [
     "next_interpolated_action",
     "policy_history",
     "predict_chunk",
+    "rename_prediction",
     "rename_history",
     "supports_rtc_inference",
     "trained_overlap_valid",

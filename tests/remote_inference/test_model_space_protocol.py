@@ -15,7 +15,7 @@
 """Exercise separate model/canonical widths through the complete encoded RPC boundary."""
 
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -25,6 +25,7 @@ import torch
 
 pytest.importorskip("msgpack")
 
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.inference import ChunkRequest, ExecutionMode, RemoteInferenceConfig
 from lerobot.policies.rtc.action_queue import QueueSnapshot
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -37,6 +38,7 @@ from lerobot.transport.zenoh import BoundedSubscriber
 from tests.inference.policy_helpers import (
     ConformingPolicy,
     PaddedPolicy,
+    SubtaskConfig,
     make_runner,
     observation,
     tiny_config,
@@ -222,3 +224,46 @@ def test_continuation_width_mismatch_is_rejected_before_policy_execution(worker,
     assert error.value.code is ErrorCode.MALFORMED
     assert worker.runner.policy.last_kwargs == {}
     client.close()
+
+
+@dataclass
+class FramesConfig(SubtaskConfig):
+    """A config whose policy predicts a subtask and frames of the top camera."""
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        frames = PolicyFeature(type=FeatureType.VISUAL, shape=(3, 2, 2))
+        return {**super().prediction_features, "prediction.images.top": frames}
+
+
+class PredictingPolicy(ConformingPolicy):
+    """Predicts a subtask and two frames of its chunk besides the actions."""
+
+    name = "predicting_remote"
+    frames = torch.arange(2.0).reshape(1, 2, 1, 1, 1).expand(1, 2, 3, 2, 2).contiguous()
+
+    def predict_action_chunk(self, batch):
+        return {
+            **super().predict_action_chunk(batch),
+            "prediction.subtask": ["reach"],
+            "prediction.images.top": self.frames,
+            "prediction.images.top_steps": [0, 2],
+        }
+
+
+def test_the_prediction_crosses_the_wire_with_its_chunk():
+    config = FramesConfig(**vars(tiny_config()))
+    runner = make_runner(PredictingPolicy(config), padded=False, language_enabled=False)
+    runner.predict(observation())
+    runner.reset()
+    worker = SessionWorker(runner, deployment="test", artifact_identity="artifact", semantics="radians")
+    try:
+        client = client_for(worker, mode="chunk", chunk_merge="append")
+        admit(client)
+        chunk = client.infer(action_request(mode=ExecutionMode.CHUNK))
+        assert chunk.prediction["prediction.subtask"] == ["reach"]
+        assert chunk.prediction["prediction.images.top_steps"] == [0, 2]
+        torch.testing.assert_close(chunk.prediction["prediction.images.top"], PredictingPolicy.frames)
+        client.close()
+    finally:
+        worker.close()

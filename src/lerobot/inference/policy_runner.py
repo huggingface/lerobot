@@ -310,6 +310,7 @@ class PolicyRunner:
                 observation_id=observation.observation_id,
             ),
             execution_steps=len(canonical),
+            prediction=prediction.prediction,
             server_durations={
                 "preprocessing": preprocessed_at - started,
                 "policy": prediction.predicted_at - preprocessed_at,

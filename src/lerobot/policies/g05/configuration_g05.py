@@ -16,7 +16,7 @@ from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, PREDICTION_BOXES, PREDICTION_PREFIX
 
 
 def _bbox_binding(camera: str) -> str:
@@ -472,6 +472,19 @@ class G05Config(PreTrainedConfig):
     def camera_keys(self) -> tuple[str, ...]:
         """The camera slots as observation keys; `__post_init__` names the empty ones."""
         return tuple(key for key in self.camera_order if key is not None)
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        """System 2's chain of thought: its subtask and its boxes on :attr:`bbox_camera`."""
+        if self.runtime_system != "system2":
+            return {}
+        features = {}
+        if "subtask" in self.runtime_cot_fields:
+            features[PREDICTION_PREFIX + "subtask"] = PolicyFeature(type=FeatureType.LANGUAGE, shape=())
+        if "bbox" in self.runtime_cot_fields:
+            camera = self.bbox_camera.removeprefix(OBS_IMAGES + ".")
+            features[f"{PREDICTION_BOXES}.{camera}"] = PolicyFeature(type=FeatureType.LANGUAGE, shape=())
+        return features
 
     @property
     def bbox_camera(self) -> str:

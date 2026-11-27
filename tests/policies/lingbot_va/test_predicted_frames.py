@@ -22,8 +22,8 @@ from types import SimpleNamespace
 
 import torch
 
+from lerobot.policies.lingbot_va.configuration_lingbot_va import LingBotVAConfig
 from lerobot.policies.lingbot_va.modeling_lingbot_va import LingBotVAPolicy
-from lerobot.utils.constants import ACTION, PREDICTION
 
 CAMS = ["observation.images.image", "observation.images.image2"]
 
@@ -63,13 +63,14 @@ def _predict(chunk_len: int, n_frames: int, *, video: bool = True):
 
 def test_chunk_carries_its_imagined_clip_per_camera():
     out, actions = _predict(chunk_len=8, n_frames=4)
-    assert out[ACTION] is actions
-    prediction = out[PREDICTION]
-    # 4 imagined frames over 8 actions: a new frame every 2 actions.
-    assert prediction["observation_steps"] == [0, 2, 4, 6]
-    assert list(prediction["observation"]) == CAMS
-    for camera, offset in zip(CAMS, (0, 100), strict=True):
-        frames = prediction["observation"][camera]
+    assert out["action"] is actions
+    keys = ["prediction.images.image", "prediction.images.image2"]
+    assert set(out) == {"action", *keys, *(key + "_steps" for key in keys)}
+    assert set(keys) == set(LingBotVAConfig.prediction_features.fget(_policy().config))
+    for key, offset in zip(keys, (0, 100), strict=True):
+        # 4 imagined frames over 8 actions: a new frame every 2 actions.
+        assert out[key + "_steps"] == [0, 2, 4, 6]
+        frames = out[key]
         assert frames.shape == (2, 4, 3, 2, 2)  # [B, F, C, H, W]
         assert frames[0, :, 0, 0, 0].tolist() == [offset + f for f in range(4)]  # its own camera
         assert torch.equal(frames[1].int(), frames[0].int() + 10)  # each env its own frames
@@ -77,45 +78,9 @@ def test_chunk_carries_its_imagined_clip_per_camera():
 
 def test_more_frames_than_actions_stay_within_the_chunk():
     out, _ = _predict(chunk_len=2, n_frames=4)
-    assert out[PREDICTION]["observation_steps"] == [0, 1, 1, 1]
+    assert out["prediction.images.image_steps"] == [0, 1, 1, 1]
 
 
-def test_without_predicted_video_returns_the_chunk_alone():
+def test_without_predicted_video_returns_only_the_chunk():
     out, actions = _predict(chunk_len=8, n_frames=4, video=False)
-    assert out == {ACTION: actions}
-
-
-def test_robotwin_frames_split_back_into_head_and_wrists():
-    # T-shape: half-res left|right wrists on top of the full-res head.
-    policy = _policy()
-    policy.config.obs_cam_keys = ["head", "left", "right"]
-    policy.config.height, policy.config.width = 4, 4
-    policy.config.camera_layout = "robotwin_tshape"
-    frames = torch.zeros(2, 3, 6, 4)
-    frames[:, :, :2, :2], frames[:, :, :2, 2:], frames[:, :, 2:] = 1, 2, 3
-    views = LingBotVAPolicy._split_cameras(policy, frames)
-    assert {k: (tuple(v.shape), int(v.unique())) for k, v in views.items()} == {
-        "head": ((2, 3, 4, 4), 3),
-        "left": ((2, 3, 2, 2), 1),
-        "right": ((2, 3, 2, 2), 2),
-    }
-
-
-def test_decoded_clip_keeps_every_env_and_eval_keeps_the_first():
-    # A fake VAE whose decode returns env-distinct videos in [-1, 1].
-    video = torch.stack([torch.full((3, 2, 4, 4), -1.0), torch.full((3, 2, 4, 4), 1.0)])  # [B, C, F, H, W]
-    vae = SimpleNamespace(
-        config=SimpleNamespace(z_dim=1, latents_mean=[0.0], latents_std=[1.0]),
-        dtype=torch.float32,
-        parameters=lambda: iter([torch.zeros(1)]),
-        decode=lambda latents, return_dict: (video,),
-    )
-    policy = SimpleNamespace(_vae=vae)
-    policy._decode_video_batch = lambda latents: LingBotVAPolicy._decode_video_batch(policy, latents)
-    latents = torch.zeros(2, 1, 1, 1, 1)
-
-    clip = LingBotVAPolicy._decode_video_batch(policy, latents)
-    assert clip.shape == (2, 2, 4, 4, 3) and clip.dtype == torch.uint8  # [B, T, H, W, 3]
-    assert int(clip[0].max()) == 0 and int(clip[1].min()) == 255
-    # lerobot-eval's saved predicted video still decodes the first env only.
-    torch.testing.assert_close(LingBotVAPolicy._decode_predicted_video(policy, latents), clip[0])
+    assert out == {"action": actions}

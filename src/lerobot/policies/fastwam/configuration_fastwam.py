@@ -30,7 +30,7 @@ from lerobot.configs import (
 from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_PREFIX, OBS_STATE, PREDICTION_PREFIX
 
 WAN22_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B"
 WAN22_DIFFUSERS_MODEL_ID = "Wan-AI/Wan2.2-TI2V-5B-Diffusers"
@@ -504,6 +504,21 @@ class FastWAMConfig(PreTrainedConfig):
         """Number of video frames the model actually operates on, after subsampling the
         raw `num_video_frames` window by `action_video_freq_ratio` (e.g. 33 -> 9)."""
         return (self.num_video_frames - 1) // self.action_video_freq_ratio + 1
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        """The predicted frames per camera with ``return_predicted_video``, a slice of the canvas."""
+        if not self.return_predicted_video or not self.image_features:
+            return {}
+        height, width = self.image_size
+        cameras = sorted(self.image_features)
+        shape = (3, int(height), int(width) // len(cameras))
+        return {
+            PREDICTION_PREFIX + camera.removeprefix(OBS_PREFIX): PolicyFeature(
+                type=FeatureType.VISUAL, shape=shape
+            )
+            for camera in cameras
+        }
 
     @property
     def training_sampler(self) -> TrainingSampler:

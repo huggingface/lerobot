@@ -291,49 +291,63 @@ For working examples, see [`processor_evo1.py`](https://github.com/huggingface/l
 
 ### Returning a prediction besides actions (imagined frames, subtasks, boxes)
 
-A policy may return what it expects or believes besides the action it takes, such as a world
-model's imagined frames, a predicted subtask or bounding boxes, so `--display_data` shows it live in
-Rerun or Foxglove. `predict_action_chunk` always returns a `PolicyOutput` (`lerobot.lerobot_types`):
-a batch with the chunk under `"action"` and, optionally, a `PolicyPrediction` under `"prediction"`.
-The prediction is batched like
-the action, one value per environment and one per chunk, and every entry is keyed by what it refers
-to:
+A policy may return what it predicts besides the action it decides, such as a world model's
+imagined frames, a subtask or bounding boxes, so `--display_data` shows it live in Rerun or
+Foxglove. `predict_action_chunk` always returns a batch: the chunk under `"action"`, plus
+`prediction.*` keys. Inputs are what was recorded (`observation.*`), outputs are what the policy
+decides (`action`) and what it predicts (`prediction.*`), so no key is both. Each prediction holds
+one value per environment and has its own key, shape and meaning:
 
-- `observation`: the predicted future observation, by observation key
-  (`"observation.images.top"` -> `[B, C, H, W]` frames). It is shown as `prediction.images.top`.
-  Frames predicted for several actions of the chunk are stacked `[B, F, C, H, W]`, with the chunk
-  index of each frame, ascending, in the prediction's `"observation_steps"`.
-- `language`: one string per environment, by annotation style (`"subtask"`, `"plan"`, `"memory"`),
-  the styles of the annotation pipeline's language columns. It is shown as `prediction.subtask`.
-- `boxes`: by the observation image key they are drawn on, one bbox answer per environment in the
-  annotation VQA schema (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions
-  0 to 1).
+- `prediction.images.<camera>`: frames, `[B, C, H, W]`, at the policy's own resolution, shown next
+  to `observation.images.<camera>`.
+- `prediction.<style>`: one string per environment, by annotation style (`subtask`, `plan`,
+  `memory`), the styles of the annotation pipeline's language columns.
+- `prediction.boxes.<camera>`: one bbox answer per environment in the annotation VQA schema
+  (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions 0 to 1), drawn over
+  `observation.images.<camera>`.
 
-`SyncInferenceEngine.prediction` holds the prediction on the tick that starts its chunk. The
-viewers show the first environment.
+A value predicted at several actions of the chunk stacks them on axis 1 (`[B, F, C, H, W]`), with
+the chunk index of each under `"{key}_steps"`, ascending. Declare what your policy predicts in its
+config's `prediction_features` (frames as `VISUAL` with their `(C, H, W)`, language and boxes as
+`LANGUAGE`). Runners reject undeclared keys, carry predictions to remote clients, and hand each
+part out with the action it belongs to. The viewers show the first environment.
 
 ```python
-from lerobot.utils.constants import ACTION, PREDICTION
+from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.utils.constants import ACTION
+
+
+class MyConfig(PreTrainedConfig):
+    return_prediction: bool = False  # a config field of your choosing
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        if not self.return_prediction:
+            return {}
+        return {
+            "prediction.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 128, 128)),
+            "prediction.subtask": PolicyFeature(type=FeatureType.LANGUAGE, shape=()),
+            "prediction.boxes.top": PolicyFeature(type=FeatureType.LANGUAGE, shape=()),
+        }
 
 
 class MyPolicy(PreTrainedPolicy):
     def predict_action_chunk(self, batch) -> PolicyOutput:
         chunk, extras = self.model.sample(batch)  # chunk: [B, chunk_size, action_dim]
-        if not self.config.return_prediction:  # a config field of your choosing
+        if not self.config.return_prediction:
             return {ACTION: chunk}
-        prediction = {
-            "observation": {"observation.images.top": extras.next_frames},  # [B, C, H, W]
-            "language": {"subtask": extras.subtasks},  # list[str], one per env
-            "boxes": {
-                "observation.images.top": [
-                    {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
-                ]
-            },
+        return {
+            ACTION: chunk,
+            "prediction.images.top": extras.frames,  # [B, F, 3, 128, 128]
+            "prediction.images.top_steps": extras.frame_steps,  # e.g. [0, 4, 8, 12]
+            "prediction.subtask": extras.subtasks,  # list[str], one per env
+            "prediction.boxes.top": [
+                {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
+            ],
         }
-        return {ACTION: chunk, PREDICTION: prediction}
 ```
 
-- Each entry stays displayed until it is returned again. Return empty `detections` to clear a
+- Each value stays displayed until it is returned again. Return empty `detections` to clear a
   camera's boxes.
 - Predicting is opt-in through your policy's config, and should cost nothing when disabled.
 - A prediction never changes the actions, and only the action goes through the postprocessor. Text

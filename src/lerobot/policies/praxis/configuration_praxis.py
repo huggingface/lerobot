@@ -23,11 +23,11 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.sampling import FrameSampler, TrainingSampler
-from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import PraxisAdamWConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.policies.praxis.praxis_core.robot_io import contiguous_chunk_geometry
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_PREFIX, OBS_STATE, PREDICTION_PREFIX
 
 #: The praxis action row: the DROID Cartesian pose and the gripper, in the Franka flange frame.
 PRAXIS_ACTION_NAMES: tuple[str, ...] = ("x", "y", "z", "roll", "pitch", "yaw", "gripper")
@@ -363,6 +363,22 @@ class PraxisConfig(PreTrainedConfig):
         `examples/praxis/select_droid_episodes.py`.
         """
         return self.window_frames
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        """The predicted frame of every command per camera with ``return_prediction``, one tile each."""
+        if not self.return_prediction:
+            return {}
+        from lerobot.policies.praxis.praxis_core.checkpoint import model_variant
+
+        tile_h, tile_w = model_variant(self.model_config).tile_size
+        shape = (3, int(tile_h), int(tile_w))
+        return {
+            PREDICTION_PREFIX + key.removeprefix(OBS_PREFIX): PolicyFeature(
+                type=FeatureType.VISUAL, shape=shape
+            )
+            for key in self.image_keys
+        }
 
     @property
     def training_sampler(self) -> TrainingSampler:

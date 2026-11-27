@@ -14,6 +14,7 @@
 
 """Small policies and real processor pipelines for inference contract tests."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
@@ -28,6 +29,19 @@ from lerobot.policies.evo1.processor_evo1 import Evo1ActionProcessorStep
 from lerobot.policies.pretrained import PreTrainedPolicy, rtc_inputs
 from lerobot.processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE, QUERY_KIND, QUERY_TEXT
+
+
+@dataclass
+class SubtaskConfig(ACTConfig):
+    """A config whose policy also predicts a subtask."""
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        return {"prediction.subtask": PolicyFeature(type=FeatureType.LANGUAGE, shape=())}
+
+
+def subtask_config(**kwargs) -> SubtaskConfig:
+    return SubtaskConfig(**vars(tiny_config(**kwargs)))
 
 
 def tiny_config(**kwargs):

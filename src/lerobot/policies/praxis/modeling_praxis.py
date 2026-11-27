@@ -55,7 +55,10 @@ from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
+    OBS_PREFIX,
     OBS_STATE,
+    PREDICTION_PREFIX,
+    STEPS_SUFFIX,
 )
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import require_package
@@ -987,7 +990,7 @@ class PraxisPolicy(PreTrainedPolicy):
         episode reads the current frame only.
 
         With ``return_prediction`` the output also holds the predicted frame of every command
-        per camera, ``(B, rows, 3, tile_h, tile_w)`` uint8.
+        per camera, ``prediction.images.<camera>`` ``(B, rows, 3, tile_h, tile_w)`` uint8.
         """
         self.eval()
         self._push_observations(batch)
@@ -1007,11 +1010,12 @@ class PraxisPolicy(PreTrainedPolicy):
             return PolicyOutput(action=action)
         canvas = torch.from_numpy(np.stack(predicted))  # (B, F, 3, h, w)
         width = canvas.shape[-1] // len(self._camera_keys)
-        views = {key: canvas[..., v * width : (v + 1) * width] for v, key in enumerate(self._camera_keys)}
-        return PolicyOutput(
-            action=action,
-            prediction={"observation": views, "observation_steps": list(range(canvas.shape[1]))},
-        )
+        output: PolicyOutput = {ACTION: action}
+        for v, camera in enumerate(self._camera_keys):
+            key = PREDICTION_PREFIX + camera.removeprefix(OBS_PREFIX)
+            output[key] = canvas[..., v * width : (v + 1) * width]
+            output[key + STEPS_SUFFIX] = list(range(canvas.shape[1]))
+        return output
 
     # ------------------------------------------------------------------
     # Session mechanics

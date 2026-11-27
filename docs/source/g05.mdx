@@ -110,20 +110,19 @@ lerobot-rollout \
 ```
 
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`. Its chain of thought comes back as the policy's prediction:
-`predict_action_chunk` returns a `PolicyOutput` batch holding the chunk under
-`"action"` and, under `"prediction"`, each env's CoT subtask (`language["subtask"]`,
-one string per env) and boxes as [0, 1] xyxy fractions on
-`policy.config.bbox_camera` (`boxes[camera]`, one answer per env), once per
-chunk. The model names
-no camera: its BBox targets are all drawn on that camera during training. System 1
-generates no CoT and returns bare actions.
+`predict_cot=true`. Its chain of thought comes back with the chunk, once per
+chunk: `predict_action_chunk` returns the chunk under `"action"`, each env's CoT
+subtask under `prediction.subtask` (one string per env) and its boxes as [0, 1]
+xyxy fractions on `policy.config.bbox_camera` under `prediction.boxes.<camera>`
+(one answer per env). The model names no camera: its BBox targets are all drawn
+on that camera during training. System 1 generates no CoT and returns the chunk
+alone.
 
 ```python
 output = policy.predict_action_chunk(batch)
-print(output["prediction"])
-# {"language": {"subtask": ["grasp the cup"]},
-#  "boxes": {"observation.images.top": [{"detections": [{"label": "cup", "bbox": [...]}]}]}}
+print({key: value for key, value in output.items() if key != "action"})
+# {"prediction.subtask": ["grasp the cup"],
+#  "prediction.boxes.top": [{"detections": [{"label": "cup", "bbox": [...]}]}]}
 ```
 
 With `--display_data=true`, `lerobot-rollout` shows the subtask and draws the

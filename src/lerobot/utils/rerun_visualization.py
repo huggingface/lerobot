@@ -24,11 +24,22 @@ import numbers
 import os
 
 import numpy as np
+import torch
 
 from lerobot.configs import DEPTH_MILLIMETER_UNIT, infer_depth_unit
 from lerobot.lerobot_types import PolicyPrediction, RobotAction, RobotObservation
 
-from .constants import ACTION, ACTION_PREFIX, OBS_IMAGES, OBS_PREFIX, OBS_STR, PREDICTION
+from .constants import (
+    ACTION,
+    ACTION_PREFIX,
+    OBS_IMAGES,
+    OBS_PREFIX,
+    OBS_STR,
+    PREDICTED_ACTION,
+    PREDICTION,
+    PREDICTION_BOXES,
+    STEPS_SUFFIX,
+)
 from .import_utils import require_package
 
 logger = logging.getLogger(__name__)
@@ -180,44 +191,45 @@ def _log_prediction(
     text_paths: set[str],
     compress_images: bool,
 ) -> None:
-    """Log the first environment of a policy's prediction, named after what it predicts.
+    """Log the first environment of a policy's prediction under its ``prediction.*`` keys.
 
-    A predicted ``observation.images.top`` is logged as ``prediction.images.top`` and predicted
-    language as ``prediction.<style>``. Boxes are logged under their camera's entity instead, so they
-    draw over its image.
+    Frames (``prediction.images.top``) and values are logged as they are named, language
+    (``prediction.subtask``) in text panels, and boxes (``prediction.boxes.top``) under their
+    camera's entity instead, so they draw over its image.
     """
-    for key, value in prediction.get("observation", {}).items():
-        path = f"{PREDICTION}.{key.removeprefix(OBS_PREFIX)}"
-        arr = value[0].numpy(force=True)
-        if arr.ndim == 1:
-            rr.log(path, rr.Scalars(arr.astype(float)))
-            observation_paths.add(path)
-        else:
-            _log_image(rr, path, arr, image_paths, compress_images)
-    for style, texts in prediction.get("language", {}).items():
-        text = texts[0]
-        path = f"{PREDICTION}.{style}"
-        rr.log(path, rr.TextDocument(text))
-        text_paths.add(path)
-    for camera_key, answers in prediction.get("boxes", {}).items():
-        answer = answers[0]
-        camera = _camera_entity(camera_key)
-        if camera is None:
-            logger.debug("Skipping predicted boxes: camera %r was not logged", camera_key)
+    for key, value in prediction.items():
+        if key == PREDICTED_ACTION or key.endswith(STEPS_SUFFIX):
             continue
-        height, width = _IMAGE_SIZES[camera]
-        detections = answer["detections"]
-        boxes = np.asarray([d["bbox"] for d in detections], dtype=float).reshape(-1, 4)
-        boxes = boxes * (width, height, width, height)
-        # Under the camera's entity so they draw over its image; no detections clears them.
-        entity = f"{camera}/{PREDICTION}"
-        if len(boxes):
-            labels = [d["label"] for d in detections]
-            rr.log(
-                entity, rr.Boxes2D(array=boxes, array_format=rr.Box2DFormat.XYXY, labels=labels), static=True
-            )
+        if key.startswith(PREDICTION_BOXES + "."):
+            _log_predicted_boxes(rr, key.removeprefix(PREDICTION_BOXES + "."), value[0])
+        elif isinstance(value, torch.Tensor):
+            arr = value[0].numpy(force=True)
+            if arr.ndim == 1:
+                rr.log(key, rr.Scalars(arr.astype(float)))
+                observation_paths.add(key)
+            else:
+                _log_image(rr, key, arr, image_paths, compress_images)
         else:
-            rr.log(entity, rr.Clear(recursive=False), static=True)
+            rr.log(key, rr.TextDocument(str(value[0])))
+            text_paths.add(key)
+
+
+def _log_predicted_boxes(rr, camera_name: str, answer) -> None:
+    """Draw a ``BboxAnswer`` over the camera it is on, or clear it when it has no detections."""
+    camera = _camera_entity(camera_name)
+    if camera is None:
+        logger.debug("Skipping predicted boxes: camera %r was not logged", camera_name)
+        return
+    height, width = _IMAGE_SIZES[camera]
+    detections = answer["detections"]
+    boxes = np.asarray([d["bbox"] for d in detections], dtype=float).reshape(-1, 4)
+    boxes = boxes * (width, height, width, height)
+    entity = f"{camera}/{PREDICTION}"
+    if len(boxes):
+        labels = [d["label"] for d in detections]
+        rr.log(entity, rr.Boxes2D(array=boxes, array_format=rr.Box2DFormat.XYXY, labels=labels), static=True)
+    else:
+        rr.log(entity, rr.Clear(recursive=False), static=True)
 
 
 def log_rerun_data(
@@ -247,9 +259,9 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
-        prediction: An optional `PolicyPrediction`, of which the first environment is logged, named
-            after what it predicts: a predicted ``observation.images.top`` as ``prediction.images.top``,
-            language as ``prediction.<style>`` in text panels, and boxes over the camera they are on.
+        prediction: An optional `PolicyPrediction`, of which the first environment is logged under
+            its ``prediction.*`` keys: frames as images, language in text panels, and boxes over the
+            camera they are on.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")

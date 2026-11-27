@@ -32,7 +32,7 @@ from lerobot.configs.sampling import FrameSampler, TrainingSampler
 from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_PREFIX, PREDICTION_PREFIX
 
 
 @PreTrainedConfig.register_subclass("lingbot_va")
@@ -96,11 +96,13 @@ class LingBotVAConfig(PreTrainedConfig):
     # (un)normalization quantiles live in the checkpoint's ``policy_postprocessor.json``, not here.
     used_action_channel_ids: list[int] = field(default_factory=lambda: list(range(7)))
 
-    # Opt-in: VAE-decode predicted video latents to ``self.last_predicted_frames`` for saving MP4s.
+    # Removed: predicted video comes back with the chunk (``return_predicted_video``). Declared only so
+    # configs written before still parse (draccus rejects keys the dataclass no longer declares);
+    # setting it raises.
     save_predicted_video: bool = False
-    # Opt-in: VAE-decode each chunk's predicted video and return, with each action, the imagined
-    # frame it belongs to (``observation.images.predicted``), shown live by ``--display_data``.
-    # Costs one VAE decode per chunk.
+    # Opt-in: VAE-decode each chunk's predicted video and return it per camera as
+    # ``prediction.images.<camera>``, its frames spread over the chunk's actions, shown live by
+    # ``--display_data``. Costs one VAE decode per chunk.
     return_predicted_video: bool = False
 
     # Normalization: IDENTITY here; images are scaled + VAE-encoded and actions are
@@ -123,6 +125,11 @@ class LingBotVAConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+        if self.save_predicted_video:
+            raise ValueError(
+                "`save_predicted_video` was removed: use `--policy.return_predicted_video=true` with "
+                "`--display_data=true` to show the predicted video next to each camera."
+            )
         if self.attn_mode not in ("torch", "flashattn", "flex"):
             raise ValueError(f"attn_mode must be one of 'torch', 'flashattn', 'flex'; got {self.attn_mode!r}")
         if self.dtype not in {torch.bfloat16, torch.float16, torch.float32}:
@@ -190,3 +197,19 @@ class LingBotVAConfig(PreTrainedConfig):
         # (see ``LingBotVAPolicy.predict_action_chunk``).
         window = range(self.frame_stride - self.chunk_size, 1, self.frame_stride)
         return Deltas(observation=dict.fromkeys(self.obs_cam_keys, window))
+
+    @property
+    def prediction_features(self) -> dict[str, PolicyFeature]:
+        """The imagined clip per camera with ``return_predicted_video``, at the VAE's resolution."""
+        if not self.return_predicted_video:
+            return {}
+        h, w = self.height, self.width
+        shapes = [(3, h, w)] * len(self.obs_cam_keys)
+        if self.camera_layout == "robotwin_tshape":  # the head, then two half-size wrists
+            shapes = [(3, h, w), (3, h // 2, w // 2), (3, h // 2, w // 2)]
+        return {
+            PREDICTION_PREFIX + key.removeprefix(OBS_PREFIX): PolicyFeature(
+                type=FeatureType.VISUAL, shape=shape
+            )
+            for key, shape in zip(self.obs_cam_keys, shapes, strict=True)
+        }

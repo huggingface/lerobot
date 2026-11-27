@@ -49,7 +49,7 @@ from .base import InferenceEngine, InferenceRobot, PolicyQuery
 from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
 from .execution import ChunkRuntime
 from .history import ExecutionRecord, apply_history, policy_history, recorded_names, rename_history
-from .prediction import chunk_inference_context, predict_chunk
+from .prediction import chunk_inference_context, predict_chunk, rename_prediction
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ class SyncInferenceEngine(InferenceEngine):
                 if isinstance(step, RenameObservationsProcessorStep)
             ),
         )
+        self._recorded_names = names
         action_feature = (getattr(policy.config, "output_features", None) or {}).get(ACTION)
         self._action_dim = action_feature.shape[0] if action_feature is not None else None
         self._model_action_dim: int | None = None
@@ -244,7 +245,9 @@ class SyncInferenceEngine(InferenceEngine):
             canonical_actions=actions,
             provenance=ActionProvenance(time, task, task_version),
             execution_steps=len(actions),
-            prediction=prediction.prediction,
+            prediction=rename_prediction(prediction.prediction, self._recorded_names)
+            if prediction.prediction
+            else None,
         )
         if not self._runtime.accept(request, chunk, task_version=task_version):
             raise RuntimeError(self._runtime.failure or "The synchronous runtime rejected a chunk.")

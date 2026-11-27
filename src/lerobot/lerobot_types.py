@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Final, Literal, NotRequired, TypeAlias, TypedDict, final
+from typing import Any, Final, Literal, TypeAlias, TypedDict, final
 
 import numpy as np
 import torch
@@ -57,36 +57,18 @@ class BboxAnswer(TypedDict):
     detections: list[Detection]
 
 
-class PolicyPrediction(TypedDict, total=False):
-    """What a policy expects or believes besides the action it takes, batched like the action.
+# What a policy predicts besides the action it decides, keyed ``prediction.*`` and batched like the
+# action (one value per environment). Names say what is predicted: ``prediction.images.top`` (frames
+# like ``observation.images.top``, at the policy's own resolution), ``prediction.boxes.top`` (a
+# ``BboxAnswer`` per env, on ``observation.images.top``), ``prediction.<style>`` (language: subtask,
+# plan, memory; a string per env). A value predicted at several actions of the chunk stacks them
+# on axis 1, with the chunk index of each under ``{key}_steps``. In a transition it also holds
+# ``prediction.action``: the chunk as the policy returned it, in model coordinates.
+PolicyPrediction: TypeAlias = dict[str, Any]  # noqa: UP040
 
-    Every entry is keyed by what it refers to, so it maps to existing names, and holds one value
-    per environment of the batch, for one action chunk (see ``PreTrainedPolicy.predict_action_chunk``).
-    """
-
-    # The predicted action chunk [B, H, A], in the model's coordinates, before postprocessing.
-    action: torch.Tensor
-    # Predicted future observation, by observation key ("observation.images.top" -> [B, C, H, W],
-    # or [B, F, C, H, W] for frames predicted at several actions of the chunk).
-    observation: dict[str, torch.Tensor]
-    # Index in the chunk of the action each stacked predicted frame belongs to, ascending.
-    observation_steps: list[int]
-    # Predicted language, by annotation style ("subtask", "plan", "memory"), one string per env.
-    language: dict[str, list[str]]
-    # Boxes, by the observation image key they are drawn on, one answer per env.
-    boxes: dict[str, list[BboxAnswer]]
-
-
-class PolicyOutput(TypedDict):
-    """What ``predict_action_chunk`` returns: a batch with what the policy produced.
-
-    The chunk ``[B, H, A]`` under ``"action"``, in model coordinates, and what the policy
-    predicted besides it under ``"prediction"``. `batch_to_transition` turns it into an
-    `EnvTransition`; the postprocessor turns ``action`` into the command to execute.
-    """
-
-    action: torch.Tensor
-    prediction: NotRequired[PolicyPrediction]
+# What ``predict_action_chunk`` returns: a batch with ``action``, the chunk ``[B, H, A]`` in model
+# coordinates that the postprocessor turns into the command, and the policy's ``prediction.*`` keys.
+PolicyOutput: TypeAlias = dict[str, Any]  # noqa: UP040
 
 
 class EnvTransition(TypedDict):

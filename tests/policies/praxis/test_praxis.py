@@ -31,6 +31,7 @@ import torch
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.inference import SyncInferenceEngine
+from lerobot.inference.prediction import validate_prediction
 from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.policies.praxis.configuration_praxis import (
     PRAXIS_ACTION_DIM,
@@ -365,10 +366,12 @@ def test_return_prediction_gives_frames_for_both_cameras() -> None:
     policy.reset()
     out = policy.predict_action_chunk(fake_observation(0))
     assert out[ACTION].shape == (1, 21, PRAXIS_COMMAND_DIM)
-    assert out["prediction"]["observation_steps"] == list(range(21))  # a predicted frame per command
-    frames = out["prediction"]["observation"]
-    assert set(frames) == {"observation.images.exterior", "observation.images.wrist"}
-    assert frames["observation.images.exterior"].shape == (1, 21, 3, 32, 64)
+    for camera in ("exterior", "wrist"):
+        assert out[f"prediction.images.{camera}_steps"] == list(range(21))  # a predicted frame per command
+    assert out["prediction.images.exterior"].shape == (1, 21, 3, 32, 64)
+    # What runners check the prediction against.
+    prediction = {key: value for key, value in out.items() if key != ACTION}
+    validate_prediction(prediction, policy.config.prediction_features, batch_size=1, chunk_length=21)
 
 
 # ---------------------------------------------------------------------------

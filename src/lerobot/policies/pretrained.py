@@ -481,14 +481,15 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         - ``"action"``: the chunk ``[B, H, A]`` in model coordinates. The postprocessor turns
           it into the command to execute (see `lerobot.processor.PolicyProcessorStep`).
-        - ``"prediction"`` (optional): what the policy expects or believes besides it, one value
-          per environment and one per chunk (a `PolicyPrediction`): predicted frames by the
-          observation key they predict, language by annotation style ("subtask", "plan",
-          "memory"), boxes (annotation VQA schema) by the camera they are drawn on. Frames
-          predicted for several actions of the chunk are stacked ``[B, F, C, H, W]`` with the
-          chunk index of each frame under ``"observation_steps"``. Predicting is opt-in through
-          a config field of the policy's choosing and must not change the actions; text that
-          should steer the policy goes through `generate_text`.
+        - ``"prediction.*"`` (optional): what the policy predicts besides it, one value per
+          environment, under the keys :attr:`~lerobot.configs.PreTrainedConfig.prediction_features`
+          declares: frames as ``prediction.images.<camera>`` (``[B, C, H, W]``, at the policy's
+          own resolution), language as ``prediction.<style>`` ("subtask", "plan", "memory"),
+          boxes (annotation VQA schema) as ``prediction.boxes.<camera>``. A value predicted at
+          several actions of the chunk stacks them on axis 1 (``[B, F, C, H, W]``), with the
+          chunk index of each under ``{key}_steps``. Predicting is opt-in through a config field
+          of the policy's choosing and must not change the actions; text that should steer the
+          policy goes through `generate_text`.
 
         Runners record observations, build these batches, call this method when the previous
         chunk has executed and play the actions back; a policy never queues actions itself.

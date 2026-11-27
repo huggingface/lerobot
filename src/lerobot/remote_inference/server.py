@@ -637,6 +637,8 @@ class SessionWorker:
                 "model_actions": chunk.model_actions,
                 "execution_steps": chunk.execution_steps,
                 "server_durations": chunk.server_durations,
+                # What the policy predicted besides the chunk (``prediction.*``), batched like it.
+                "prediction": chunk.prediction or {},
             },
         )
 

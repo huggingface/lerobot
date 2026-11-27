@@ -129,8 +129,7 @@ class Cosmos3Policy(PreTrainedPolicy):
     chunk `action` for training.
 
     The state and the actions are zero padded to `max_action_dim`, the predicted actions are cropped to
-    `original_action_dim`. With `save_predicted_video` the predicted video latents of every chunk go to
-    `last_predicted_latents`, which lerobot-eval decodes with `decode_predicted_latents`.
+    `original_action_dim`.
     """
 
     config_class = Cosmos3Config
@@ -159,8 +158,6 @@ class Cosmos3Policy(PreTrainedPolicy):
                     "Set torch._dynamo.config.optimize_ddp = False for compiled checkpointed layers."
                 )
 
-        # Video latents of the last chunk with `save_predicted_video`, read and cleared by lerobot-eval.
-        self.last_predicted_latents: Tensor | None = None
         self.reset()
 
     def get_optim_params(self) -> list[dict[str, Any]]:
@@ -224,8 +221,7 @@ class Cosmos3Policy(PreTrainedPolicy):
         return model
 
     def reset(self):
-        """Reset internal state, called when the environment resets."""
-        self.last_predicted_latents = None
+        """Nothing to reset: every chunk is sampled from the current observation."""
 
     def prepare_state(self, batch: dict[str, Tensor]) -> Tensor | None:
         """The current state in the action layout zero padded to `max_action_dim`, None without `use_state`."""
@@ -268,10 +264,10 @@ class Cosmos3Policy(PreTrainedPolicy):
     def predict_action_chunk(self, batch: dict[str, Any]) -> PolicyOutput:
         """
         Sample the action chunk `[batch, chunk_size, original_action_dim]` with the sampling settings of the
-        config. With `save_predicted_video` the video latents of the clip go to `last_predicted_latents`.
+        config.
         """
         self.eval()
-        actions, video_latents = self.model.generate(
+        actions, _ = self.model.generate(
             input_ids=batch["input_ids"],
             pixel_values_videos_gen=batch["pixel_values_videos_gen"],
             video_grid_thw_gen=batch["video_grid_thw_gen"],
@@ -287,8 +283,6 @@ class Cosmos3Policy(PreTrainedPolicy):
             negative_attention_mask=batch.get("negative_attention_mask"),
             negative_mm_token_type_ids=batch.get("negative_mm_token_type_ids"),
         )
-        if self.config.save_predicted_video:
-            self.last_predicted_latents = video_latents.cpu()
         return PolicyOutput(action=actions[:, :, : self.config.original_action_dim])
 
     def chunk_inference_spec(self) -> ChunkPolicySpec:
@@ -300,26 +294,6 @@ class Cosmos3Policy(PreTrainedPolicy):
         return ChunkPolicySpec(
             prediction_steps=self.config.chunk_size, execution_steps=self.config.n_action_steps
         )
-
-    @torch.no_grad()
-    def decode_predicted_latents(self, latents: Tensor) -> Tensor:
-        """
-        Decode the predicted video latents that lerobot-eval concatenated over the chunks of a rollout,
-        `[batch, z_dim, latent_frames, latent_height, latent_width]`, to the uint8 frames of the first sample,
-        `[frames, height, width, 3]`. The chunks are decoded one by one and their frames concatenated.
-        """
-        vae = self.model.network.vae
-        latent_frames_per_chunk = 1 + self.config.chunk_size // vae.config.scale_factor_temporal
-        if latents.shape[2] % latent_frames_per_chunk != 0:
-            raise ValueError(
-                f"{latents.shape[2]} latent frames do not split into chunks of {latent_frames_per_chunk}."
-            )
-        device = next(vae.parameters()).device
-        frames = []
-        for chunk in latents[:1].split(latent_frames_per_chunk, dim=2):
-            video = self.model.network.decode_video(chunk.to(device))[0].float()  # [3, frames, height, width]
-            frames.append(((video.clamp(-1, 1) + 1) * 127.5).round().to(torch.uint8).permute(1, 2, 3, 0))
-        return torch.cat(frames).cpu()
 
 
 class Cosmos3NanoPolicy(Cosmos3Policy):

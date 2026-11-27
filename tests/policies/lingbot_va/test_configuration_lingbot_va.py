@@ -76,3 +76,9 @@ def test_validate_features_no_visual_raises() -> None:
 def test_invalid_attn_mode_raises() -> None:
     with pytest.raises(ValueError, match="attn_mode"):
         make_config(attn_mode="banana")
+
+
+def test_save_predicted_video_raises_naming_its_replacement() -> None:
+    assert LingBotVAConfig(save_predicted_video=False).prediction_features == {}
+    with pytest.raises(ValueError, match="return_predicted_video"):
+        LingBotVAConfig(save_predicted_video=True)

@@ -21,7 +21,7 @@ import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, PolicyPrediction
-from lerobot.utils.constants import ACTION, PREDICTION
+from lerobot.utils.constants import ACTION, PREDICTED_ACTION, PREDICTION, PREDICTION_PREFIX
 
 from .converters import batch_to_transition, transition_to_batch
 from .pipeline import DataProcessorPipeline, ProcessorStep
@@ -33,10 +33,10 @@ if TYPE_CHECKING:  # a runtime import would be circular: policies import this pa
 class PolicyProcessorStep(ProcessorStep):
     """Runs a policy's ``predict_action_chunk`` on the preprocessed batch.
 
-    The policy returns ``action`` (its chunk, in model coordinates) and possibly a
-    ``prediction``. The step keeps that chunk as ``prediction["action"]`` and starts
-    ``action`` from a copy of it, which the postprocessor steps turn into the command to
-    execute: the prediction is never modified after the policy returned it.
+    The policy returns ``action`` (its chunk, in model coordinates) and possibly ``prediction.*``
+    keys. The transition's prediction keeps all of it untouched, the chunk as ``prediction.action``,
+    and its ``action`` starts from a copy of the chunk, which the postprocessor steps turn into
+    the command to execute.
 
     Not serializable: pipelines saved with a checkpoint hold the processors around it.
     """
@@ -51,14 +51,14 @@ class PolicyProcessorStep(ProcessorStep):
 
     def predict(self, batch: dict[str, Any]) -> dict[str, Any]:
         """The preprocessed batch with the policy's ``action`` and ``prediction`` added."""
-        output = self.policy.predict_action_chunk(batch)
-        action = output["action"]
+        output = dict(self.policy.predict_action_chunk(batch))
+        action = output.pop(ACTION, None)
+        name = type(self.policy).__name__
         if not isinstance(action, torch.Tensor):
-            raise TypeError(
-                f"{type(self.policy).__name__}.predict_action_chunk must return an action tensor."
-            )
-        prediction = PolicyPrediction(**output.get("prediction") or {})
-        prediction["action"] = action
+            raise TypeError(f"{name}.predict_action_chunk must return an action tensor.")
+        if unknown := [key for key in output if not key.startswith(PREDICTION_PREFIX)]:
+            raise ValueError(f"{name}.predict_action_chunk returned keys outside prediction.*: {unknown}.")
+        prediction: PolicyPrediction = {PREDICTED_ACTION: action, **output}
         return {**batch, ACTION: action.clone(), PREDICTION: prediction}
 
     def reset(self) -> None:
@@ -79,8 +79,8 @@ def make_inference_pipeline(
 ) -> DataProcessorPipeline[dict[str, Any], dict[str, Any]]:
     """One pipeline from a raw batch to the command to execute: ``pre -> policy -> post``.
 
-    Its output batch holds ``action`` (canonical, ready to execute) and ``prediction``
-    (what the policy returned, ``prediction["action"]`` in model coordinates).
+    Its output batch holds ``action`` (canonical, ready to execute) and ``prediction`` (what
+    the policy returned, its chunk as ``prediction.action`` in model coordinates).
     ``reset()`` resets the processors and the policy.
     """
     return DataProcessorPipeline(

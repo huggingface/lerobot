@@ -1610,10 +1610,11 @@ def test_sync_relative_holds_anchor_across_chunk():
 
 
 def test_sync_engine_returns_the_prediction_with_the_action():
+    from lerobot.configs import FeatureType, PolicyFeature
     from lerobot.inference import SyncInferenceEngine
     from lerobot.lerobot_types import TransitionKey
     from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-    from lerobot.utils.constants import ACTION, PREDICTION
+    from lerobot.utils.constants import ACTION
 
     returned = {"subtask": None}
 
@@ -1621,7 +1622,7 @@ def test_sync_engine_returns_the_prediction_with_the_action():
         action = torch.zeros(1, 1, 2)
         if returned["subtask"] is None:
             return {ACTION: action}
-        return {ACTION: action, PREDICTION: {"language": {"subtask": [returned["subtask"]]}}}
+        return {ACTION: action, "prediction.subtask": [returned["subtask"]]}
 
     class _AddOne(ProcessorStep):
         def __init__(self):
@@ -1636,6 +1637,9 @@ def test_sync_engine_returns_the_prediction_with_the_action():
 
     add_one = _AddOne()
     policy = _chunk_policy(1, predict_action_chunk)
+    policy.config.prediction_features = {
+        "prediction.subtask": PolicyFeature(type=FeatureType.LANGUAGE, shape=())
+    }
     engine = SyncInferenceEngine(
         policy=policy,
         preprocessor=_Identity(),
@@ -1655,7 +1659,7 @@ def test_sync_engine_returns_the_prediction_with_the_action():
     # Only the action is postprocessed: the step gets the model chunk, the prediction passes through.
     torch.testing.assert_close(add_one.seen[-1][TransitionKey.ACTION], torch.zeros(1, 1, 2))
     torch.testing.assert_close(step[TransitionKey.ACTION], torch.ones(2))
-    assert step[TransitionKey.PREDICTION] == {"language": {"subtask": ["reach"]}}
+    assert step[TransitionKey.PREDICTION] == {"prediction.subtask": ["reach"]}
 
 
 class _Identity:

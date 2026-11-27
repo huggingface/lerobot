@@ -82,7 +82,7 @@ from lerobot.policies.common.flow_matching import (
     sample_noise,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_IMAGES, PREDICTION_BOXES, PREDICTION_PREFIX
 from lerobot.utils.device_utils import resolve_safetensors_device
 
 from .action_codec_g05 import G05NativeActionCodec, g05_codec_parts
@@ -1938,13 +1938,14 @@ class G05Policy(PreTrainedPolicy):
         texts = [texts] if isinstance(texts, str) else list(texts or [])
         subtasks = [_cot_subtask(text) for text in texts]
         boxes = [_cot_boxes(text) for text in texts]
-        prediction = PolicyPrediction()
+        prediction: PolicyPrediction = {}
         if any(subtask is not None for subtask in subtasks):
-            prediction["language"] = {"subtask": [subtask or "" for subtask in subtasks]}
+            prediction[PREDICTION_PREFIX + "subtask"] = [subtask or "" for subtask in subtasks]
         if any(answer is not None for answer in boxes):
             # The model names no camera: its BBox targets were all drawn on bbox_camera.
             empty = BboxAnswer(detections=[])
-            prediction["boxes"] = {self.config.bbox_camera: [answer or empty for answer in boxes]}
+            camera = self.config.bbox_camera.removeprefix(OBS_IMAGES + ".")
+            prediction[f"{PREDICTION_BOXES}.{camera}"] = [answer or empty for answer in boxes]
         return prediction
 
     @torch.no_grad()
@@ -1954,14 +1955,12 @@ class G05Policy(PreTrainedPolicy):
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
         extends the prefill cache with the CoT tokens and the flow head then runs on
         that extended cache, so the action really is conditioned on this text rather
-        than merely accompanied by it. In System 2 the prediction holds each env's CoT subtask
-        and boxes; System 1 generates no CoT and returns the chunk alone.
+        than merely accompanied by it. In System 2 the output also holds each env's CoT subtask
+        (``prediction.subtask``) and boxes (``prediction.boxes.<bbox camera>``); System 1
+        generates no CoT and returns the chunk alone.
         """
         action, metadata = self._run_inference(batch)
-        prediction = self._cot_prediction(metadata)
-        return (
-            PolicyOutput(action=action, prediction=prediction) if prediction else PolicyOutput(action=action)
-        )
+        return PolicyOutput(action=action, **self._cot_prediction(metadata))
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
         """Run the training forward pass."""
