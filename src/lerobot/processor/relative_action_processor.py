@@ -41,7 +41,9 @@ __all__ = [
 ]
 
 
-def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_relative_actions(
+    actions: Tensor, state: Tensor, mask: Sequence[bool], *, state_anchor_index: int = 0
+) -> Tensor:
     """Convert absolute actions to relative: relative = action - state (for masked dims).
 
     Args:
@@ -49,6 +51,8 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
         state: (B, state_dim), or (B, T_obs, state_dim) for a temporally stacked
             observation (collapsed to the current frame). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_anchor_index: Index of the current frame in a stacked state. Defaults to 0
+            for current-first windows; use -1 for oldest-first histories ending at the current frame.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -56,12 +60,8 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # A temporally stacked observation (a policy whose ``observation_delta_indices`` spans several
-    # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
-    # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
-    # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
-        state = state[:, 0]
+        state = state[:, state_anchor_index]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -70,7 +70,9 @@ def to_relative_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     return actions
 
 
-def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) -> Tensor:
+def to_absolute_actions(
+    actions: Tensor, state: Tensor, mask: Sequence[bool], *, state_anchor_index: int = 0
+) -> Tensor:
     """Convert relative actions back to absolute: absolute = relative + state (for masked dims).
 
     Args:
@@ -78,6 +80,8 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
         state: (B, state_dim), or (B, T_obs, state_dim) for a temporally stacked
             observation (collapsed to the current frame). Broadcast across time dimension.
         mask: Which dims to convert. Can be shorter than action_dim.
+        state_anchor_index: Index of the current frame in a stacked state. Defaults to 0
+            for current-first windows; use -1 for oldest-first histories ending at the current frame.
     """
     mask_t = torch.tensor(mask, dtype=actions.dtype, device=actions.device)
     dims = mask_t.shape[0]
@@ -85,12 +89,8 @@ def to_absolute_actions(actions: Tensor, state: Tensor, mask: Sequence[bool]) ->
     # DeviceProcessorStep moves the transition, so it can be on CPU while actions are on CUDA.
     if state.device != actions.device or state.dtype != actions.dtype:
         state = state.to(device=actions.device, dtype=actions.dtype)
-    # A temporally stacked observation (a policy whose ``observation_delta_indices`` spans several
-    # frames, e.g. VLA-JEPA or LingBot-VA) hands over a (B, T_obs, state_dim) state. The reference
-    # is the CURRENT frame -- delta 0, i.e. index 0 -- so collapse to it and let the offset
-    # broadcast over the action horizon. pi0/pi05 pass a 2D (B, state_dim) state and are unaffected.
     if state.ndim == 3:
-        state = state[:, 0]
+        state = state[:, state_anchor_index]
     state_offset = state[..., :dims] * mask_t
     if actions.ndim == 3:
         state_offset = state_offset.unsqueeze(-2)
@@ -114,11 +114,14 @@ class RelativeActionsProcessorStep(ProcessorStep):
         exclude_joints: Joint names to keep absolute (not converted to relative).
         action_names: Action dimension names from dataset metadata, used to build
             the mask from exclude_joints. If None, all dims are converted.
+        state_anchor_index: Current-frame index in a stacked observation state.
+            Use -1 for oldest-first histories ending at the current frame.
     """
 
     enabled: bool = False
     exclude_joints: list[str] = field(default_factory=list)
     action_names: list[str] | None = None
+    state_anchor_index: int = 0
     _last_state: torch.Tensor | None = field(default=None, init=False, repr=False)
     _count_queued_actions: Callable[[], int] | None = field(default=None, init=False, repr=False)
 
@@ -162,7 +165,9 @@ class RelativeActionsProcessorStep(ProcessorStep):
             raise ValueError(f"RelativeActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
+        new_transition[TransitionKey.ACTION] = to_relative_actions(
+            action, state, mask, state_anchor_index=self.state_anchor_index
+        )
         return new_transition
 
     def reset(self) -> None:
@@ -180,11 +185,14 @@ class RelativeActionsProcessorStep(ProcessorStep):
         return self._last_state
 
     def get_config(self) -> dict[str, Any]:
-        return {
+        config: dict[str, Any] = {
             "enabled": self.enabled,
             "exclude_joints": self.exclude_joints,
             "action_names": self.action_names,
         }
+        if self.state_anchor_index != 0:
+            config["state_anchor_index"] = self.state_anchor_index
+        return config
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -234,7 +242,9 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
             raise ValueError(f"AbsoluteActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self.relative_step._build_mask(action.shape[-1])
-        new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
+        new_transition[TransitionKey.ACTION] = to_absolute_actions(
+            action, cached_state, mask, state_anchor_index=self.relative_step.state_anchor_index
+        )
         return new_transition
 
     def get_config(self) -> dict[str, Any]:
