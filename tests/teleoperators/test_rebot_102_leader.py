@@ -89,6 +89,67 @@ def test_send_feedback_not_implemented(leader):
         leader.send_feedback({})
 
 
+def _make_leader(raw_positions_deg: dict[str, float], **overrides) -> RebotArm102Leader:
+    cfg = RebotArm102LeaderTeleopConfig(port="/dev/null", **overrides)
+    bus = _make_bus_mock(cfg.joint_ids)
+    id_to_raw = {cfg.joint_ids[name]: deg for name, deg in raw_positions_deg.items()}
+
+    def _sync_monitor(ids):
+        monitors = {}
+        for servo_id in ids:
+            monitor = MagicMock()
+            monitor.angle_deg = id_to_raw.get(servo_id, 0.0)
+            monitors[servo_id] = monitor
+        return monitors
+
+    bus.sync_monitor.side_effect = _sync_monitor
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.FashionStarServo", return_value=bus),
+    ):
+        teleop = RebotArm102Leader(cfg)
+        teleop.connect(calibrate=False)
+    return teleop
+
+
+def _elbow_overrides(direction: float) -> dict:
+    cfg = RebotArm102LeaderTeleopConfig(port="/dev/null")
+    return {
+        "joint_directions": {**cfg.joint_directions, "elbow_flex": direction},
+        "joint_ranges": {**cfg.joint_ranges, "elbow_flex": [0, 180]},
+    }
+
+
+def test_fractional_direction_tracks_full_leader_travel():
+    """The unwrap window is centred on the raw angle that maps to the middle of the range, so the extremes of
+    a scaled joint saturate at the range limit instead of unwrapping a full turn onto the opposite limit."""
+    for raw, expected in [(0.0, 0.0), (-135.0, 90.0), (-269.9, 180.0), (-271.0, 180.0), (-280.0, 180.0)]:
+        leader = _make_leader({"elbow_flex": raw}, **_elbow_overrides(-2 / 3))
+        assert leader.get_action()["elbow_flex.pos"] == pytest.approx(expected, abs=0.5)
+
+
+def test_fractional_direction_removes_whole_turns():
+    for extra_turns in (-1, 1, 2):
+        leader = _make_leader({"elbow_flex": -135.0 + extra_turns * 360.0}, **_elbow_overrides(-2 / 3))
+        assert leader.get_action()["elbow_flex.pos"] == pytest.approx(90.0, abs=0.5)
+
+
+def test_default_gripper_mapping_is_unchanged():
+    """The default -6 gripper maps its raw travel, and whole turns of it, onto [-270, 0] as before."""
+    for raw in (0.0, 15.0, 30.0, 45.0):
+        for extra_turns in (-1, 0, 1):
+            leader = _make_leader({"gripper": raw + extra_turns * 360.0})
+            assert leader.get_action()["gripper.pos"] == pytest.approx(-6.0 * raw)
+
+
+def test_zero_direction_is_rejected():
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        pytest.raises(ValueError, match="nonzero"),
+    ):
+        RebotArm102Leader(RebotArm102LeaderTeleopConfig(port="/dev/null", **_elbow_overrides(0)))
+
+
 def test_bimanual_prefixes_features():
     with patch(f"{_MODULE}.require_package", lambda *a, **kw: None):
         cfg = BiRebot102LeaderConfig(

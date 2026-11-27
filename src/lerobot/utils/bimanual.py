@@ -47,7 +47,12 @@ class BimanualMixin:
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
+        try:
+            self.right_arm.connect(calibrate)
+        except BaseException:
+            # Don't leave the left arm powered while the pair reports disconnected.
+            self.left_arm.disconnect()
+            raise
 
     def calibrate(self) -> None:
         self.left_arm.calibrate()
@@ -59,5 +64,7 @@ class BimanualMixin:
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        try:
+            self.left_arm.disconnect()
+        finally:
+            self.right_arm.disconnect()

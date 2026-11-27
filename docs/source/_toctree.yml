@@ -197,6 +197,8 @@
     title: reBot B601
   - local: yam
     title: YAM
+  - local: metal
+    title: Metal
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"

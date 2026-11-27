@@ -187,8 +187,9 @@ timm-dep = ["timm>=1.0.0,<1.1.0"]
 serial-motors = ["lerobot[rustypot-dep]", "lerobot[pyserial-dep]"]
 feetech = ["lerobot[serial-motors]"]
 dynamixel = ["lerobot[serial-motors]"]
-damiao = ["lerobot[can-dep]"]
-robstride = ["lerobot[can-dep]"]
+# pyserial backs python-can's "slcan" interface, the CAN transport that also works on macOS and Windows.
+damiao = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
+robstride = ["lerobot[can-dep]", "lerobot[pyserial-dep]"]
 
 # Robots
 openarms = ["lerobot[damiao]"]
@@ -214,6 +215,7 @@ reachy2 = [
 # Seeed Studio reBot B601 follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
 # leader (motorbridge-smart-servo / FashionStar UART servos).
 rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
+metal = ["lerobot[damiao]", "lerobot[placo-dep]"]
 yam = [
     "lerobot[motorbridge-dep]",
     "lerobot[placo-dep]",
@@ -360,6 +362,7 @@ all = [
     "lerobot[reachy2]",
     "lerobot[rebot]",
     "lerobot[yam]",
+    "lerobot[metal]",
     "lerobot[kinematics]",
     "lerobot[intelrealsense]",
     "lerobot[diffusion]",

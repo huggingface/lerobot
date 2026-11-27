@@ -60,7 +60,10 @@ logger = logging.getLogger(__name__)
 
 LONG_TIMEOUT_SEC = 0.1
 MEDIUM_TIMEOUT_SEC = 0.01
-SHORT_TIMEOUT_SEC = 0.001
+# Reply window of an MIT batch (_mit_control_batch), which drops late replies silently. 1 ms expired
+# before the last motors of a 7-motor batch answered: 9.2% of replies lost at 200 Hz over socketcan,
+# 0.019% at 5 ms.
+SHORT_TIMEOUT_SEC = 0.005
 PRECISE_TIMEOUT_SEC = 0.0001
 
 
