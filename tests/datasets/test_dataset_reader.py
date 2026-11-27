@@ -204,8 +204,8 @@ def test_get_episodes_file_paths_includes_video_paths(tmp_path, lerobot_dataset_
 
 
 class ToyDatasetReader(DatasetReader):
-    def __init__(self, revision=None, token=None, **kwargs):
-        super().__init__(video_backend="pyav", **kwargs)
+    def __init__(self, revision=None, token=None, video_backend="pyav", **kwargs):
+        super().__init__(video_backend=video_backend, **kwargs)
 
 
 def test_register_dataset_reader(tmp_path, lerobot_dataset_factory, monkeypatch):

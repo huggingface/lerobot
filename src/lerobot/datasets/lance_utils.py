@@ -209,8 +209,11 @@ class _SparseBlobSource(io.RawIOBase):
 
 
 class _VideoDecoderLRU:
-    """Per-worker LRU of torchcodec decoders keyed by (video_key, chunk, file).
-    eviction is bounded by ``byte_budget`` too, not just count.
+    """Per-worker LRU of prepared video files keyed by (video_key, chunk, file).
+
+    Each entry carries the torchcodec decoder (``None`` for PyAV/depth files) and the
+    sparse blob source holding that file's prefetched ranges. Eviction is bounded by
+    ``byte_budget`` too, not just count.
     """
 
     def __init__(self, capacity: int, byte_budget: int | None = None):

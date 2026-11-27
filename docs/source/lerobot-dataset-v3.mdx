@@ -363,6 +363,8 @@ For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](htt
 
 Camera features must be video-backed. Datasets that store camera frames as images are not supported by the reader and need to be re-encoded as video before conversion.
 
+RGB video decodes with TorchCodec when it can load FFmpeg, and with PyAV, whose wheels bundle FFmpeg, when it cannot. Pass `video_backend="pyav"` to `LeRobotDataset` to force PyAV.
+
 Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
 
 ```bash

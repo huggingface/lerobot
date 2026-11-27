@@ -40,8 +40,8 @@ DEFAULT_STORAGE_FORMAT = "lerobot"
 # :class:`~lerobot.datasets.dataset_reader.BaseDatasetReader` (constructed with
 # the keyword arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
 # ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
-# ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
-# object-store roots. Non-empty ``storage_options`` are forwarded to both the
+# ``depth_output_unit``, ``video_backend`` and ``token``) and a ``localize_root``
+# hook for object-store roots. Non-empty ``storage_options`` are forwarded to both the
 # reader and the hook when supplied by the caller.
 _DATASET_READER_MODULES: dict[str, str] = {}
 

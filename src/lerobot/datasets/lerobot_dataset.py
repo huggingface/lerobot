@@ -314,6 +314,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "tolerance_s": tolerance_s,
                 "return_uint8": return_uint8,
                 "depth_output_unit": depth_output_unit,
+                "video_backend": self._video_backend,
                 "revision": revision,
                 "token": token,
             }
