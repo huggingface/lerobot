@@ -35,6 +35,7 @@ Example usage:
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +99,19 @@ class SampleWeightingConfig:
     epsilon: float = 1e-6
     # Additional type-specific params can be added here or passed via extra_params
     extra_params: dict = field(default_factory=dict)
+
+
+def check_policy_supports_sample_weighting(policy: PreTrainedPolicy) -> None:
+    """Fail before training if the policy cannot return per-sample losses.
+
+    Weighted training calls ``policy.forward(batch, reduction="none")``.
+    """
+    if "reduction" not in inspect.signature(policy.forward).parameters:
+        raise ValueError(
+            f"Sample weighting needs per-sample losses, but {type(policy).__name__}.forward() has no "
+            "`reduction` argument. Use a policy whose forward(batch, reduction='none') returns one loss "
+            "per sample, or remove --sample_weighting."
+        )
 
 
 def make_sample_weighter(

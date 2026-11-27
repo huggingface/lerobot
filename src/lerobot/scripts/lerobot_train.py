@@ -96,7 +96,7 @@ from lerobot.utils.import_utils import (
 )
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.sample_weighting import SampleWeighter
+from lerobot.utils.sample_weighting import SampleWeighter, check_policy_supports_sample_weighting
 from lerobot.utils.utils import (
     cycle,
     format_big_number,
@@ -633,6 +633,8 @@ def train(cfg: TrainPipelineConfig) -> None:
             defer_weight_load=defer_weight_load,
             pretrained_path=resume_pretrained_dir,
         )
+        if cfg.sample_weighting is not None:
+            check_policy_supports_sample_weighting(policy)
 
     peft_model = None
     if cfg.peft is not None:
