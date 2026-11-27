@@ -232,6 +232,15 @@ class LeRobotDatasetMetadata:
         if self.episodes is None:
             self._load_metadata()
 
+    def reload_episodes(self) -> None:
+        """Reload the per-episode metadata view from disk.
+
+        Call this only after the episode metadata writer has been closed, so
+        that the view includes episodes appended on this instance without
+        reading a parquet file that is still being written.
+        """
+        self.episodes = load_episodes(self.root) if self.info.total_episodes > 0 else None
+
     def filter_episodes(
         self,
         predicate: Callable[[dict], bool],
