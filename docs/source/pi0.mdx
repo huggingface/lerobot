@@ -64,7 +64,9 @@ lerobot-train \
     --policy.repo_id=your_repo_id \
     --policy.compile_model=true \
     --policy.gradient_checkpointing=true \
-    --policy.dtype=bfloat16 \
+    --policy.dtype=float32 \
+    --policy.optimizer_fused=true \
+    --accelerator.mixed_precision=bf16 \
     --policy.freeze_vision_encoder=false \
     --policy.train_expert_only=false \
     --steps=3000 \
@@ -76,12 +78,12 @@ lerobot-train \
 
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
-- **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
+- **`--policy.dtype=float32 --accelerator.mixed_precision=bf16`**: Mixed precision training: AdamW updates float32 weights while autocast runs the compute in bfloat16 (see [mixed precision](./torch_accelerators#mixed-precision)). `--policy.dtype=bfloat16` is not mixed precision: it stores the trainable weights themselves in bfloat16 with no float32 copy, so AdamW rounds away every update smaller than 1/512 of a weight ([arXiv:2610.31859](https://arxiv.org/abs/2610.31859)). float32 storage takes 4 bytes per weight instead of 2 for the weights, their gradients and both AdamW states; lower `--batch_size` if you run out of memory. At inference, pass `--policy.dtype=bfloat16` to `lerobot-eval` or `lerobot-rollout`: the checkpoint saves `dtype: float32`, so the policy would otherwise run entirely in float32
 - **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
 - **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
   - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (specifically trained on the Libero dataset)
-- **`--policy.optimizer_fused=true`**: Uses fused AdamW for faster optimizer steps; this flag is ignored when resuming a run
+- **`--policy.optimizer_fused=true`**: Uses fused AdamW for faster optimizer steps that, unlike PyTorch's default AdamW, allocate no temporary buffer as large as the trainable weights; this flag is ignored when resuming a run
 
 ### Training Parameters Explained
 
