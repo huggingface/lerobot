@@ -496,26 +496,24 @@ To use a wrist camera instead, just change the rename mapping:
 
 ### Joint frame transform (SO-100/101 zero-shot)
 
-<Tip warning={true}>
-The MolmoAct2-SO100_101 checkpoint was trained on data that uses a different
-joint calibration convention than LeRobot >= 0.5.0. Without a frame
-correction, the arm may move in the wrong direction.
-
-This affects both **zero-shot deployment** and **fine-tuning** from the
-original checkpoint. The pretrained weights expect the old convention, so
-all joint data (observations and actions) must be transformed to match.
-
-The converted LeRobot checkpoint (`lerobot/MolmoAct2-SO100_101-LeRobot`)
-already includes this correction in its processor pipeline. If you convert
-or fine-tune the checkpoint yourself, set the following in the policy config (`configuration_molmoact2.py`):
-
-- `joint_signs`: `[1, -1, 1, 1, 1, 1]` (flips shoulder_lift direction)
-- `joint_offsets`: `[0, 90, 90, 0, 0, 0]` (shifts shoulder_lift and elbow_flex by 90°)
-
-See the [backward compatibility guide](./backwardcomp) for details on the
-calibration change.
-
-</Tip>
+> [!WARNING]
+> The MolmoAct2-SO100_101 checkpoint was trained on data that uses a different
+> joint calibration convention than LeRobot >= 0.5.0. Without a frame
+> correction, the arm may move in the wrong direction.
+>
+> This affects both **zero-shot deployment** and **fine-tuning** from the
+> original checkpoint. The pretrained weights expect the old convention, so
+> all joint data (observations and actions) must be transformed to match.
+>
+> The converted LeRobot checkpoint (`lerobot/MolmoAct2-SO100_101-LeRobot`)
+> already includes this correction in its processor pipeline. If you convert
+> or fine-tune the checkpoint yourself, set the following in the policy config (`configuration_molmoact2.py`):
+>
+> - `joint_signs`: `[1, -1, 1, 1, 1, 1]` (flips shoulder_lift direction)
+> - `joint_offsets`: `[0, 90, 90, 0, 0, 0]` (shifts shoulder_lift and elbow_flex by 90°)
+>
+> See the [backward compatibility guide](./backwardcomp) for details on the
+> calibration change.
 
 ## Differences From the Original Implementation
 

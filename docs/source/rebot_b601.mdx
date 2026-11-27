@@ -67,11 +67,9 @@ Use `lerobot-find-port` to identify the DM serial bridge and leader ports. Conne
 lerobot-find-port
 ```
 
-<Tip warning={true}>
-  On Linux, remove `brltty` (`sudo apt remove brltty`) if it captures a serial
-  device. You may also need temporary access with `sudo chmod 666 /dev/ttyACM*
-  /dev/ttyUSB*`.
-</Tip>
+> [!WARNING]
+> On Linux, remove `brltty` (`sudo apt remove brltty`) if it captures a serial
+> device. You may also need temporary access with `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`.
 
 ### Native CAN
 

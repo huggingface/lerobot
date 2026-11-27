@@ -1,11 +1,10 @@
 # NVIDIA IsaacLab Arena & LeRobot
 
-<Tip warning={true}>
-  **Deprecated.** This page was written for LeRobot 0.4 and Isaac Sim 5.1, which
-  requires Python 3.11, while LeRobot requires Python 3.12 or newer since 0.5.
-  It also predates [EnvHub](./envhub) environments that can be served and driven
-  as a sim robot. An updated version is in progress.
-</Tip>
+> [!WARNING]
+> **Deprecated.** This page was written for LeRobot 0.4 and Isaac Sim 5.1, which
+> requires Python 3.11, while LeRobot requires Python 3.12 or newer since 0.5.
+> It also predates [EnvHub](./envhub) environments that can be served and driven
+> as a sim robot. An updated version is in progress.
 
 LeRobot EnvHub now supports **GPU-accelerated simulation** with IsaacLab Arena for policy evaluation at scale.
 Train and evaluate imitation learning policies with high-fidelity simulation — all integrated into the LeRobot ecosystem.
@@ -145,10 +144,9 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
     --eval.batch_size=1
 ```
 
-<Tip>
-  To change the number of parallel environments, use the ```--eval.batch_size```
-  flag.
-</Tip>
+> [!TIP]
+> To change the number of parallel environments, use the `--eval.batch_size`
+> flag.
 
 ### What to Expect
 
@@ -170,14 +168,12 @@ To enable video recording during evaluation, add the following flags to your com
 
 For more details on video recording, see the [IsaacLab Recording Documentation](https://isaac-sim.github.io/IsaacLab/main/source/how-to/record_video.html).
 
-<Tip>
-When running headless with `--env.headless=true`, you must also enable cameras explicitly for camera enabled environments:
-
-```bash
---env.headless=true --env.enable_cameras=true
-```
-
-</Tip>
+> [!TIP]
+> When running headless with `--env.headless=true`, you must also enable cameras explicitly for camera enabled environments:
+>
+> ```bash
+> --env.headless=true --env.enable_cameras=true
+> ```
 
 ### Output Directory
 

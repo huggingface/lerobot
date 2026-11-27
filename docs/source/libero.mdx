@@ -1,12 +1,10 @@
 # LIBERO
 
-<Tip>
-  The commands below run the simulator locally. To keep its dependencies away
-  from your policy's, serve it instead with `lerobot-env-server
-  --config_path=docker/sim/configs/libero.yaml --sim.task=<task> --docker=true`, where `<task>`
-  is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
-  the command. A server runs the task it was started with (see [Simulation: local or served](./simulation)).
-</Tip>
+> [!TIP]
+> The commands below run the simulator locally. To keep its dependencies away
+> from your policy's, serve it instead with `lerobot-env-server --config_path=docker/sim/configs/libero.yaml --sim.task=<task> --docker=true`, where `<task>`
+> is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
+> the command. A server runs the task it was started with (see [Simulated robots and environments](./simulation)).
 
 LIBERO is a benchmark designed to study **lifelong robot learning** — the idea that robots need to keep learning and adapting with their users over time, not just be pretrained once. It provides a set of standardized manipulation tasks that focus on **knowledge transfer**: how well a robot can apply what it has already learned to new situations. By evaluating on LIBERO, different algorithms can be compared fairly and researchers can build on each other's work.
 
@@ -36,14 +34,12 @@ After following the LeRobot installation instructions:
 pip install -e ".[libero]"
 ```
 
-<Tip>
-LIBERO requires Linux (`sys_platform == 'linux'`). LeRobot uses MuJoCo for simulation — set the rendering backend before training or evaluation:
-
-```bash
-export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
-```
-
-</Tip>
+> [!TIP]
+> LIBERO requires Linux (`sys_platform == 'linux'`). LeRobot uses MuJoCo for simulation — set the rendering backend before training or evaluation:
+>
+> ```bash
+> export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
+> ```
 
 ## Evaluation
 
@@ -122,13 +118,12 @@ differ slightly. Use hard resets when reproducing benchmark results.
 - `observation.images.image` — main camera view (`agentview_image`), HWC uint8
 - `observation.images.image2` — wrist camera view (`robot0_eye_in_hand_image`), HWC uint8
 
-<Tip warning={true}>
-  LeRobot enforces the `.images.*` prefix for visual features. Ensure your
-  policy config `input_features` use the same naming keys, and that your dataset
-  metadata keys follow this convention. If your data contains different keys,
-  you must rename the observations to match what the policy expects, since
-  naming keys are encoded inside the normalization statistics layer.
-</Tip>
+> [!WARNING]
+> LeRobot enforces the `.images.*` prefix for visual features. Ensure your
+> policy config `input_features` use the same naming keys, and that your dataset
+> metadata keys follow this convention. If your data contains different keys,
+> you must rename the observations to match what the policy expects, since
+> naming keys are encoded inside the normalization statistics layer.
 
 **Actions:**
 
@@ -140,11 +135,10 @@ For reproducible benchmarking, use **10 episodes per task** across all four stan
 
 `lerobot-eval` reports a 95% Wilson interval (`pc_success_ci95`) next to every success rate. At 10 episodes a task scored 9/10 has an interval of roughly 60% to 98%, and a 400-episode suite total at 80% has one of roughly 76% to 84%. Two policies whose intervals overlap on a task have not been shown to differ on that task by that run. The interval covers which episodes were drawn; it does not cover the training seed of the policy, which needs more than one training run to measure.
 
-<Tip>
-  To compare two policies on the same episodes, use the same `--seed`, keep
-  `--env.init_states=true`, and run each task in a single batch
-  (`--eval.batch_size` equal to episodes per task).
-</Tip>
+> [!TIP]
+> To compare two policies on the same episodes, use the same `--seed`, keep
+> `--env.init_states=true`, and run each task in a single batch
+> (`--eval.batch_size` equal to episodes per task).
 
 ## Training
 
@@ -168,9 +162,8 @@ For reference, the original dataset published by Physical Intelligence:
 
 - [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
 
-<Tip>
-Pin `--dataset.revision=<commit-sha>` when reporting results — Hub datasets can be re-uploaded, and success rates are only comparable against the same data revision.
-</Tip>
+> [!TIP]
+> Pin `--dataset.revision=<commit-sha>` when reporting results — Hub datasets can be re-uploaded, and success rates are only comparable against the same data revision.
 
 ### Example training command
 

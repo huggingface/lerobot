@@ -1,12 +1,10 @@
 # RoboTwin 2.0
 
-<Tip>
-  The commands below run the simulator locally. To keep its dependencies away
-  from your policy's, serve it instead with `lerobot-env-server
-  --config_path=docker/sim/configs/robotwin.yaml --sim.task=<task> --docker=true`, where `<task>`
-  is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
-  the command. A server runs the task it was started with (see [Simulation: local or served](./simulation)).
-</Tip>
+> [!TIP]
+> The commands below run the simulator locally. To keep its dependencies away
+> from your policy's, serve it instead with `lerobot-env-server --config_path=docker/sim/configs/robotwin.yaml --sim.task=<task> --docker=true`, where `<task>`
+> is the command's `--env.task`, and add `--env.server.endpoint=tcp/127.0.0.1:7448` to
+> the command. A server runs the task it was started with (see [Simulated robots and environments](./simulation)).
 
 RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the SAPIEN physics engine. It provides a standardized evaluation protocol for bimanual robotic policies across 50 tasks (as of upstream `main`) with strong domain randomization (clutter, lighting, background, tabletop height, and language instructions).
 
@@ -48,13 +46,12 @@ RoboTwin 2.0 ships 50 dual-arm manipulation tasks in its upstream `envs/` direct
 
 Pass a comma-separated list to `--env.task` to run multiple tasks in a single eval sweep.
 
-<Tip warning={true}>
-  `open_laptop` is currently broken upstream (its `check_success()` uses
-  `self.arm_tag`, which is only set inside the scripted-expert `play_once()`
-  path and therefore unavailable during normal policy eval). Avoid it until the
-  upstream bug is fixed, or patch the task to default `self.arm_tag = "left"` in
-  `load_actors()`.
-</Tip>
+> [!WARNING]
+> `open_laptop` is currently broken upstream (its `check_success()` uses
+> `self.arm_tag`, which is only set inside the scripted-expert `play_once()`
+> path and therefore unavailable during normal policy eval). Avoid it until the
+> upstream bug is fixed, or patch the task to default `self.arm_tag = "left"` in
+> `load_actors()`.
 
 ## Dataset
 
@@ -95,7 +92,7 @@ where `8.6` is your GPU's compute capability. Add `--env.server.endpoint=tcp/127
 
 ### Native environment
 
-To run the server without Docker, reproduce the `robotwin_native` stage of `docker/Dockerfile.sim` in a separate virtual environment, which is the tested recipe: the CUDA 12.8 `nvcc`, torch 2.7.1, the pinned RoboTwin commit and assets, CuRobo v0.7.8, and RoboTwin's mplib and SAPIEN patches. Then install LeRobot with `--no-deps` plus `docker/sim/requirements.txt`, and drop `--docker=true` from the command above (see [Simulation: local or served](./simulation)).
+To run the server without Docker, reproduce the `robotwin_native` stage of `docker/Dockerfile.sim` in a separate virtual environment, which is the tested recipe: the CUDA 12.8 `nvcc`, torch 2.7.1, the pinned RoboTwin commit and assets, CuRobo v0.7.8, and RoboTwin's mplib and SAPIEN patches. Then install LeRobot with `--no-deps` plus `docker/sim/requirements.txt`, and drop `--docker=true` from the command above (see [Simulated robots and environments](./simulation)).
 
 ## Evaluation
 
@@ -147,11 +144,10 @@ lerobot-eval \
   --eval.n_episodes=100
 ```
 
-<Tip>
-  `open_laptop` is intentionally omitted above because of the upstream
-  `self.arm_tag` bug (see the **Available tasks** section). Re-add it once the
-  upstream fix lands.
-</Tip>
+> [!TIP]
+> `open_laptop` is intentionally omitted above because of the upstream
+> `self.arm_tag` bug (see the **Available tasks** section). Re-add it once the
+> upstream fix lands.
 
 ## Camera configuration
 
