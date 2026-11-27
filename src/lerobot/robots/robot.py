@@ -56,6 +56,20 @@ class Robot(abc.ABC):
         """Retain a safe controller command when command hold is explicitly supported."""
         raise NotImplementedError(f"{self.name} does not implement command hold")
 
+    def read_settings(self) -> dict | None:
+        """JSON-ready setup of this robot, read once at the start of an episode.
+
+        Return None to record nothing. That is the default. A robot that records
+        settings returns a dict with ``robot_type`` (this robot's type name),
+        ``robot_id``, and ``motors``.
+        Each motor has ``model``, ``calibration``, and ``registers`` (setting names
+        to raw integers). Leave out live readings and commands: position, speed,
+        load, voltage, temperature, current, goal values, and the torque switch.
+        Do not call this from the control loop. ``lerobot-record`` stores the dict
+        as one JSON string on the episode.
+        """
+        return None
+
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
         self.id = config.id
