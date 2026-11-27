@@ -348,6 +348,56 @@ def test_envhub_runs_a_batched_repository_one_task_at_a_time(hub_repo, monkeypat
             env.close()
 
 
+def test_envhub_batched_repository_receives_the_requested_task(hub_repo, monkeypatch):
+    # A repo whose suites are expensive to list builds only the one asked for, as served with --sim.task.
+    hub_repo(
+        _BATCHED_ENV
+        + '\n\ndef vector_env_fns(task, n_envs, spacing=1.0):\n    return {task or "reach_batch": {0: partial(ReachBatch, n_envs, 0.0)}}\n'
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="push"), 2)
+    try:
+        assert list(envs) == ["push"]
+    finally:
+        envs["push"][0].close()
+
+
+def test_envhub_builds_only_the_requested_suite(hub_repo, monkeypatch):
+    # Each suite's simulator is expensive (e.g. a GPU world): the env is described from the one requested.
+    hub_repo(
+        _BATCHED_ENV
+        + '\n\ndef vector_env_fns(task, n_envs, spacing=1.0):\n    return {"near": {0: partial(ReachBatch, n_envs, 0.0)}, "far": {0: partial(ReachBatch, n_envs, 5.0)}}\n'
+    )
+    monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="far"), 2)
+    try:
+        assert list(envs) == ["far"]
+        assert builtins.envhub_builds == [5.0]
+    finally:
+        envs["far"][0].close()
+    # Several suites, comma-separated: described from the first, each other one built when it runs.
+    builtins.envhub_builds.clear()
+    envs = make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="far, near"), 2)
+    try:
+        assert list(envs) == ["far", "near"]
+        assert builtins.envhub_builds == [5.0]
+        envs["near"][0].reset(seed=[3, 4])
+        assert builtins.envhub_builds == [5.0, 0.0]
+    finally:
+        for suite in envs.values():
+            suite[0].close()
+    with pytest.raises(ValueError, match=r"Unknown task 'other'; this environment has \['far', 'near'\]"):
+        make_env(HubEnvConfig(hub_path="user/reach", trust_remote_code=True, task="other"), 2)
+
+
+def test_a_served_envhub_client_needs_no_hub_path():
+    # The server loads the repository from its own copy; only an env run in this process needs its path.
+    served = HubEnvConfig(server=EnvClientConfig(endpoint="tcp/127.0.0.1:7448"))
+    assert served.sim_settings()["kwargs"]["hub_path"] is None
+    with pytest.raises(ValueError, match="hub_path is required for an EnvHub environment that is not served"):
+        HubEnvConfig().sim_settings()
+
+
 def test_envhub_batched_repository_must_not_autoreset(hub_repo, monkeypatch):
     hub_repo(_BATCHED_ENV.replace("AutoresetMode.DISABLED", "AutoresetMode.NEXT_STEP"))
     monkeypatch.setattr(builtins, "envhub_builds", [], raising=False)

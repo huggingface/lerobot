@@ -131,12 +131,13 @@ class HubEnvConfig(EnvConfig):
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
             raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
-        if not self.hub_path:
-            raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # The repo defines the suites; --env.task picks among them.
+        # A served env is loaded by the server, from its own copy of the repository.
+        if not self.hub_path and self.server is None:
+            raise ValueError("--env.hub_path is required for an EnvHub environment that is not served")
+        # The repo receives --env.task, as a server's --sim.task.
         return {
             "type": "envhub",
-            "task": "",
+            "task": self.task or "",
             "kwargs": {
                 "hub_path": self.hub_path,
                 "trust_remote_code": self.trust_remote_code,

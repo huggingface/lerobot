@@ -116,8 +116,10 @@ def make_env(
         )
     if isinstance(cfg, HubEnvConfig) and cfg.use_native_batch:
         return _make_native_batch(cfg, n_envs, use_async_envs)
-    descriptor, make = _env_factory(cfg, n_envs, use_async_envs)
-    groups = [task.strip() for task in cfg.task.split(",")] if cfg.task else list(descriptor.tasks)
+    groups = [task.strip() for task in cfg.task.split(",")] if cfg.task else []
+    # Describe the env from the first requested suite, so no other suite's simulator is built before it runs.
+    descriptor, make = _env_factory(cfg, n_envs, use_async_envs, groups[0] if groups else None)
+    groups = groups or list(descriptor.tasks)
     return {
         group: {task_id: make(group, task_id) for task_id in _suite(descriptor, group)} for group in groups
     }
