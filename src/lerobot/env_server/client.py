@@ -103,8 +103,13 @@ class EnvClient:
         self.failed = False
         self.num_envs = 0
 
-    def describe(self) -> EnvDescriptor:
-        """Return the env the server runs (features, fps, tasks), without building any simulator."""
+    def describe(self, task_group: str | None = None) -> EnvDescriptor:
+        """Return the env the server runs (features, fps, tasks), without building any simulator.
+
+        With `task_group`, that suite's own settings, and its shapes if it declares its features; else the server's
+        first suite's shapes. A server older than per-suite descriptions describes its first suite.
+        """
+        request = {"task_group": task_group} if task_group else {}
         with self._lock:
             try:
                 self.transport.open()
@@ -118,13 +123,13 @@ class EnvClient:
                     body = self._query(
                         deployment_prefix(self.deployment) + "/describe",
                         MessageType.DESCRIBE,
-                        {},
+                        request,
                         self.handshake_timeout_s,
                         MessageType.DESCRIPTOR,
                     )
                 except TimeoutError:
                     # The endpoint serves another deployment, or the server finished starting after the query.
-                    body = self._describe_any()
+                    body = self._describe_any(request)
                     if body["deployment"] != self.deployment:
                         raise ProtocolError(
                             ErrorCode.INCOMPATIBLE,
@@ -137,7 +142,7 @@ class EnvClient:
                 body = self._query(
                     ANY_DEPLOYMENT_DESCRIBE,
                     MessageType.DESCRIBE,
-                    {},
+                    request,
                     self.handshake_timeout_s,
                     MessageType.DESCRIPTOR,
                 )
@@ -146,13 +151,13 @@ class EnvClient:
             self.descriptor = decode_descriptor(body["descriptor"])
             return self.descriptor
 
-    def _describe_any(self) -> dict[str, Any]:
+    def _describe_any(self, request: dict[str, Any]) -> dict[str, Any]:
         """Describe whichever deployment the endpoint serves; a timeout if no server answers."""
         try:
             return self._query(
                 ANY_DEPLOYMENT_DESCRIBE,
                 MessageType.DESCRIBE,
-                {},
+                request,
                 self.handshake_timeout_s,
                 MessageType.DESCRIPTOR,
             )
@@ -176,11 +181,15 @@ class EnvClient:
         seeds: list[int | None] | None = None,
         use_async_envs: bool = False,
     ) -> StepResult:
-        """Open a session of `num_envs` envs on one task and return the result of its first reset."""
+        """Open a session of `num_envs` envs on one task and return the result of its first reset.
+
+        The task must have the observations and actions the server describes for its suite.
+        """
         with self._lock:
             if self.session_id:
                 raise RuntimeError("Env server session already open")
-            descriptor = self.descriptor or self.describe()
+            # Describing also finds the server instance to open the session on.
+            described = self.describe(task_group)
             body = self._query(
                 instance_prefix(self.deployment, self.instance_id) + "/open",
                 MessageType.OPEN,
@@ -198,11 +207,13 @@ class EnvClient:
                 MessageType.ACCEPTED,
             )
             opened_descriptor = decode_descriptor(body["descriptor"])
-            if not opened_descriptor.same_schema(descriptor):
+            # A server older than per-suite descriptions describes its first suite, whatever the task.
+            difference = described.schema_difference(opened_descriptor)
+            if difference:
                 self.transport.close()
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE,
-                    "The selected task has different features than the server described",
+                    f"The opened task has other observations or actions than the server described: {difference}",
                 )
             self.descriptor = opened_descriptor
             self.session_id = body["session_id"]
@@ -303,11 +314,11 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             use_async_envs (`bool`, *optional*, defaults to `False`):
                 Run each env in its own worker process on the server.
             descriptor (`EnvDescriptor`, *optional*):
-                The server's descriptor, if already fetched; saves a `describe` call.
+                The descriptor of the task's suite, if already fetched; saves a `describe` call.
         """
         self.client = client
         self.use_async_envs = use_async_envs
-        self.descriptor = descriptor or self.client.describe()
+        self.descriptor = descriptor or self.client.describe(task_group)
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
         tasks = self.descriptor.tasks.get(self.task_group, [])
@@ -353,6 +364,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             self._latest = self.client.open(
                 self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
             )
+            # The opened task's descriptor, with its simulator's episode limit.
             self.descriptor = self.client.descriptor or self.descriptor
         return self.latest.obs, self.latest.info()
 

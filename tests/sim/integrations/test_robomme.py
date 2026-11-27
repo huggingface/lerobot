@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from lerobot.envs.configs import RoboMMEEnvConfig
+from lerobot.sim import SimConfig, SimSettings
 from lerobot.sim.integrations.robomme import RoboMMEGymEnv, canonical_observation, env_fns
 
 
@@ -94,8 +95,9 @@ def test_robomme_settings_name_the_cameras_and_action_space():
 @pytest.mark.parametrize(
     ("action_space", "control_mode", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
 )
-def test_robomme_conventions_follow_the_action_space(action_space, control_mode, names):
-    sim = RoboMMEEnvConfig(action_space=action_space).sim_config()
+def test_robomme_settings_follow_the_action_space(action_space, control_mode, names):
+    config = RoboMMEEnvConfig(action_space=action_space)
+    sim = SimConfig.resolve(SimSettings(**config.sim_settings()), config.task)
     assert sim.control_mode == control_mode and len(sim.action_names) == names
 
 

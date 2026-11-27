@@ -39,7 +39,7 @@ from gymnasium.vector.utils import batch_space
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "conventions", "vector_env_fns"]
+__all__ = ["canonical_observation", "sim_settings", "vector_env_fns"]
 
 # Isaac Lab steps physics at 120 Hz and applies each action for 8 steps (RoboLab's DROID registration).
 CONTROL_FPS = 15
@@ -216,7 +216,7 @@ def vector_env_fns(
     return {name: {0: partial(make, name)} for name in names}
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+def sim_settings(task: str, **kwargs: Any) -> dict[str, Any]:
     """Return RoboLab's control rate, joint-position control and DROID's names; LeRobot's DROID records ``Franka``."""
     return {
         "fps": CONTROL_FPS,

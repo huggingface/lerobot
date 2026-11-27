@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RoboCerebra integration: reuses the LIBERO env, observation mapping and conventions."""
+"""RoboCerebra integration: reuses the LIBERO env, observation mapping and sim settings."""
 
-from .libero import canonical_observation, conventions, env_fns
+from .libero import canonical_observation, env_fns, sim_settings
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]

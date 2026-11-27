@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LIBERO-plus integration: reuses the LIBERO env, observation mapping and conventions."""
+"""LIBERO-plus integration: reuses the LIBERO env, observation mapping and sim settings."""
 
 from collections.abc import Callable
 from typing import Any
 
-from .libero import canonical_observation, conventions, env_fns as _env_fns
+from .libero import canonical_observation, env_fns as _env_fns, sim_settings
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]
 
 
 def env_fns(**kwargs: Any) -> dict[str, dict[int, list[Callable[[], Any]]]]:

@@ -54,7 +54,7 @@ class EnvServerLaunchConfig(EnvServerConfig):
     Args:
         envhub (`str`, *optional*):
             EnvHub repository to serve: `user/repo[@revision]`, or a local directory. Settings left unset come
-            from its `LEROBOT_SIM`, else from the EnvHub defaults. Serving it runs its code, so it needs
+            from its `sim_settings`, else from the EnvHub defaults. Serving it runs its code, so it needs
             `trust_remote_code`.
         trust_remote_code (`bool`, *optional*, defaults to `False`):
             Consent to run an EnvHub repository's code, from `envhub` or a YAML's `sim`: its `env.py` and, with

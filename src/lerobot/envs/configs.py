@@ -25,7 +25,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server import DEFAULT_MAX_PAYLOAD_BYTES
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sim import SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -93,10 +92,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """
         return _gym_settings(self, "delta")
 
-    def sim_config(self) -> SimConfig:
-        """Return ``sim_settings()`` with the sim's defaults, as local envs and the env server run it."""
-        return SimConfig.resolve(self.sim_settings())
-
     def create_envs(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Removed: build the envs with ``lerobot.envs.make_env(config, n_envs, use_async_envs)``."""
         raise RuntimeError(
@@ -131,12 +126,13 @@ class HubEnvConfig(EnvConfig):
     def sim_settings(self) -> dict[str, Any]:
         if self.use_native_batch:
             raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
-        if not self.hub_path:
-            raise ValueError("--env.hub_path is required for an EnvHub environment")
-        # The repo defines the suites; --env.task picks among them.
+        # A served env is loaded by the server, from its own copy of the repository.
+        if not self.hub_path and self.server is None:
+            raise ValueError("--env.hub_path is required for an EnvHub environment that is not served")
+        # The repo receives --env.task, as a server's --sim.task.
         return {
             "type": "envhub",
-            "task": "",
+            "task": self.task or "",
             "kwargs": {
                 "hub_path": self.hub_path,
                 "trust_remote_code": self.trust_remote_code,

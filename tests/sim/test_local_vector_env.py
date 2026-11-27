@@ -17,7 +17,6 @@
 import os
 import sys
 import types
-from dataclasses import replace
 
 import gymnasium as gym
 import numpy as np
@@ -28,7 +27,7 @@ from gymnasium.wrappers.vector import RecordEpisodeStatistics
 from lerobot.env_server import EnvClient, RemoteVectorEnv
 from lerobot.envs import EnvClientConfig
 from lerobot.envs.factory import descriptor_features, make_env, make_task_env
-from lerobot.sim import SimConfig
+from lerobot.sim import SimConfig, SimSettings
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig, ToyVectorEnv
@@ -86,12 +85,12 @@ def test_every_run_mode_takes_the_same_steps():
     # Env 0 succeeds on the first step, env 1 on the third, and env 2 is truncated after five.
     actions = [[[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1], [0.3, 0.1], [0, 0]], [[1, 0], [1, 0], [0, 0]]]
     actions += [[[0, 0]] * 3] * 2
-    per_env = ToyEnvConfig().sim_config()
+    per_env = ToyEnvConfig().sim_settings()
     # A GPU simulator steps its whole batch, finished envs included; they must still look finished.
-    batched = replace(per_env, type="toy_vector")
+    batched = {**per_env, "type": "toy_vector"}
     runs = []
     for config, use_async_envs in ((per_env, False), (per_env, True), (batched, False), (batched, True)):
-        env = LocalVectorEnv(config, num_envs=3, use_async_envs=use_async_envs)
+        env = LocalVectorEnv(SimSettings(**config), num_envs=3, use_async_envs=use_async_envs)
         try:
             env.reset(seed=[4, 5, 6])
             steps = [env.latest]
@@ -106,7 +105,7 @@ def test_every_run_mode_takes_the_same_steps():
     assert expected_steps[-1].terminated.tolist() == [True, True, False]
     assert expected_steps[-1].truncated.tolist() == [False, False, True]
     for other_descriptor, other_limits, steps in runs[1:]:
-        assert other_descriptor.same_schema(descriptor) and other_limits == limits
+        assert not descriptor.schema_difference(other_descriptor) and other_limits == limits
         for expected, step in zip(expected_steps, steps, strict=True):
             for key in expected.obs:
                 np.testing.assert_array_equal(step.obs[key], expected.obs[key])
@@ -119,7 +118,7 @@ def test_every_run_mode_takes_the_same_steps():
 
 
 def test_simulator_metrics_freeze_with_the_env_that_reported_them():
-    env = LocalVectorEnv(ToyEnvConfig().sim_config(), num_envs=2)
+    env = LocalVectorEnv(SimSettings(**ToyEnvConfig().sim_settings()), num_envs=2)
     try:
         # A reset reports no metric; the simulator fills them on its steps.
         assert env.reset(seed=[4, 5])[1]["metrics"] == {}
@@ -137,9 +136,13 @@ def test_simulator_metrics_freeze_with_the_env_that_reported_them():
 
 
 def test_a_batched_simulator_that_autoresets_is_rejected():
-    config = replace(ToyEnvConfig().sim_config(), type="toy_vector", kwargs={"autoreset_mode": "NEXT_STEP"})
+    config = {
+        **ToyEnvConfig().sim_settings(),
+        "type": "toy_vector",
+        "kwargs": {"autoreset_mode": "NEXT_STEP"},
+    }
     with pytest.raises(ValueError, match="must not autoreset"):
-        LocalVectorEnv(config, num_envs=2)
+        LocalVectorEnv(SimSettings(**config), num_envs=2)
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
@@ -187,7 +190,7 @@ def test_other_tasks_build_their_simulators_on_first_use():
     config = ToyEnvConfig()
     first = make_task_env(config, n_envs=2)
     before = ToyEnv.builds
-    env = LocalVectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
+    env = LocalVectorEnv(SimSettings(**config.sim_settings()), 2, descriptor=first.descriptor)
     try:
         assert ToyEnv.builds == before
         env.reset(seed=[1, 2])
@@ -213,14 +216,15 @@ def test_a_filtered_suite_starts_with_its_first_task():
 
 
 def test_local_and_served_environments_agree_on_tasks():
-    local = LocalVectorEnv(ToyEnvConfig(task_ids=(3, 5)).sim_config())
+    settings = SimSettings(**ToyEnvConfig(task_ids=(3, 5)).sim_settings())
+    local = LocalVectorEnv(settings)
     try:
         # Nothing is opened before the first reset, so no server is needed.
         served = RemoteVectorEnv(EnvClient("tcp/127.0.0.1:7448"), descriptor=local.descriptor)
         assert local.task_id == served.task_id == 3
         # Both reject a task the filtered suite doesn't have.
         with pytest.raises(ValueError, match="Unknown task"):
-            LocalVectorEnv(local.config, task_id=0, descriptor=local.descriptor)
+            LocalVectorEnv(settings, task_id=0, descriptor=local.descriptor)
         with pytest.raises(ValueError, match="Unknown task"):
             RemoteVectorEnv(EnvClient("tcp/127.0.0.1:7448"), task_id=0, descriptor=local.descriptor)
     finally:
@@ -253,7 +257,7 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
         return {task: {0: [lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(_Reach(), 1000))]}}
 
     _register_integration(monkeypatch, "wrapped", env_fns)
-    env = LocalVectorEnv(SimConfig(type="wrapped", task="reach"))
+    env = LocalVectorEnv(SimSettings(type="wrapped", task="reach"))
     try:
         assert env.call("_max_episode_steps") == (1000,)
         assert env.descriptor.max_episode_steps == 1000
@@ -285,7 +289,7 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     monkeypatch.setitem(sys.modules, "libero", None)
     monkeypatch.delitem(sys.modules, "lerobot.sim.integrations.libero", raising=False)
     with pytest.raises(ModuleNotFoundError, match=r"pip install 'lerobot\[libero\]', or serve it"):
-        SimConfig.resolve({"type": "libero", "task": "libero_10"})
+        SimConfig.resolve(SimSettings(type="libero", task="libero_10"), "libero_10")
 
     # Others import their simulator only when building an environment, possibly in a worker process.
     def build():
@@ -296,9 +300,9 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     )
     expected = r"some_sim simulator is not installed \('some_simulator' is missing\): install it, or serve it"
     with pytest.raises(ModuleNotFoundError, match=expected):
-        LocalVectorEnv(SimConfig(type="some_sim", task="reach"))
+        LocalVectorEnv(SimSettings(type="some_sim", task="reach"))
     with pytest.raises(RuntimeError, match=expected):
-        LocalVectorEnv(SimConfig(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
+        LocalVectorEnv(SimSettings(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
 
 
 class _NativeEnv:
@@ -329,7 +333,7 @@ def test_a_new_simulator_needs_only_its_factories_and_observation_adapter(monkey
     _register_integration(
         monkeypatch, "new_engine", lambda task, n_envs: {task: {0: [_NativeEnv] * n_envs}}, adapter
     )
-    env = LocalVectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
+    env = LocalVectorEnv(SimSettings(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
         assert env.single_observation_space["observation.state"].shape == (1,)
         obs, _ = env.reset(seed=[7])
@@ -356,8 +360,8 @@ def test_batched_simulator_can_reuse_observation_storage(monkeypatch, end):
             return obs, reward, np.zeros_like(done), done, info
 
         monkeypatch.setattr(ToyVectorEnv, "step", truncate)
-    config = replace(ToyEnvConfig().sim_config(), type="toy_vector")
-    env = LocalVectorEnv(config, num_envs=2)
+    config = {**ToyEnvConfig().sim_settings(), "type": "toy_vector"}
+    env = LocalVectorEnv(SimSettings(**config), num_envs=2)
     try:
         env.reset(seed=[4, 5])
         terminal_obs, _, terminated, truncated, _ = env.step(np.array([[2, 0], [0, 0]], np.float32))

@@ -32,7 +32,7 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from .utils import RobotObservation, canonical_observation as _canonical_observation, parse_camera_names
 
-__all__ = ["canonical_observation", "conventions", "env_fns"]
+__all__ = ["canonical_observation", "env_fns", "sim_settings"]
 
 logger = logging.getLogger(__name__)
 
@@ -542,7 +542,7 @@ def env_fns(
     return {suite: dict(task_map) for suite, task_map in out.items()}
 
 
-def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+def sim_settings(task: str, **kwargs: Any) -> dict[str, Any]:
     """Return LIBERO's default fps, control mode, state and action names, and robot type.
 
     LIBERO's own `control_mode` option, in `kwargs`, is `relative` (eef deltas) or `absolute` (eef poses).
