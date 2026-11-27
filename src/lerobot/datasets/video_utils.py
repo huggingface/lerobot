@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, cast
 
 import av
@@ -347,6 +347,16 @@ class VideoDecoderCache:
         self.max_size: int | None = max_size
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lock = RLock()
+        # Number of active ``use_decoder`` contexts per path. An entry with a
+        # non-zero count must not have its file handle closed on eviction.
+        self._in_use: dict[str, int] = {}
+        # One lock per path so concurrent reads of the same decoder serialize
+        # while different videos decode in parallel.
+        self._entry_locks: dict[str, Lock] = {}
+        # Handles evicted (or cleared) while still in use; closed by the last
+        # reader that releases them. At most one per concurrently decoded path,
+        # so this stays bounded by concurrency, not by cache size.
+        self._pending_close: dict[str, Any] = {}
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
@@ -355,8 +365,13 @@ class VideoDecoderCache:
     def get_decoder(self, video_path: str):
         """Get a cached decoder, evicting LRU if at capacity.
 
-        Use ``use_decoder`` to protect decoding from concurrent eviction or clearing.
+        The returned decoder is not pinned: another thread may evict or clear it
+        at any time. Use ``use_decoder`` when the decoder is about to be read.
         """
+        with self._lock:
+            return self._get_or_create_locked(str(video_path))
+
+    def _open_decoder(self, video_path: str) -> Any:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -365,49 +380,88 @@ class VideoDecoderCache:
                 "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
             )
 
-        video_path = str(video_path)
+        file_handle = fsspec.open(video_path).__enter__()
+        try:
+            decoder = VideoDecoder(file_handle, seek_mode="approximate")
+        except Exception:
+            file_handle.close()
+            raise
+        return decoder, file_handle
 
-        with self._lock:
-            entry = self._cache.get(video_path)
-            if entry is not None:
-                self._cache.move_to_end(video_path)
-                return entry[0]
+    def _get_or_create_locked(self, video_path: str) -> Any:
+        """Return a decoder for ``video_path``; caller must hold ``self._lock``."""
+        entry = self._cache.get(video_path)
+        if entry is not None:
+            self._cache.move_to_end(video_path)
+            return entry[0]
 
-            file_handle = fsspec.open(video_path).__enter__()
-            try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
-            except Exception:
-                file_handle.close()
-                raise
-            self._cache[video_path] = (decoder, file_handle)
+        decoder, file_handle = self._open_decoder(video_path)
+        self._cache[video_path] = (decoder, file_handle)
+        self._evict_locked()
+        return decoder
 
-            # Evict LRU entries until we are back under the cap. We close
-            # evicted file handles immediately; the associated ``VideoDecoder``
-            # is released to the GC when its last reference goes away.
-            if self.max_size is not None:
-                while len(self._cache) > self.max_size:
-                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
-                    with contextlib.suppress(Exception):
-                        evicted_handle.close()
+    def _evict_locked(self) -> None:
+        """Drop LRU entries over capacity; caller must hold ``self._lock``.
 
-            return decoder
+        A handle that is still being read is queued for closure instead of being
+        closed under the reader's feet; the last reader releases it.
+        """
+        if self.max_size is None:
+            return
+        while len(self._cache) > self.max_size:
+            evicted_path, (_, evicted_handle) = self._cache.popitem(last=False)
+            if self._in_use.get(evicted_path):
+                self._pending_close[evicted_path] = evicted_handle
+            else:
+                self._close_handle(evicted_handle)
+                self._entry_locks.pop(evicted_path, None)
+
+    @staticmethod
+    def _close_handle(handle: Any) -> None:
+        with contextlib.suppress(Exception):
+            handle.close()
 
     @contextlib.contextmanager
     def use_decoder(self, video_path: str) -> Iterator[Any]:
         """Keep a decoder and its backing file alive for the duration of decoding.
 
-        Other threads cannot evict or clear entries while this context is active.
-        Decoding is serialized per cache, including access to the same decoder.
+        The entry is pinned: eviction or ``clear`` will not close its file while
+        the context is active. Reads of the same video are serialized (a decoder
+        is not documented as thread-safe); reads of different videos run in
+        parallel, so sharing one cache across threads does not serialize decoding.
         """
+        key = str(video_path)
         with self._lock:
-            yield self.get_decoder(video_path)
+            decoder = self._get_or_create_locked(key)
+            self._in_use[key] = self._in_use.get(key, 0) + 1
+            entry_lock = self._entry_locks.setdefault(key, Lock())
+            self._cache.move_to_end(key)
+
+        try:
+            with entry_lock:
+                yield decoder
+        finally:
+            with self._lock:
+                remaining = self._in_use.get(key, 1) - 1
+                if remaining > 0:
+                    self._in_use[key] = remaining
+                else:
+                    self._in_use.pop(key, None)
+                    pending = self._pending_close.pop(key, None)
+                    if pending is not None:
+                        self._close_handle(pending)
+                    if key not in self._cache:
+                        self._entry_locks.pop(key, None)
 
     def clear(self):
-        """Clear the cache and close all file handles."""
+        """Clear the cache, closing handles that are not being read."""
         with self._lock:
-            for _, file_handle in self._cache.values():
-                with contextlib.suppress(Exception):
-                    file_handle.close()
+            for path, (_, file_handle) in self._cache.items():
+                if self._in_use.get(path):
+                    self._pending_close[path] = file_handle
+                else:
+                    self._close_handle(file_handle)
+                    self._entry_locks.pop(path, None)
             self._cache.clear()
 
     def size(self) -> int:
