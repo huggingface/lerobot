@@ -14,7 +14,11 @@
 
 """LIBERO integration observations."""
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import numpy as np
+import pytest
 
 from lerobot.envs.configs import LiberoEnvConfig
 from lerobot.envs.utils import preprocess_observation
@@ -57,3 +61,74 @@ def test_libero_declares_the_control_mode_it_runs(monkeypatch):
     )
     assert (absolute.control_mode, absolute.semantics) == ("eef_pose", "libero-eef-pose-v1")
     assert absolute.action_names[0] == "eef.x"
+
+
+@pytest.mark.parametrize("init_states", [True, False])
+def test_libero_init_state_metrics(monkeypatch, tmp_path, init_states):
+    libero = import_without_simulator("libero", monkeypatch)
+
+    states = np.arange(10).reshape(5, 2)
+
+    monkeypatch.setattr(libero, "get_task_init_states", lambda *args, **kwargs: states)
+    monkeypatch.setattr(libero, "get_libero_path", lambda *args: str(tmp_path))
+
+    task = SimpleNamespace(
+        name="test_task",
+        language="Test task",
+        problem_folder="test",
+        bddl_file="test.bddl",
+    )
+    suite = SimpleNamespace(get_task=lambda task_id: task)
+
+    env = libero.LiberoEnv(
+        task_suite=suite,
+        task_id=0,
+        task_suite_name="libero_spatial",
+        camera_name="agentview_image",
+        observation_width=2,
+        observation_height=2,
+        init_states=init_states,
+        episode_index=1,
+        n_envs=2,
+        num_steps_wait=0,
+    )
+
+    raw_obs = {"agentview_image": np.zeros((2, 2, 3), dtype=np.uint8)}
+
+    simulator = MagicMock()
+    simulator.reset.return_value = raw_obs
+    simulator.set_init_state.return_value = raw_obs
+    simulator.check_success.return_value = False
+    env._env = simulator
+
+    action = np.zeros(7, dtype=np.float32)
+
+    for expected_index in (1, 3, 0):
+        env.reset(seed=42)
+
+        if init_states:
+            np.testing.assert_array_equal(
+                simulator.set_init_state.call_args.args[0],
+                states[expected_index],
+            )
+
+        for step in range(2):
+            terminal = step == 1
+            simulator.check_success.return_value = terminal
+            simulator.step.side_effect = lambda action, terminal=terminal: (
+                raw_obs,
+                0.0,
+                False,
+                {"metrics": {"existing_metric": 1.0}} if terminal else {},
+            )
+            _, _, terminated, _, info = env.step(action)
+            assert terminated == terminal
+            if terminal:
+                assert info["metrics"]["existing_metric"] == 1.0
+
+            if init_states:
+                assert info["metrics"]["init_state_id"] == float(expected_index)
+            else:
+                assert "init_state_id" not in info.get("metrics", {})
+
+    assert simulator.set_init_state.call_count == (3 if init_states else 0)

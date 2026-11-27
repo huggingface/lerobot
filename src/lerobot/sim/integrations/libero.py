@@ -209,6 +209,7 @@ class LiberoEnv(gym.Env):
         self._reset_stride = n_envs  # when performing a reset, append `_reset_stride` to `init_state_id`.
 
         self.init_state_id = self.episode_index  # tie each sub-env to a fixed init state
+        self._episode_init_state: int | None = None
 
         # Extract task metadata without allocating GPU resources (safe before fork).
         task = task_suite.get_task(task_id)
@@ -377,8 +378,10 @@ class LiberoEnv(gym.Env):
         super().reset(seed=seed)
         self._env.seed(seed)
         raw_obs = self._env.reset()
+        self._episode_init_state = None
         if self.init_states and self._init_states is not None:
-            raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
+            self._episode_init_state = self.init_state_id % len(self._init_states)
+            raw_obs = self._env.set_init_state(self._init_states[self._episode_init_state])
             self.init_state_id += self._reset_stride  # Change init_state_id when reset
 
         # After reset, objects may be unstable (slightly floating, intersecting, etc.).
@@ -419,6 +422,9 @@ class LiberoEnv(gym.Env):
                 "is_success": is_success,
             }
         )
+        if self._episode_init_state is not None:
+            info.setdefault("metrics", {})["init_state_id"] = float(self._episode_init_state)
+
         observation = self._format_raw_obs(raw_obs)
         # Return the terminal observation unchanged. The caller owns resetting after
         # termination; vector envs created below use NEXT_STEP autoreset. Resetting here
