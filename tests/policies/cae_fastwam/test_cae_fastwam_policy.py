@@ -29,6 +29,7 @@ pytest.importorskip("diffusers", reason="cae_fastwam requires the `fastwam` extr
 import lerobot.policies as lerobot_policies
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.policies import CAEFastWAMConfig, get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.policies.cae_fastwam import modeling_cae_fastwam
 from lerobot.policies.cae_fastwam.configuration_cae_fastwam import CAE_FASTWAM_BASE_MODEL_ID
 from lerobot.policies.cae_fastwam.modeling_cae_fastwam import (
     CAEActionDecoder,
@@ -426,6 +427,64 @@ def test_joint_video_inference_is_rejected(offline_components):
     policy = CAEFastWAMPolicy(tiny_config()).eval()
     with pytest.raises(NotImplementedError, match="infer_action"):
         policy.model.infer(prompt=None, input_image=torch.zeros(1, 3, 16, 32), num_frames=5)
+
+
+def test_hub_kernels_are_off_by_default(offline_components, monkeypatch):
+    assert CAEFastWAMConfig().use_hub_kernels is False
+    monkeypatch.setattr(modeling_cae_fastwam, "_load_hub_kernels", lambda policy: pytest.fail("loaded"))
+    policy = CAEFastWAMPolicy(tiny_config(dtype=torch.float32)).eval()
+    assert policy.predict_action_chunk(inference_batch(), noise=torch.randn(1, 2, 5)).shape == (1, 8, 3)
+    assert "_hub_kernels" not in dict(policy.named_modules()) and not any(
+        "hub" in k for k in policy.state_dict()
+    )
+
+
+def test_hub_kernels_fall_back_to_the_pytorch_path_where_unavailable(offline_components, caplog):
+    torch.manual_seed(0)
+    policy = CAEFastWAMPolicy(tiny_config(dtype=torch.float32)).eval()
+    batch, noise = inference_batch(), torch.randn(1, 2, 5)
+    expected = policy.predict_action_chunk(batch, noise=noise)
+    policy.config.use_hub_kernels = True
+    with caplog.at_level("WARNING"):
+        chunk = policy.predict_action_chunk(batch, noise=noise)
+    assert "using the PyTorch path" in caplog.text
+    torch.testing.assert_close(chunk, expected, rtol=0, atol=0)
+    assert policy._hub_kernels is False  # not retried on every chunk
+
+
+def test_hub_kernels_errors_fall_back(offline_components, monkeypatch, caplog):
+    policy = CAEFastWAMPolicy(tiny_config(dtype=torch.float32)).eval()
+
+    def unavailable(repo_id, version):
+        assert (repo_id, version) == ("amd/cae-fastwam-kernels", 2)
+        raise RuntimeError("no build for this GPU")
+
+    monkeypatch.setattr(modeling_cae_fastwam.torch.version, "hip", "7.0")
+    monkeypatch.setattr(policy.model, "device", torch.device("cuda"))
+    monkeypatch.setattr(modeling_cae_fastwam, "_kernels_available", True)
+    monkeypatch.setattr(modeling_cae_fastwam, "get_kernel", unavailable, raising=False)
+    with caplog.at_level("WARNING"):
+        assert modeling_cae_fastwam._load_hub_kernels(policy) is None
+    assert "no build for this GPU" in caplog.text
+
+
+def test_hub_kernels_runtime_serves_the_chunk(offline_components, monkeypatch):
+    torch.manual_seed(0)
+    policy = CAEFastWAMPolicy(tiny_config(dtype=torch.float32, use_hub_kernels=True)).eval()
+    calls = []
+
+    class Runtime:
+        def infer_action(self, **kwargs):
+            calls.append(kwargs)
+            return policy.model.infer_action(**kwargs)
+
+    monkeypatch.setattr(modeling_cae_fastwam, "_load_hub_kernels", lambda p: Runtime())
+    batch, noise = inference_batch(), torch.randn(1, 2, 5)
+    chunk = policy.predict_action_chunk(batch, noise=noise)
+    assert len(calls) == 1 and calls[0]["action_horizon"] == 8 and calls[0]["noise"] is noise
+    assert policy.model.suite_id == 1
+    policy.config.use_hub_kernels = False
+    torch.testing.assert_close(chunk, policy.predict_action_chunk(batch, noise=noise), rtol=0, atol=0)
 
 
 # ---------------------------------------------------------------------------------------------------------

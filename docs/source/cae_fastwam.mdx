@@ -58,6 +58,10 @@ The processors are FastWAM's: LeRobot's min/max normalizer for the state (and, i
 
 The checkpoint sets FastWAM's `policy.fp32_attention=false` (attention in the model dtype, as in the original implementation).
 
+### Optional Kernel Hub Inference on AMD Instinct MI355X
+
+`--policy.use_hub_kernels=true` runs inference through the [`amd/cae-fastwam-kernels`](https://huggingface.co/kernels/amd/cae-fastwam-kernels) Kernel Hub package (version 2; install it with `pip install "kernels>=0.14.1,<0.15.0"`). The package replaces the first-frame VAE encode, the video prefill and the action denoising with its compiled path. Inputs, noise, the denoising schedule and the action decoder stay LeRobot's. The option is off by default and is for inference only. It keeps its own copy of the expert and VAE weights and their fused caches, about 17 GB more GPU memory. On other GPUs, with other model options or without `kernels`, the policy logs a warning and uses the PyTorch path.
+
 ## Training
 
 `lerobot-train` fine-tunes with FastWAM's joint flow-matching loss. The action targets are the frozen action-VAE encoder's latents of the normalized ground-truth chunk, and a latent token is padding if any of its 4 steps is. The mixture-of-transformers and the proprio encoder are trained; the Wan2.2 VAE, UMT5 and the action VAE stay frozen. `--policy.type=cae_fastwam` initializes from `amd/CAE-FastWAM-lerobot` (`policy.base_model_id`), as FastWAM does from `lerobot/fastwam_base`.

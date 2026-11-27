@@ -22,16 +22,27 @@ Devices, Inc.). Everything else is LeRobot's FastWAM.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
-from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
+from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy, batch_device
 from lerobot.policies.fastwam.wan import FastWAM
+from lerobot.utils.import_utils import _kernels_available
 
 from .configuration_cae_fastwam import CAEFastWAMConfig
+
+if _kernels_available:
+    from kernels import get_kernel
+
+logger = logging.getLogger(__name__)
+
+# Optional inference path for AMD Instinct MI355X (`use_hub_kernels`).
+HUB_KERNELS_REPO_ID = "amd/cae-fastwam-kernels"
+HUB_KERNELS_VERSION = 2
 
 
 def _upsampling_strides(ratio: int) -> list[int]:
@@ -345,6 +356,9 @@ class CAEFastWAMPolicy(FastWAMPolicy):
         for module in (self.model.action_encoder, self.model.action_decoder):
             module.requires_grad_(False)
             module.eval()
+        # Kernel Hub runtime (`use_hub_kernels`), loaded at the first prediction; not a submodule, so it
+        # stays out of `state_dict()`. None: not loaded yet, False: unavailable.
+        object.__setattr__(self, "_hub_kernels", None)
 
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, Any]]:
         """Compute the CAE-FastWAM training loss for a preprocessed LeRobot batch.
@@ -375,4 +389,43 @@ class CAEFastWAMPolicy(FastWAMPolicy):
             Tensor: Action chunk `[B, action_horizon, action_dim]`.
         """
         self.model.suite_id = self.config.suite_id()
-        return super().predict_action_chunk(batch, noise=noise)
+        runtime = self._hub_kernels_runtime()
+        if runtime is None:
+            return super().predict_action_chunk(batch, noise=noise)
+        self.eval()
+        actions = [
+            runtime.infer_action(**kwargs)["action"]
+            for kwargs in self._per_item_infer_kwargs(batch, noise=noise)
+        ]
+        return torch.stack(actions).to(device=batch_device(batch), dtype=torch.float32)
+
+    def _hub_kernels_runtime(self) -> Any | None:
+        """The `amd/cae-fastwam-kernels` runtime when `use_hub_kernels` is set and it can run, else None."""
+        if not self.config.use_hub_kernels:
+            return None
+        if self._hub_kernels is None:
+            object.__setattr__(self, "_hub_kernels", _load_hub_kernels(self) or False)
+        return self._hub_kernels or None
+
+
+def _load_hub_kernels(policy: CAEFastWAMPolicy) -> Any | None:
+    """Load the Kernel Hub runtime for `policy`; None (with a warning) where it cannot run."""
+    try:
+        if torch.version.hip is None or policy.model.device.type != "cuda":
+            raise RuntimeError("it runs on AMD Instinct GPUs with a ROCm build of PyTorch")
+        if not _kernels_available:
+            raise ImportError("the `kernels` package is not installed (pip install kernels)")
+        kernel = get_kernel(HUB_KERNELS_REPO_ID, version=HUB_KERNELS_VERSION)
+        runtime = kernel.lerobot_runtime(policy)
+    except Exception as exc:
+        logger.warning(
+            "CAE-FastWAM: %s (version %d) is unavailable (%s); using the PyTorch path.",
+            HUB_KERNELS_REPO_ID,
+            HUB_KERNELS_VERSION,
+            exc,
+        )
+        return None
+    logger.info(
+        "CAE-FastWAM: inference runs through %s (version %d).", HUB_KERNELS_REPO_ID, HUB_KERNELS_VERSION
+    )
+    return runtime

@@ -125,6 +125,10 @@ class CAEFastWAMConfig(FastWAMConfig):
         fp32_attention (bool): False: attention in the model dtype, as the original implementation.
         toggle_action_dimensions (list[int]): `[-1]` maps the LIBERO gripper from the dataset
             convention (0 close, 1 open) to the simulator's (+1 close, -1 open) and binarizes it.
+        use_hub_kernels (bool): Run inference through the `amd/cae-fastwam-kernels` Kernel Hub
+            package (AMD Instinct MI355X; needs the `kernels` package). Where it cannot run (another
+            GPU, other model options, `kernels` missing) the policy logs a warning and uses the
+            PyTorch path. Inference only; it always uses the package's compiled path.
     """
 
     action_latent_tokens: int = 8
@@ -140,6 +144,7 @@ class CAEFastWAMConfig(FastWAMConfig):
     base_model_id: str | None = CAE_FASTWAM_BASE_MODEL_ID
     fp32_attention: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=lambda: [-1])
+    use_hub_kernels: bool = False
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
