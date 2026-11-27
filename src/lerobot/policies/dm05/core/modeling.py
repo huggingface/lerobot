@@ -295,6 +295,46 @@ def build_prefix_position_ids(
     return pos.clamp_min_(0)
 
 
+def recompute_first_text_key_fp32(
+    language_model: nn.Module,
+    input_ids: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    image_token_id: int,
+    cached_key: torch.Tensor,
+) -> torch.Tensor:
+    """Recompute first-layer text keys for the action expert without BF16 rounding."""
+    embedding = language_model.embed_tokens
+    text_mask = (input_ids != image_token_id) & (input_ids != embedding.padding_idx)
+    if attention_mask is not None:
+        text_mask &= attention_mask.to(torch.bool)
+    batch_idx, token_idx = text_mask.nonzero(as_tuple=True)
+    if batch_idx.numel() == 0:
+        return cached_key
+
+    layer = language_model.layers[0]
+    attention = layer.self_attn
+    projection = attention.k_proj
+    with torch.autocast(device_type=cached_key.device.type, enabled=False):
+        selected_ids = input_ids[batch_idx, token_idx]
+        text = torch_nn_functional.embedding(selected_ids, embedding.weight).float()
+        text = text * embedding.embed_scale.float()
+        normalized = layer.input_layernorm(text)
+        bias = projection.bias.float() if projection.bias is not None else None
+        key = torch_nn_functional.linear(normalized, projection.weight.float(), bias)
+        key = attention.k_norm(key.view(key.shape[0], -1, attention.head_dim))
+        cos, sin = language_model.rotary_emb(key, position_ids.expand_as(input_ids), attention.layer_type)
+        cos = cos[batch_idx, token_idx, None]
+        sin = sin[batch_idx, token_idx, None]
+        first_half, second_half = key.chunk(2, dim=-1)
+        key = key * cos + torch.cat((-second_half, first_half), dim=-1) * sin
+
+        # Native keys remain the source for image positions and Gemma's self-attention.
+        result = cached_key.float().transpose(1, 2).contiguous()
+        result[batch_idx, token_idx] = key
+    return result.transpose(1, 2).contiguous()
+
+
 def extract_prefix_cache_tensors(
     kv_cache: Cache,
     *,
@@ -1031,7 +1071,14 @@ class DM05ActionExpert(Gemma3TextModel):
         if attention_mask is not None and attention_mask.shape[-1] != key_states.shape[-2]:
             attention_mask = attention_mask[..., -key_states.shape[-2] :]
 
-        attn_output = self._attn_fn(query_states, key_states, value_states, attention_mask, ae_layer)
+        if layer_idx == 0 and query_states.dtype == torch.bfloat16 and key_states.dtype == torch.float32:
+            with torch.autocast(device_type=query_states.device.type, enabled=False):
+                attn_output = self._attn_fn(
+                    query_states.float(), key_states, value_states.float(), attention_mask, ae_layer
+                )
+            attn_output = attn_output.to(query_states.dtype)
+        else:
+            attn_output = self._attn_fn(query_states, key_states, value_states, attention_mask, ae_layer)
         attn_output = attn_output.view(batch_size, seq_len, -1)
 
         attn_embeds = ae_layer.self_attn.o_proj(attn_output)
@@ -1527,7 +1574,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         if valid_action_timesteps is not None:
             noise = noise * valid_action_timesteps[..., None]
         time = (
-            torch.distributions.Beta(1.5, 1.0).sample((batch_size,)).to(actions.device, dtype=actions.dtype)
+            torch.distributions.Beta(1.5, 1.0).sample((batch_size,)).to(actions.device, dtype=torch.float32)
             * 0.999
             + 0.001
         )
@@ -1564,7 +1611,7 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         u_t = noise - actions
 
         # Build suffix embeddings and per-layer time conditioning.
-        suffix_embeds = self.model.action_in_proj(x_t)
+        suffix_embeds = self.model.action_in_proj(x_t.to(actions.dtype))
         adarms_cond = build_action_adarms_cond(
             action_in_proj=self.model.action_in_proj,
             time_mlp_in=self.model.time_mlp_in,
@@ -1599,12 +1646,24 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
             pad_token_id=self.model.vlm.model.language_model.padding_idx,
         )
 
+        first_prefix_key = kv_cache.layers[0].keys
+        if inputs_embeds is None and first_prefix_key.dtype == torch.bfloat16:
+            first_prefix_key = recompute_first_text_key_fp32(
+                self.model.language_model,
+                input_ids,
+                prefix_position_ids,
+                attention_mask,
+                self.model.vlm.model.config.image_token_id,
+                first_prefix_key,
+            )
+
         suffix_out = self._suffix_forward(
             suffix_embeds=suffix_embeds,
             attention_mask=suffix_attn_mask,
             position_ids=suffix_position_ids,
             past_key_values=kv_cache,
             adarms_cond=adarms_cond,
+            first_prefix_key=first_prefix_key,
         )
 
         # Compute flow-matching loss.
@@ -1867,12 +1926,16 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
         position_ids: torch.LongTensor,
         past_key_values: Cache,
         adarms_cond: torch.Tensor,
+        first_prefix_key: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Extract cache tensors and run the action expert forward."""
         prefix_cache_keys, prefix_cache_values = extract_prefix_cache_tensors(
             past_key_values,
             num_layers=len(self.model.action_expert.layers),
         )
+
+        if first_prefix_key is not None:
+            prefix_cache_keys = (first_prefix_key, *prefix_cache_keys[1:])
 
         return self.model.action_expert(
             suffix_embeds=suffix_embeds,
