@@ -176,3 +176,9 @@ outputs/
 *.urdf
 *.xml
 *.part
+ds4_follower.py
+ds4_follower1.py
+ds4_episode_recorder.py
+ds4_teach.py
+human_teleop_follower.py
+pose_landmarker_lite.task
