@@ -578,7 +578,7 @@ def test_resume_reuses_recorded_depth_encoder(tmp_path):
     assert resumed.writer._depth_encoder.depth_max == 5.0
     assert resumed.writer._depth_encoder.use_log is False
 
-    with pytest.raises(ValueError, match="depth settings"):
+    with pytest.raises(ValueError, match="depth_max"):
         LeRobotDataset.resume(
             repo_id=DUMMY_REPO_ID,
             root=root,
