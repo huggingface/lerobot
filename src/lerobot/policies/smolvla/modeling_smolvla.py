@@ -52,19 +52,25 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 """
 
+import builtins
 import math
 from collections import deque
+from copy import copy
+from pathlib import Path
 from typing import Any, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
-from lerobot.configs import FeatureType
+from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.feature_spec import FeatureSpec
 from lerobot.utils.import_utils import require_package
 
+from ..checkpoint import SafetensorsCheckpoint
 from ..common.flow_matching import (
     FlowConvention,
     euler_integrate,
@@ -81,10 +87,25 @@ from ..common.vla_utils import (
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import (
+    log_model_loading_keys,
     populate_queues,
+    rename_legacy_vision_model_keys,
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
+
+
+def _tied_state_groups(model: nn.Module) -> list[list[str]]:
+    """Return checkpoint state keys grouped by shared tensor identity (works on ``meta`` too)."""
+    state_dict_keys = set(model.state_dict())
+    groups_by_id: dict[int, list[str]] = {}
+    for name, param in model.named_parameters(remove_duplicate=False):
+        if name in state_dict_keys:
+            groups_by_id.setdefault(id(param), []).append(name)
+    for name, buf in model.named_buffers(remove_duplicate=False):
+        if name in state_dict_keys:
+            groups_by_id.setdefault(id(buf), []).append(name)
+    return [names for names in groups_by_id.values() if len(names) > 1]
 
 
 def normalize(x, min_val, max_val):
@@ -157,17 +178,194 @@ class SmolVLAPolicy(PreTrainedPolicy):
     ):
         """
         Args:
-            config: Policy configuration class instance or None, in which case the default instantiation of
-                    the configuration class is used.
+            config: Policy configuration class instance.
         """
+        load_vlm_weights = kwargs.pop("_load_vlm_weights", None)
+        local_files_only = bool(kwargs.pop("_local_files_only", False))
+        vlm_dtype = kwargs.pop("_vlm_dtype", None)
 
         require_package("transformers", extra="smolvla")
         super().__init__(config)
         config.validate_features()
         self.config = config
         self.init_rtc_processor()
-        self.model = VLAFlowMatching(config, rtc_processor=self.rtc_processor)
+        self.model = VLAFlowMatching(
+            config,
+            rtc_processor=self.rtc_processor,
+            load_vlm_weights=load_vlm_weights,
+            local_files_only=local_files_only,
+            vlm_dtype=vlm_dtype,
+        )
         self.reset()
+
+    @classmethod
+    def _build_meta_skeleton(
+        cls: builtins.type["SmolVLAPolicy"],
+        config: SmolVLAConfig,
+        *,
+        local_files_only: bool,
+        **kwargs: Any,
+    ) -> "SmolVLAPolicy":
+        """Instantiate an unallocated ``meta`` skeleton without loading external backbone weights."""
+        with torch.device("meta"):
+            return cls(
+                config,
+                _load_vlm_weights=False,
+                _local_files_only=local_files_only,
+                _vlm_dtype=torch.bfloat16 if config.load_vlm_weights else None,
+                **kwargs,
+            )
+
+    @classmethod
+    def from_pretrained(
+        cls: builtins.type["SmolVLAPolicy"],
+        pretrained_name_or_path: str | Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        trust_remote_code: bool | None = None,
+        strict: bool = False,
+        **kwargs,
+    ) -> "SmolVLAPolicy":
+        """Load a SmolVLA checkpoint, skipping the redundant VLM backbone weight load when complete."""
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                trust_remote_code=bool(trust_remote_code),
+                **kwargs,
+            )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
+
+        if not isinstance(config, SmolVLAConfig):
+            raise TypeError(f"{cls.__name__} expected a SmolVLAConfig, got {type(config).__name__}.")
+
+        device = config.device
+        if device is None:
+            raise ValueError(f"{type(config).__name__}.device is unset; cannot load the weights")
+
+        weight_files = cls._resolve_weight_files(
+            str(pretrained_name_or_path),
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+            local_files_only=local_files_only,
+        )
+        checkpoint = SafetensorsCheckpoint(weight_files)
+        skeleton = cls._build_meta_skeleton(config, local_files_only=local_files_only, **kwargs)
+
+        expected_state = skeleton.state_dict()
+        expected_keys = list(expected_state)
+        expected_key_set = set(expected_keys)
+        target_dtypes = {key: tensor.dtype for key, tensor in expected_state.items()}
+        param_names = {name for name, _ in skeleton.named_parameters(remove_duplicate=False)}
+        tied_groups = _tied_state_groups(skeleton)
+        alias_lookup = {alias: group for group in tied_groups for alias in group}
+
+        normalized_key_probe = dict.fromkeys(checkpoint.keys())
+        rename_legacy_vision_model_keys(skeleton, normalized_key_probe, "")
+        checkpoint_keys = set(normalized_key_probe)
+
+        missing_keys = [
+            key
+            for key in expected_keys
+            if not any(alias in checkpoint_keys for alias in alias_lookup.get(key, (key,)))
+        ]
+        unexpected_keys = sorted(checkpoint_keys - expected_key_set)
+
+        if missing_keys:
+            if strict:
+                raise RuntimeError(
+                    f"Error(s) in loading state_dict for {cls.__name__}: "
+                    f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+                )
+            del skeleton
+            return super().from_pretrained(
+                pretrained_name_or_path,
+                config=config,
+                force_download=force_download,
+                resume_download=resume_download,
+                proxies=proxies,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                strict=strict,
+                **kwargs,
+            )
+
+        if strict and unexpected_keys:
+            raise RuntimeError(
+                f"Error(s) in loading state_dict for {cls.__name__}: "
+                f"missing keys {missing_keys}, unexpected keys {unexpected_keys}"
+            )
+
+        safetensors_device = resolve_safetensors_device(device)
+        loaded_keys: set[str] = set()
+        unexpected: set[str] = set()
+        for file in checkpoint.files:
+            state = load_file(str(file), device=safetensors_device)
+            rename_legacy_vision_model_keys(skeleton, state, "")
+            for key, tensor in state.items():
+                target_dtype = target_dtypes.get(key)
+                if target_dtype is not None and tensor.dtype != target_dtype:
+                    state[key] = tensor.to(dtype=target_dtype)
+            loaded_keys.update(state.keys() & expected_key_set)
+            result = skeleton.load_state_dict(state, strict=False, assign=True)
+            unexpected.update(result.unexpected_keys)
+            del state
+
+        # Re-bind tied parameters/buffers left on `meta` when safetensors deduplicated an alias.
+        for group in tied_groups:
+            source_name = next((name for name in group if name in loaded_keys), None)
+            if source_name is None:
+                continue
+            source_tensor = (
+                skeleton.get_parameter(source_name)
+                if source_name in param_names
+                else skeleton.get_buffer(source_name)
+            )
+            for alias in group:
+                if alias not in loaded_keys:
+                    parent_name, _, attr_name = alias.rpartition(".")
+                    parent = skeleton.get_submodule(parent_name) if parent_name else skeleton
+                    setattr(parent, attr_name, source_tensor)
+
+        skeleton.model.vlm_with_expert.materialize_runtime_buffers(safetensors_device)
+        skeleton.model.vlm_with_expert.set_requires_grad()
+        skeleton.model.set_requires_grad()
+
+        remaining_meta = [
+            name
+            for name, tensor in (
+                *skeleton.named_parameters(remove_duplicate=False),
+                *skeleton.named_buffers(remove_duplicate=False),
+            )
+            if tensor.device.type == "meta"
+        ]
+        if remaining_meta:
+            raise RuntimeError(f"SmolVLA checkpoint did not materialize all tensors: {remaining_meta}")
+
+        log_model_loading_keys([], sorted(unexpected))
+        skeleton.to(device)
+        skeleton.eval()
+        return skeleton
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -542,21 +740,32 @@ class VLAFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config: SmolVLAConfig, rtc_processor: RTCProcessor | None = None):
+    def __init__(
+        self,
+        config: SmolVLAConfig,
+        rtc_processor: RTCProcessor | None = None,
+        *,
+        load_vlm_weights: bool | None = None,
+        local_files_only: bool = False,
+        vlm_dtype: torch.dtype | None = None,
+    ):
         super().__init__()
         self.config = config
+        effective_load_vlm_weights = config.load_vlm_weights if load_vlm_weights is None else load_vlm_weights
 
         self.vlm_with_expert = SmolVLMWithExpertModel(
             model_id=self.config.vlm_model_name,
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
-            load_vlm_weights=self.config.load_vlm_weights,
+            load_vlm_weights=effective_load_vlm_weights,
             attention_mode=self.config.attention_mode,
             num_expert_layers=self.config.num_expert_layers,
             num_vlm_layers=self.config.num_vlm_layers,
             self_attn_every_n_layers=self.config.self_attn_every_n_layers,
             expert_width_multiplier=self.config.expert_width_multiplier,
             device=self.config.device if self.config.device is not None else "auto",
+            local_files_only=local_files_only,
+            vlm_dtype=vlm_dtype,
         )
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
@@ -575,11 +784,11 @@ class VLAFlowMatching(nn.Module):
         self.fake_image_token = self.vlm_with_expert.processor.tokenizer.fake_image_token_id
         self.global_image_token = self.vlm_with_expert.processor.tokenizer.global_image_token_id
         self.global_image_start_token = torch.tensor(
-            [self.fake_image_token, self.global_image_token], dtype=torch.long
+            [self.fake_image_token, self.global_image_token], dtype=torch.long, device="cpu"
         )
 
         self.add_image_special_tokens = self.config.add_image_special_tokens
-        self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long)
+        self.image_end_token = torch.tensor([self.fake_image_token], dtype=torch.long, device="cpu")
         self.prefix_length = self.config.prefix_length
         self.rtc_processor = rtc_processor
 
