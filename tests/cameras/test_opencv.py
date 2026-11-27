@@ -20,6 +20,7 @@
 # ```
 
 from pathlib import Path
+from threading import Event
 from unittest.mock import MagicMock, patch
 
 import cv2
@@ -386,3 +387,30 @@ def test_rotation(rotation, index_or_path):
             assert camera.width == original_width
             assert camera.height == original_height
             assert img.shape[:2] == (original_height, original_width)
+
+
+def test_read_loop_does_not_publish_after_stop_requested():
+    """A read landing after a stop was requested must not repopulate the frame buffer.
+
+    `_stop_read_thread` gives up joining after 2s while a hardware read can block for
+    longer, so a late frame would otherwise resurrect the buffer that was just cleared
+    and be seen as a fresh frame by the next connect attempt.
+    """
+    config = OpenCVCameraConfig(index_or_path=0, warmup_s=0)
+    camera = OpenCVCamera(config)
+    camera.stop_event = Event()
+
+    def read_then_request_stop():
+        # the stop lands while this read is in flight
+        camera.stop_event.set()
+        return MagicMock()
+
+    with (
+        patch.object(camera, "_read_from_hardware", side_effect=read_then_request_stop),
+        patch.object(camera, "_postprocess_image", return_value=np.zeros((480, 640, 3), np.uint8)),
+    ):
+        camera._read_loop()
+
+    assert camera.latest_frame is None
+    assert camera.latest_timestamp is None
+    assert not camera.new_frame_event.is_set()
