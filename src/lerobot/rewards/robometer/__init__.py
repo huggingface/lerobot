@@ -13,7 +13,12 @@
 # limitations under the License.
 
 from .configuration_robometer import RobometerConfig
-from .modeling_robometer import RobometerRewardModel
+from .modeling_robometer import RobometerOutput, RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
 
-__all__ = ["RobometerConfig", "RobometerRewardModel", "make_robometer_pre_post_processors"]
+__all__ = [
+    "RobometerConfig",
+    "RobometerOutput",
+    "RobometerRewardModel",
+    "make_robometer_pre_post_processors",
+]

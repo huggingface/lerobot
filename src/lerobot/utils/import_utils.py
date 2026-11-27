@@ -166,6 +166,7 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 # Data / serialization
 _datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
+_pyarrow_available = is_package_available("pyarrow")
 _faker_available = is_package_available("faker")
 _msgpack_available = is_package_available("msgpack")
 _zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
@@ -176,6 +177,7 @@ _av_available = is_package_available("av")
 # Misc
 _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")
+_matplotlib_available = is_package_available("matplotlib")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
 _grpc_available = is_package_available("grpcio", import_name="grpc")
 _wallx_deps_available = _transformers_available and _peft_available and _qwen_vl_utils_available

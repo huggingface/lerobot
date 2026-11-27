@@ -151,6 +151,12 @@ def test_binary_classifier_with_default_params(local_encoder):
     assert output.hidden_states.shape == torch.Size([batch_size, 256])
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
 
+    rewards = classifier.predict_reward(input, threshold=0.5)
+    assert rewards.shape == torch.Size([batch_size])
+    assert set(rewards.tolist()).issubset({0.0, 1.0})
+    with pytest.raises(NotImplementedError, match="predict_reward"):
+        classifier.compute_reward(input)
+
 
 @skip_if_package_missing("transformers")
 def test_multiclass_classifier(local_encoder):
@@ -189,6 +195,10 @@ def test_multiclass_classifier(local_encoder):
     assert not torch.isnan(output.probabilities).any(), "Tensor contains NaN values"
     assert output.hidden_states.shape == torch.Size([batch_size, 256])
     assert not torch.isnan(output.hidden_states).any(), "Tensor contains NaN values"
+
+    rewards = classifier.predict_reward(input)
+    assert rewards.shape == torch.Size([batch_size])
+    assert rewards.dtype == torch.int64
 
 
 @skip_if_package_missing("transformers")
