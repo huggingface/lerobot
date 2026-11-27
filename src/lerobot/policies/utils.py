@@ -97,6 +97,35 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
         logging.warning(f"Unexpected key(s) when loading model: {unexpected_keys}")
 
 
+def load_state_dict_checked(
+    model: nn.Module, state_dict: dict[str, torch.Tensor], require_all_keys: bool
+) -> None:
+    """Load `state_dict` into `model`, raising when it leaves a model key unfilled.
+
+    Every tensor whose key matches is copied. Unexpected keys only log a warning, even when
+    `require_all_keys` is set: published checkpoints can carry leftover entries (such as the old
+    `normalize_inputs.*` buffers) that the model no longer has, and dropping them loses nothing.
+    A missing key would leave its tensor as initialised, so it is an error unless
+    `require_all_keys` is off. The error names every missing key and says how to load anyway.
+
+    Args:
+        model (nn.Module): The model to fill.
+        state_dict (dict[str, torch.Tensor]): The tensors to load, keyed like `model.state_dict()`.
+        require_all_keys (bool): Whether a model key the state dict lacks is an error.
+
+    Raises:
+        RuntimeError: `require_all_keys` is set and a model key is missing, or a tensor's shape
+            does not match its parameter (raised by `load_state_dict` in either case).
+    """
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    if require_all_keys and missing_keys:
+        raise RuntimeError(
+            f"Error(s) in loading state_dict for {type(model).__name__}: missing keys {missing_keys}. "
+            "Pass strict=False to load the matching keys and keep the missing ones as initialised."
+        )
+    log_model_loading_keys(missing_keys, unexpected_keys)
+
+
 # TODO: remove once policies load their transformers sub-models with the transformers loader, which applies
 # this rename (`transformers.core_model_loading.convert_and_load_state_dict_in_model`, an internal API).
 def rename_legacy_vision_model_keys(

@@ -17,12 +17,14 @@
 import builtins
 import logging
 from collections import deque
+from contextlib import nullcontext
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 import numpy as np
 import torch
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.utils.hub import split_hub_reference
@@ -37,13 +39,17 @@ else:
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor, AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
+    from transformers.utils import cached_file
 
     from ..pi_gemma import (
         PaliGemmaForConditionalGenerationWithPiGemma,
         PiGemmaModel,
+        skip_weight_init,
     )
 else:
+    skip_weight_init = None
     CONFIG_MAPPING = None
+    cached_file = None
     AutoProcessor = None
     AutoTokenizer = None
     PiGemmaModel = None
@@ -61,6 +67,7 @@ from lerobot.utils.constants import (
 from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_with_pad_torch
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
+from ..utils import load_state_dict_checked
 from .configuration_pi0_fast import PI0FastConfig
 
 
@@ -755,11 +762,15 @@ class PI0FastPolicy(PreTrainedPolicy):
     def __init__(
         self,
         config: PI0FastConfig,
+        *,
+        tokenizers: tuple[Any, Any] | None = None,
         **kwargs,
     ):
         """
         Args:
             config: Policy configuration class instance.
+            tokenizers: The ``(action_tokenizer, paligemma_tokenizer)`` pair, when already loaded.
+                Loaded from ``config`` when omitted.
         """
         require_package("transformers", extra="pi")
         require_package("scipy", extra="pi")
@@ -768,38 +779,9 @@ class PI0FastPolicy(PreTrainedPolicy):
         self.config = config
 
         # Load tokenizers first
-        try:
-            # Load FAST tokenizer
-            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
-            self.action_tokenizer = AutoProcessor.from_pretrained(
-                repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
-            )
-
-            # Load PaliGemma tokenizer for token conversion
-            repo_id, revision = split_hub_reference(config.text_tokenizer_name)
-            self._paligemma_tokenizer = AutoTokenizer.from_pretrained(
-                repo_id,
-                trust_remote_code=config.trust_remote_code,
-                add_eos_token=True,
-                add_bos_token=False,
-                revision=revision,
-                code_revision=revision,
-            )
-
-            logging.info("Loaded FAST tokenizer for action detokenization")
-        except Exception as e:
-            logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
-            logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
-            hint = (
-                ""
-                if config.trust_remote_code
-                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
-                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
-                "or trust_remote_code=True in Python."
-            )
-            raise RuntimeError(
-                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
-            ) from e
+        self.action_tokenizer, self._paligemma_tokenizer = (
+            tokenizers if tokenizers is not None else self._load_tokenizers(config)
+        )
 
         # Initialize the core PI0Fast model
         self.init_rtc_processor()
@@ -814,6 +796,43 @@ class PI0FastPolicy(PreTrainedPolicy):
         self.model.to(config.device)
 
         self.reset()
+
+    @staticmethod
+    def _load_tokenizers(config: PI0FastConfig) -> tuple[Any, Any]:
+        """Load the FAST action tokenizer and the PaliGemma text tokenizer ``config`` names."""
+        try:
+            # Load FAST tokenizer
+            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
+            action_tokenizer = AutoProcessor.from_pretrained(
+                repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
+            )
+
+            # Load PaliGemma tokenizer for token conversion
+            repo_id, revision = split_hub_reference(config.text_tokenizer_name)
+            paligemma_tokenizer = AutoTokenizer.from_pretrained(
+                repo_id,
+                trust_remote_code=config.trust_remote_code,
+                add_eos_token=True,
+                add_bos_token=False,
+                revision=revision,
+                code_revision=revision,
+            )
+
+            logging.info("Loaded FAST tokenizer for action detokenization")
+            return action_tokenizer, paligemma_tokenizer
+        except Exception as e:
+            logging.error(f"Failed to load FAST tokenizer for action detokenization: {e}")
+            logging.error("Tokenizer loading is required for proper policy initialization; aborting.")
+            hint = (
+                ""
+                if config.trust_remote_code
+                else " The FAST action tokenizer runs custom code: after reviewing it, pass "
+                "--policy.trust_remote_code=true (--model.trust_remote_code=true for lerobot-policy-server) "
+                "or trust_remote_code=True in Python."
+            )
+            raise RuntimeError(
+                f"Failed to load required tokenizers for PI0FastPolicy initialization.{hint}"
+            ) from e
 
     @classmethod
     def from_pretrained(
@@ -861,80 +880,50 @@ class PI0FastPolicy(PreTrainedPolicy):
             config.trust_remote_code = trust_remote_code
 
         # Initialize model without loading weights
-        # Check if dataset_stats were provided in kwargs
-        model = cls(config, **kwargs)
+        # A strict load overwrites every tensor, so skip the random initialisation it would
+        # throw away.
+        # The tokenizers load from the Hub: keep that out of the process-wide init patch.
+        require_package("transformers", extra="pi")
+        tokenizers = PI0FastPolicy._load_tokenizers(cast(PI0FastConfig, config))
+        with skip_weight_init() if strict else nullcontext():
+            model = cls(config, tokenizers=tokenizers, **kwargs)
 
-        # Load state dict (expects keys with "model." prefix)
-        try:
-            print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
+        # Load state dict (expects keys with "model." prefix). A missing or unreadable checkpoint,
+        # or one that lacks model keys, raises rather than leaving the policy randomly initialised.
+        print(f"Loading model from: {pretrained_name_or_path}")
+        resolved_file = cached_file(
+            pretrained_name_or_path,
+            "model.safetensors",
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
+        if resolved_file is None:
+            raise FileNotFoundError(f"No model.safetensors found in {pretrained_name_or_path}")
+        original_state_dict = load_file(resolved_file)
+        print("✓ Loaded state dict from model.safetensors")
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    token=token,
-                    revision=revision,
-                    local_files_only=local_files_only,
-                )
-                from safetensors.torch import load_file
+        # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
+        fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
 
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
+        # Then add "model." prefix for all keys that don't already have it
+        remapped_state_dict = {}
+        remap_count = 0
 
-            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
+        for key, value in fixed_state_dict.items():
+            if not key.startswith("model."):
+                new_key = f"model.{key}"
+                remapped_state_dict[new_key] = value
+                remap_count += 1
+            else:
+                remapped_state_dict[key] = value
 
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
+        if remap_count > 0:
+            print(f"Remapped {remap_count} state dict keys")
 
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
-
-            if missing_keys:
-                print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
-                if len(missing_keys) <= 5:
-                    for key in missing_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in missing_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(missing_keys) - 5} more")
-
-            if unexpected_keys:
-                print(f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys")
-                if len(unexpected_keys) <= 5:
-                    for key in unexpected_keys:
-                        print(f"  - {key}")
-                else:
-                    for key in unexpected_keys[:5]:
-                        print(f"  - {key}")
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
-
-            if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
-
-        except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
-
+        load_state_dict_checked(model, remapped_state_dict, require_all_keys=strict)
         return model
 
     def _fix_pytorch_state_dict_keys(
