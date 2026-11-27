@@ -476,6 +476,7 @@ def make_processors(
                 device=device,
                 success_threshold=cfg.processor.reward_classifier.success_threshold,
                 success_reward=cfg.processor.reward_classifier.success_reward,
+                trust_remote_code=cfg.processor.reward_classifier.trust_remote_code,
                 terminate_on_success=terminate_on_success,
             )
         )

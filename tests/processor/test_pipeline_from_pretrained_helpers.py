@@ -23,11 +23,14 @@ the main from_pretrained method to improve modularity and testability.
 
 import inspect
 import json
+import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from copy import deepcopy
 from pathlib import Path
+from types import ModuleType
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -36,8 +39,10 @@ from safetensors.torch import save_file
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition
+from lerobot.processor import pipeline as pipeline_module
 from lerobot.processor.pipeline import (
     DataProcessorPipeline,
+    IdentityProcessorStep,
     ProcessorMigrationError,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -153,12 +158,10 @@ def test_artifact_override_hub(
         if required_artifact is None:
             pytest.fail("overridden obsolete artifact must not be downloaded")
         expected_pattern = f"nested/{required_artifact}"
-        if not Path(required_artifact).suffix:
-            expected_pattern += "/**"
         assert kwargs == {
             "repo_id": "test/artifact-overrides",
             "repo_type": "model",
-            "allow_patterns": expected_pattern,
+            "allow_patterns": [expected_pattern, f"{expected_pattern}/**"],
             **hub_kwargs,
         }
         target = tmp_path / required_artifact
@@ -263,7 +266,10 @@ def test_artifact_override_selectors(tmp_path: Path, artifact_step_registry: str
     entries = [entry, deepcopy(entry)] if selector_kind == "repeated" else [entry]
     _write_artifact_checkpoint(tmp_path, *entries)
     pipeline = DataProcessorPipeline.from_pretrained(
-        tmp_path, config_filename="processor.json", overrides={selector: {"tokenizer_name": "new"}}
+        tmp_path,
+        config_filename="processor.json",
+        overrides={selector: {"tokenizer_name": "new"}},
+        trust_remote_code=selector_kind == "class",
     )
     assert len(pipeline.steps) == len(entries)
     assert all(step.tokenizer_name == "new" for step in pipeline.steps)
@@ -288,8 +294,8 @@ def test_artifact_override_invalid_container(
     _write_artifact_checkpoint(tmp_path, _artifact_override_entry(artifact_step_registry))
     if present:
         (tmp_path / "obsolete").write_text("saved")
-    error = ValueError if present else FileNotFoundError
-    message = "Failed to instantiate processor step" if present else "Missing processor artifact 'obsolete'"
+    error = TypeError if present else FileNotFoundError
+    message = "is not a mapping" if present else "Missing processor artifact 'obsolete'"
     with pytest.raises(error, match=message):
         DataProcessorPipeline.from_pretrained(
             tmp_path, config_filename="processor.json", overrides={artifact_step_registry: invalid_overrides}
@@ -355,7 +361,7 @@ def test_artifact_override_preserves_invalid_config_error(
     entry = _artifact_override_entry(artifact_step_registry)
     entry["config"] = saved_config
     _write_artifact_checkpoint(tmp_path, entry)
-    with pytest.raises(ValueError, match="Failed to instantiate processor step"):
+    with pytest.raises(TypeError, match="is not a mapping"):
         DataProcessorPipeline.from_pretrained(
             tmp_path,
             config_filename="processor.json",
@@ -419,6 +425,140 @@ def test_artifact_override_preserves_missing_state(
             tmp_path,
             config_filename="processor.json",
             overrides={artifact_step_registry: {"tokenizer_name": "new"}},
+        )
+
+
+@pytest.fixture(params=["directory", "file", "hub"])
+def load_artifact_pipeline(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Callable[..., DataProcessorPipeline]:
+    """Load real checkpoint JSON while forbidding obsolete-artifact downloads."""
+
+    def forbidden(**kwargs: Any) -> None:
+        pytest.fail("replaced artifacts must not trigger Hub access")
+
+    monkeypatch.setattr(pipeline_module, "snapshot_download", forbidden)
+    monkeypatch.setattr(pipeline_module, "hf_hub_download", forbidden)
+
+    def load(entry: dict[str, Any], **kwargs: Any) -> DataProcessorPipeline:
+        original_entry = deepcopy(entry)
+        original_overrides = deepcopy(kwargs.get("overrides"))
+        config_path = _write_artifact_checkpoint(tmp_path, entry)
+        original_json = config_path.read_bytes()
+        source = tmp_path if request.param == "directory" else config_path
+        if request.param == "hub":
+            monkeypatch.setattr(pipeline_module, "hf_hub_download", lambda **_: str(config_path))
+            source = "test/artifact-consent"
+        try:
+            return DataProcessorPipeline.from_pretrained(source, config_filename="processor.json", **kwargs)
+        finally:
+            assert entry == original_entry
+            assert kwargs.get("overrides") == original_overrides
+            assert config_path.read_bytes() == original_json
+
+    return load
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize("already_loaded", [False, True])
+def test_artifact_override_external_class_requires_consent(
+    load_artifact_pipeline: Callable[..., DataProcessorPipeline],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    consent: bool,
+    already_loaded: bool,
+) -> None:
+    imported = tmp_path / "imported"
+    constructed = tmp_path / "constructed"
+    module_name = "artifact_consent_external_step"
+    (tmp_path / f"{module_name}.py").write_text(
+        "from pathlib import Path\nfrom lerobot.processor.pipeline import IdentityProcessorStep\n"
+        f"Path({str(imported)!r}).write_text('imported')\n"
+        "class CustomStep(IdentityProcessorStep):\n"
+        "    def __init__(self, tokenizer_name):\n"
+        f"        Path({str(constructed)!r}).write_text('constructed')\n"
+        "        self.tokenizer_name = tokenizer_name\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    entry = _artifact_override_entry("unused")
+    del entry["registry_name"]
+    entry["class"] = f"{module_name}.CustomStep"
+    overrides = {"CustomStep": {"tokenizer_name": "replacement"}}
+    try:
+        if already_loaded:
+            pipeline_module.importlib.import_module(module_name)
+        import_module = MagicMock(wraps=pipeline_module.importlib.import_module)
+        monkeypatch.setattr(pipeline_module.importlib, "import_module", import_module)
+        if consent:
+            pipeline = load_artifact_pipeline(entry, overrides=overrides, trust_remote_code=True)
+            assert pipeline.steps[0].tokenizer_name == "replacement"
+            import_module.assert_called_once_with(module_name)
+        else:
+            with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+                load_artifact_pipeline(entry, overrides=overrides)
+            import_module.assert_not_called()
+        assert imported.exists() is (already_loaded or consent)
+        assert constructed.exists() is consent
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_artifact_override_consent_still_requires_processor_subclass(
+    load_artifact_pipeline: Callable[..., DataProcessorPipeline], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructor = MagicMock()
+
+    class NotProcessorStep:
+        def __init__(self, tokenizer_name: str) -> None:
+            constructor(tokenizer_name)
+
+    module = ModuleType("artifact_consent_non_processor")
+    module.CustomStep = NotProcessorStep
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    entry = _artifact_override_entry("unused")
+    del entry["registry_name"]
+    entry["class"] = f"{module.__name__}.CustomStep"
+    with pytest.raises(TypeError, match="must resolve to a ProcessorStep subclass"):
+        load_artifact_pipeline(
+            entry, overrides={"CustomStep": {"tokenizer_name": "replacement"}}, trust_remote_code=True
+        )
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize(
+    "requested", ["default", "saved-true", "override-true", "saved-false", "override-false"]
+)
+def test_artifact_override_registered_step_consent(
+    load_artifact_pipeline: Callable[..., DataProcessorPipeline],
+    monkeypatch: pytest.MonkeyPatch,
+    consent: bool,
+    requested: str,
+) -> None:
+    constructor = MagicMock()
+
+    class ConsentStep(IdentityProcessorStep):
+        def __init__(self, tokenizer_name: str, trust_remote_code: bool = True) -> None:
+            constructor(tokenizer_name=tokenizer_name, trust_remote_code=trust_remote_code)
+
+    name = "artifact_consent_step"
+    monkeypatch.setitem(ProcessorStepRegistry._registry, name, ConsentStep)
+    entry = _artifact_override_entry(name)
+    overrides = {name: {"tokenizer_name": "replacement"}}
+    if requested.startswith("saved-"):
+        entry["config"]["trust_remote_code"] = requested == "saved-true"
+    elif requested.startswith("override-"):
+        overrides[name]["trust_remote_code"] = requested == "override-true"
+    if not consent and requested in {"saved-true", "override-true"}:
+        with pytest.raises(ValueError, match="needs custom code"):
+            load_artifact_pipeline(entry, overrides=overrides)
+        constructor.assert_not_called()
+    else:
+        load_artifact_pipeline(entry, overrides=overrides, trust_remote_code=consent)
+        constructor.assert_called_once_with(
+            tokenizer_name="replacement",
+            trust_remote_code=False if requested == "override-false" else consent,
         )
 
 
@@ -760,11 +900,19 @@ def test_resolve_step_class_import_path():
 
 
 def test_resolve_step_class_invalid_import_path():
-    """Test resolution with invalid import path."""
+    """Test resolution with invalid import path when trust_remote_code=True."""
     step_entry = {"class": "nonexistent.module.ClassName"}
 
     with pytest.raises(ImportError, match="Failed to load processor step"):
-        DataProcessorPipeline._resolve_step_class(step_entry)
+        DataProcessorPipeline._resolve_step_class(step_entry, trust_remote_code=True)
+
+
+def test_resolve_step_class_untrusted_import_path():
+    """Test resolution with untrusted custom import path raises ValueError."""
+    step_entry = {"class": "nonexistent.module.ClassName"}
+
+    with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+        DataProcessorPipeline._resolve_step_class(step_entry, trust_remote_code=False)
 
 
 # Override Validation Tests
@@ -836,3 +984,161 @@ def test_simplified_three_way_loading():
         )
         assert loaded_config["name"] == "DirectoryTest"
         assert base_path == tmp_path
+
+
+# Caller consent for processor imports and construction.
+
+
+@pytest.fixture(params=["config", "hub"])
+def load_pipeline(request, tmp_path, monkeypatch):
+    def load(step, **kwargs):
+        config = {"steps": [step]}
+        if request.param == "config":
+            return DataProcessorPipeline.from_config(config, **kwargs)
+        path = tmp_path / "processor.json"
+        path.write_text(json.dumps(config))
+        monkeypatch.setattr(pipeline_module, "hf_hub_download", lambda **_: str(path))
+        return DataProcessorPipeline.from_pretrained(
+            "user/policy", config_filename="processor.json", **kwargs
+        )
+
+    return load
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_import_side_effects_require_consent(load_pipeline, tmp_path, monkeypatch, consent):
+    marker = tmp_path / "imported"
+    (tmp_path / "external_step.py").write_text(
+        "from pathlib import Path\nfrom lerobot.processor.pipeline import IdentityProcessorStep\n"
+        f"Path({str(marker)!r}).touch()\nclass CustomStep(IdentityProcessorStep): pass\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        if consent:
+            assert (
+                len(load_pipeline({"class": "external_step.CustomStep"}, trust_remote_code=True).steps) == 1
+            )
+        else:
+            with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+                load_pipeline({"class": "external_step.CustomStep"})
+        assert marker.exists() is consent
+    finally:
+        sys.modules.pop("external_step", None)
+
+
+def test_loaded_module_does_not_grant_consent(monkeypatch):
+    module = ModuleType("external_step")
+    module.__getattr__ = MagicMock(return_value=IdentityProcessorStep)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    with pytest.raises(ValueError, match="requires `trust_remote_code=True`"):
+        DataProcessorPipeline.from_config({"steps": [{"class": "external_step.CustomStep"}]})
+    module.__getattr__.assert_not_called()
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_popen_never_reaches_construction(load_pipeline, monkeypatch, consent):
+    import subprocess
+
+    constructor = MagicMock()
+    monkeypatch.setattr(subprocess.Popen, "__init__", constructor)
+    with pytest.raises(TypeError if consent else ValueError):
+        load_pipeline({"class": "subprocess.Popen"}, trust_remote_code=consent)
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("consent", [False, True])
+@pytest.mark.parametrize("requested", ["default", "config", "override"])
+def test_step_cannot_grant_its_own_consent(load_pipeline, monkeypatch, consent, requested):
+    loader = MagicMock()
+
+    class ConsentStep(IdentityProcessorStep):
+        def __init__(self, trust_remote_code=True):
+            loader(trust_remote_code=trust_remote_code)
+
+    monkeypatch.setitem(ProcessorStepRegistry._registry, "consent_step", ConsentStep)
+    step = {"registry_name": "consent_step", "config": {}}
+    overrides = {"consent_step": {"trust_remote_code": True}} if requested == "override" else {}
+    if requested == "config":
+        step["config"]["trust_remote_code"] = True
+    if not consent and requested != "default":
+        with pytest.raises(ValueError, match="needs custom code"):
+            load_pipeline(step, overrides=overrides)
+        loader.assert_not_called()
+    else:
+        load_pipeline(step, overrides=overrides, trust_remote_code=consent)
+        loader.assert_called_once_with(trust_remote_code=consent)
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_action_tokenizer_loaders_receive_consent(load_pipeline, monkeypatch, consent):
+    from lerobot.processor import tokenizer_processor
+
+    monkeypatch.setattr(tokenizer_processor, "_transformers_available", True)
+    loaders = [MagicMock(), MagicMock()]
+    monkeypatch.setattr(tokenizer_processor, "AutoProcessor", loaders[0])
+    monkeypatch.setattr(tokenizer_processor, "AutoTokenizer", loaders[1])
+    load_pipeline(
+        {
+            "registry_name": "action_tokenizer_processor",
+            "config": {"action_tokenizer_name": "user/action", "paligemma_tokenizer_name": "user/text"},
+        },
+        trust_remote_code=consent,
+    )
+    for loader in loaders:
+        assert loader.from_pretrained.call_args.kwargs["trust_remote_code"] is consent
+
+
+@pytest.mark.parametrize("consent", [False, True])
+def test_reward_classifier_pipeline_consent_reaches_encoder(load_pipeline, monkeypatch, tmp_path, consent):
+    transformers = pytest.importorskip("transformers")
+    from lerobot.configs import rewards as rewards_module
+    from lerobot.rewards.classifier.configuration_classifier import RewardClassifierConfig  # noqa: F401
+
+    config_file = tmp_path / "classifier_config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "type": "reward_classifier",
+                "device": "cpu",
+                "trust_remote_code": True,
+                "model_name": "user/custom-encoder",
+                "input_features": {"observation.images.top": {"type": "VISUAL", "shape": [3, 16, 16]}},
+            }
+        )
+    )
+    monkeypatch.setattr(rewards_module, "hf_hub_download", lambda **kwargs: str(config_file))
+    # Keep pipeline loading, classifier config parsing and model construction real;
+    # stop only at the external encoder loader, before downloading weights.
+    encoder_loader = MagicMock(side_effect=RuntimeError("reached encoder loader"))
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", encoder_loader)
+
+    with pytest.raises(ValueError, match="reached encoder loader"):
+        load_pipeline(
+            {
+                "registry_name": "reward_classifier_processor",
+                "config": {"pretrained_path": "user/classifier"},
+            },
+            trust_remote_code=consent,
+        )
+
+    encoder_loader.assert_called_once_with(
+        "user/custom-encoder", trust_remote_code=consent, revision=None, code_revision=None
+    )
+
+
+@pytest.mark.parametrize("step_override", [None, False, True])
+def test_explicit_pipeline_consent_overrides_saved_false(load_pipeline, monkeypatch, step_override):
+    loader = MagicMock()
+
+    class ConsentStep(IdentityProcessorStep):
+        def __init__(self, trust_remote_code=False):
+            loader(trust_remote_code)
+
+    monkeypatch.setitem(ProcessorStepRegistry._registry, "consent_step", ConsentStep)
+    overrides = {} if step_override is None else {"consent_step": {"trust_remote_code": step_override}}
+    load_pipeline(
+        {"registry_name": "consent_step", "config": {"trust_remote_code": False}},
+        overrides=overrides,
+        trust_remote_code=True,
+    )
+    loader.assert_called_once_with(True if step_override is None else step_override)

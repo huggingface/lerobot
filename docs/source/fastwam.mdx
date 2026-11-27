@@ -157,6 +157,10 @@ for the current input shapes and is therefore slower; later predictions with the
 same shapes reuse it. Shape changes may trigger recompilation. The eager path
 remains available on unsupported PyTorch or accelerator configurations.
 
+### Predicted Video
+
+`--policy.return_predicted_video=true` makes `select_action` also return the predicted camera frames, shown by `lerobot-rollout --display_data=true`. Actions are unchanged. It adds a video denoising pass and a VAE decode per chunk.
+
 ### LIBERO Action Toggle
 
 FastWAM LIBERO checkpoints use `policy.toggle_action_dimensions=[-1]` by

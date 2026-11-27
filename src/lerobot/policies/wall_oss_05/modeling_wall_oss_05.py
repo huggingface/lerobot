@@ -27,6 +27,7 @@ from torch import Tensor, nn
 
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
+from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
@@ -829,10 +830,11 @@ class WallOSS05Policy(PreTrainedPolicy):
     def _get_processor(self) -> Qwen2_5_VLProcessor:
         if self.processor is None:
             require_package("transformers", extra="wall_oss_05")
+            repo_id, revision = split_hub_reference(
+                self.config.pretrained_name_or_path, self.config.tokenizer_revision
+            )
             self.processor = Qwen2_5_VLProcessor.from_pretrained(
-                self.config.pretrained_name_or_path,
-                revision=self.config.tokenizer_revision,
-                fix_mistral_regex=True,
+                repo_id, fix_mistral_regex=True, revision=revision, code_revision=revision
             )
             self.processor.tokenizer.add_tokens([_PROPRIO_TOKEN, _ACTION_TOKEN])
             self.processor.tokenizer.padding_side = "left"
