@@ -26,6 +26,7 @@ config/processor modules.
 from __future__ import annotations
 
 import json
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,12 @@ def as_float_list(values: Any) -> list[float]:
     if isinstance(values, np.ndarray):
         return values.reshape(-1).astype(np.float32).tolist()
     if isinstance(values, (list, tuple)):
+        # Flatten one level of nested rows (e.g. per-horizon stats) with a single chain call.
+        if set(map(type, values)) <= {list, tuple}:
+            values = list(chain.from_iterable(values))
+        # Copy lists of plain floats in one call instead of converting them item by item.
+        if set(map(type, values)) == {float}:
+            return list(values)
         flattened: list[float] = []
         for value in values:
             flattened.extend(as_float_list(value))
