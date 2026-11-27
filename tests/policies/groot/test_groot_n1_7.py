@@ -1909,6 +1909,11 @@ def test_groot_n1_7_vlm_encode_packs_images_time_major_then_camera_order():
     }
 
 
+def test_groot_n1_7_vlm_encode_falls_back_when_its_saved_device_is_missing(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert GrootN17VLMEncodeStep(device="cuda")._target_device() is None
+
+
 @pytest.mark.parametrize(
     "device",
     [

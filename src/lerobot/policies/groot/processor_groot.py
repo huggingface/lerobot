@@ -2055,7 +2055,7 @@ class GrootN17VLMEncodeStep(ProcessorStep):
             return None
         try:
             return get_safe_torch_device(self.device)
-        except (AssertionError, RuntimeError):
+        except ValueError:
             # A device serialized at train time (e.g. "cuda") may be unavailable
             # when the processor is reloaded elsewhere (e.g. CPU-only eval), and
             # this step is not in the standard device-override set. Fall back to
