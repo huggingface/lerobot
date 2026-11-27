@@ -2542,6 +2542,28 @@ def test_text_rope_computes_in_float32_and_restores_activation_dtype(monkeypatch
     assert rotated_key.dtype == torch.bfloat16
 
 
+@pytest.mark.parametrize("device_type", ["cpu", "cuda", "mps"])
+def test_text_rope_cache_disables_autocast_on_its_own_device(monkeypatch, device_type):
+    # Disabling another device's autocast leaves this one active, which computed
+    # the MPS cache angles in bf16 (https://github.com/huggingface/lerobot/issues/5375).
+    class StopBeforeComputeError(Exception):
+        pass
+
+    seen = []
+
+    def recording_autocast(*, device_type, enabled, **kwargs):
+        seen.append((device_type, enabled))
+        raise StopBeforeComputeError
+
+    monkeypatch.setattr(torch, "autocast", recording_autocast)
+    rotary_emb = object.__new__(MolmoAct2RotaryEmbedding)
+
+    with pytest.raises(StopBeforeComputeError):
+        rotary_emb._build_rope_cache(torch.device(device_type), seq_len=8)
+
+    assert seen == [(device_type, False)]
+
+
 def test_text_eager_attention_uses_fp32_qk_scores(monkeypatch):
     matmul_dtypes = []
     original_matmul = torch.matmul

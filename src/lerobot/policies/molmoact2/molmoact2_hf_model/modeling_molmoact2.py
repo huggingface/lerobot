@@ -1999,8 +1999,7 @@ class MolmoAct2RotaryEmbedding(nn.Module):
             self._pos_cos_cache = torch.empty(0, device=device)
 
     def _build_rope_cache(self, device: torch.device, seq_len: int) -> None:
-        device_type = device.type if device.type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
+        with torch.autocast(device_type=device.type, enabled=False):
             seq = torch.arange(seq_len, device=device, dtype=torch.float)
             freqs = torch.einsum("i,j->ij", seq, self.inv_freq.to(device=device, dtype=torch.float))
             emb = torch.cat((freqs, freqs), dim=-1)
