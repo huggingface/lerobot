@@ -34,7 +34,8 @@ import os
 import re
 import shutil
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -57,6 +58,60 @@ VIDEO_INDEX_COLUMNS = ("file_size", "moov_offset", "moov_size", "kf_indices", "k
 # to cover those known reads keeps them off the slow fallback path.
 _OPEN_PROBE_BYTES = 256 * 1024
 _RANGE_SLACK = 64 * 1024
+
+
+class HubRateLimitError(OSError):
+    """A Lance read of a Hugging Face Hub dataset was rate-limited (HTTP 429)."""
+
+    def __init__(self, repo_id: str | None, uri: str):
+        self.repo_id = repo_id
+        self.uri = uri
+        dataset = f"dataset {repo_id!r}" if repo_id else f"dataset at {uri!r}"
+        super().__init__(
+            f"Failed to read Lance {dataset} from the Hugging Face Hub: the Hub "
+            "rate-limited this request (HTTP 429, RateLimited). Set HF_TOKEN or run "
+            "`hf auth login` to authenticate for a higher rate limit, then retry."
+        )
+
+    def __reduce__(self):
+        # OSError pickles by args, which would lose the dataset fields this error is
+        # meant to carry across DataLoader worker boundaries.
+        return (type(self), (self.repo_id, self.uri))
+
+
+# The released Lance Python bindings map object-store failures to OSError and do not
+# expose OpenDAL's error kind. Its Hugging Face service renders an HTTP 429 as
+# ``RateLimited (temporary)``; once Lance's RetryLayer exhausts its retries the same
+# kind is marked ``RateLimited (persistent)``. Match the kind and ignore that status
+# suffix rather than treating every OSError or bare 429 as a Hub rate limit.
+_HUB_RATE_LIMIT_PATTERN = re.compile(r"\brate\s*limited\b", re.IGNORECASE)
+
+
+def _is_hub_rate_limit(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, HubRateLimitError):
+            return False
+        seen.add(id(current))
+        if isinstance(current, OSError) and _HUB_RATE_LIMIT_PATTERN.search(str(current)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+@contextmanager
+def _translate_hub_rate_limit(repo_id: str | None, uri: str) -> Iterator[None]:
+    """Turn a final Lance Hub 429 into a LeRobot error while preserving its cause."""
+    try:
+        yield
+    except HubRateLimitError:
+        raise
+    except Exception as error:
+        location = StorageLocation.parse(uri)
+        if location.is_hf and _is_hub_rate_limit(error):
+            raise HubRateLimitError(repo_id or location.repo_id, uri) from error
+        raise
 
 
 def _merge_spans(spans: list[tuple[int, int]], gap: int = _RANGE_SLACK) -> list[tuple[int, int]]:
@@ -315,6 +370,9 @@ def _materialize_meta(db, local_root: Path) -> None:
     try:
         table = db.open_table(META_TABLE)
     except Exception as error:
+        # A rate-limited or otherwise transient Hub read is not a missing meta table.
+        if _is_hub_rate_limit(error):
+            raise
         raise FileNotFoundError(
             f"Dataset has no '{META_TABLE}' table. Re-convert it with a converter that "
             "ingests meta/, or create the table in place from an existing meta/ copy."
@@ -398,7 +456,8 @@ def resolve_lance_root(
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():
-            _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
+            with _translate_hub_rate_limit(repo_id, db_uri):
+                _materialize_meta(_connect(db_uri, storage_options, revision, token), local_root)
         return db_uri, local_root
     if root is not None:
         root_path = Path(root)

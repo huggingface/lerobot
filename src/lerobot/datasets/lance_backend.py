@@ -63,10 +63,12 @@ from .lance_utils import (  # noqa: F401
     VIDEO_BLOB_COLUMN,
     VIDEO_INDEX_COLUMNS,
     VIDEOS_TABLE,
+    HubRateLimitError,
     _connect,
     _merge_spans,
     _RangeReader,
     _SparseBlobSource,
+    _translate_hub_rate_limit,
     _VideoDecoderLRU,
     build_video_byte_index,
     lance_mp_context,
@@ -319,30 +321,33 @@ class LanceDatasetReader(BaseDatasetReader):
         # scanning the videos table.
         self._video_row_ids: dict[tuple, int] = {}
         if self.meta.video_keys:
-            db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
-            index = (
-                db.open_table(VIDEOS_TABLE)
-                .search()
-                .select(["video_key", "chunk_index", "file_index"])
-                .with_row_id(True)
-                .to_arrow()
-            )
-            self._video_row_ids = {
-                (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
-                for row in index.to_pylist()
-            }
-            referenced = {
-                (key, int(chunk), int(file))
-                for key, (chunks, files, _) in self._video_locator.items()
-                for chunk, file in zip(chunks, files, strict=True)
-            }
-            missing = referenced - self._video_row_ids.keys()
-            if missing:
-                raise ValueError(
-                    f"videos table is missing {len(missing)} file(s) referenced by episode "
-                    f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
-                    "was converted against different metadata."
+            with _translate_hub_rate_limit(self.repo_id, self._db_uri):
+                db = _connect(
+                    self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token
                 )
+                index = (
+                    db.open_table(VIDEOS_TABLE)
+                    .search()
+                    .select(["video_key", "chunk_index", "file_index"])
+                    .with_row_id(True)
+                    .to_arrow()
+                )
+                self._video_row_ids = {
+                    (row["video_key"], row["chunk_index"], row["file_index"]): row["_rowid"]
+                    for row in index.to_pylist()
+                }
+                referenced = {
+                    (key, int(chunk), int(file))
+                    for key, (chunks, files, _) in self._video_locator.items()
+                    for chunk, file in zip(chunks, files, strict=True)
+                }
+                missing = referenced - self._video_row_ids.keys()
+                if missing:
+                    raise ValueError(
+                        f"videos table is missing {len(missing)} file(s) referenced by episode "
+                        f"metadata, e.g. {sorted(missing)[:3]}. The dataset is incomplete or "
+                        "was converted against different metadata."
+                    )
 
         # Opened lazily by ``_ensure_open()``; reset by ``close()`` and when pickled.
         self._frames_perm: Permutation | None = None
@@ -362,21 +367,22 @@ class LanceDatasetReader(BaseDatasetReader):
     def _ensure_open(self) -> None:
         if self._frames_perm is not None:
             return
-        db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
-        table = db.open_table(FRAMES_TABLE)
-        n_rows = table.count_rows()
-        if n_rows != self.meta.total_frames:
-            raise ValueError(
-                f"frames table has {n_rows} rows but meta declares "
-                f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
-            )
-        frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
-        if self.meta.video_keys:
-            self._videos_table = db.open_table(VIDEOS_TABLE)
-            self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
-            self._decode_pool = ThreadPoolExecutor(max_workers=16)
-        # Publish last: a failure above leaves the reader closed rather than half-open.
-        self._frames_perm = frames_perm
+        with _translate_hub_rate_limit(self.repo_id, self._db_uri):
+            db = _connect(self._db_uri, self._storage_options, revision=self._hub_revision, token=self._token)
+            table = db.open_table(FRAMES_TABLE)
+            n_rows = table.count_rows()
+            if n_rows != self.meta.total_frames:
+                raise ValueError(
+                    f"frames table has {n_rows} rows but meta declares "
+                    f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
+                )
+            frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
+            if self.meta.video_keys:
+                self._videos_table = db.open_table(VIDEOS_TABLE)
+                self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
+                self._decode_pool = ThreadPoolExecutor(max_workers=16)
+            # Publish last: a failure above leaves the reader closed rather than half-open.
+            self._frames_perm = frames_perm
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
@@ -425,33 +431,34 @@ class LanceDatasetReader(BaseDatasetReader):
 
     def get_items(self, indices: list[int]) -> list[dict]:
         """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
-        self._ensure_open()
-        plans = self._plan_batch(indices)
-        rows, row_pos = self._batch_rows(plans)
+        with _translate_hub_rate_limit(self.repo_id, self._db_uri):
+            self._ensure_open()
+            plans = self._plan_batch(indices)
+            rows, row_pos = self._batch_rows(plans)
 
-        # Video prep (byte-index, header ranges, decoder creation, frame-window fetch)
-        # needs only the batch's files, so it overlaps the frames-table fetch. A wrong
-        # speculative range costs a re-fetch via the ranged-read fallback, never a wrong frame.
-        prepared_future: Future[dict[tuple, tuple]] | None = None
-        if self.meta.video_keys:
-            windows = self._plan_file_windows(plans)
-            prefetch_pool = _opened(self._prefetch_pool)
-            prepared_future = prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
+            # Video prep (byte-index, header ranges, decoder creation, frame-window fetch)
+            # needs only the batch's files, so it overlaps the frames-table fetch. A wrong
+            # speculative range costs a re-fetch via the ranged-read fallback, never a wrong frame.
+            prepared_future: Future[dict[tuple, tuple]] | None = None
+            if self.meta.video_keys:
+                windows = self._plan_file_windows(plans)
+                prefetch_pool = _opened(self._prefetch_pool)
+                prepared_future = prefetch_pool.submit(self._prepare_files, sorted(windows), windows)
 
-        columns = self._fetch_rows(rows)
-        items = [self._build_item(plan, columns, row_pos) for plan in plans]
+            columns = self._fetch_rows(rows)
+            items = [self._build_item(plan, columns, row_pos) for plan in plans]
 
-        if prepared_future is not None:
-            decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
-            for item, frames in zip(items, decoded, strict=True):
-                item.update(frames)
-        if self._image_transforms is not None:
-            for item in items:
-                for cam_key in self.meta.camera_keys:
-                    if cam_key in self.meta.depth_keys:
-                        continue
-                    item[cam_key] = self._image_transforms(item[cam_key])
-        return items
+            if prepared_future is not None:
+                decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
+                for item, frames in zip(items, decoded, strict=True):
+                    item.update(frames)
+            if self._image_transforms is not None:
+                for item in items:
+                    for cam_key in self.meta.camera_keys:
+                        if cam_key in self.meta.depth_keys:
+                            continue
+                        item[cam_key] = self._image_transforms(item[cam_key])
+            return items
 
     def _plan_file_windows(self, plans: list[_SamplePlan]) -> dict[tuple, list[tuple[int, int]]]:
         """Map each batch sample's video windows to (file key -> frame spans).
