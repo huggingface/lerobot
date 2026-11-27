@@ -65,6 +65,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: gaussian_readout
+    title: Gaussian action readout
   - local: fineart_vla
     title: FineART-VLA
   - local: molmoact2
