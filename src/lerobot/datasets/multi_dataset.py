@@ -26,9 +26,19 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from .compute_stats import aggregate_stats
 from .feature_utils import get_hf_features_from_features
 from .lerobot_dataset import LeRobotDataset
+from .storage import is_remote_uri
 from .video_utils import VideoFrame
 
 logger = logging.getLogger(__name__)
+
+
+def _child_root(root: str | Path, repo_id: str) -> str | Path:
+    """Append ``repo_id`` to ``root`` without turning an object-store URI into a local path."""
+    if not isinstance(root, str):
+        return root / repo_id
+    # Literal append: object-store keys may contain ``#`` and schemes may be uppercase or contain
+    # underscores, none of which URL reassembly preserves. The root is a prefix, not a signed URL.
+    return root + ("" if root.endswith("/") else "/") + repo_id
 
 
 class MultiLeRobotDataset(torch.utils.data.Dataset):
@@ -36,6 +46,9 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
     The underlying `LeRobotDataset`s are effectively concatenated, and this class adopts much of the API
     structure of `LeRobotDataset`.
+
+    Underlying datasets live at ``root / repo_id``. A local or default root is stored as a ``Path``; an
+    object-store URI (``s3://``, ``hf://``, ...) stays a string and the repo id is appended with ``/``.
     """
 
     def __init__(
@@ -53,14 +66,18 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     ):
         super().__init__()
         self.repo_ids = repo_ids
-        self.root = Path(root) if root else HF_LEROBOT_HOME
+        if root:
+            root_str = str(root)
+            self.root = root_str if is_remote_uri(root_str) else Path(root)
+        else:
+            self.root = HF_LEROBOT_HOME
         self.tolerances_s = tolerances_s if tolerances_s else dict.fromkeys(repo_ids, 0.0001)
         # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
         # are handled by this class.
         self._datasets = [
             LeRobotDataset(
                 repo_id,
-                root=self.root / repo_id,
+                root=_child_root(self.root, repo_id),
                 episodes=episodes[repo_id] if episodes else None,
                 image_transforms=image_transforms,
                 delta_timestamps=delta_timestamps,
