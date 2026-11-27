@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from lerobot.sim import SimConfig
+from lerobot.sim import SimConfig, SimSettings
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
@@ -225,7 +225,9 @@ def import_without_simulator(name: str, monkeypatch: pytest.MonkeyPatch) -> Modu
                 monkeypatch.setitem(sys.modules, module, sys.modules.pop(module))
 
 
-def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch, suite: str) -> SimConfig:
+def resolve_without_simulator(
+    settings: SimSettings, monkeypatch: pytest.MonkeyPatch, suite: str
+) -> SimConfig:
     """``SimConfig.resolve`` for ``suite``, stubbing the simulator's own packages when they are not installed."""
-    import_without_simulator(settings["type"], monkeypatch)
+    import_without_simulator(settings.type, monkeypatch)
     return SimConfig.resolve(settings, suite)

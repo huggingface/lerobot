@@ -16,7 +16,7 @@
 
 import importlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from lerobot.sim.integrations import simulator_required
@@ -82,17 +82,18 @@ class SimConfig:
             self.semantics = f"{self.type}-{self.control_mode.replace('_', '-')}-v1"
 
     @classmethod
-    def resolve(cls, settings: dict[str, Any], suite: str) -> "SimConfig":
-        """Build `suite`'s config from `settings`, taking missing values from the integration's `sim_settings`."""
+    def resolve(cls, settings: "SimSettings", suite: str) -> "SimConfig":
+        """Build `suite`'s config from `settings`, taking unset values from the integration's `sim_settings`."""
         if not suite:
             raise ValueError("Settings are resolved for one suite; name it")
         declared: dict[str, Any] = {}
-        with simulator_required(settings["type"]):
-            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
+        with simulator_required(settings.type):
+            integration = importlib.import_module(f"lerobot.sim.integrations.{settings.type}")
             sim_settings = getattr(integration, "sim_settings", None)
             if sim_settings is not None:
-                declared = sim_settings(suite, **(settings.get("kwargs") or {}))
-        return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
+                declared = sim_settings(suite, **settings.kwargs)
+        given = {key: value for key, value in asdict(settings).items() if value is not None}
+        return cls(**{**declared, **given})
 
 
 @dataclass
@@ -112,3 +113,7 @@ class SimSettings:
     action_names: list[str] | None = None
     robot_type: str | None = None
     features: dict[str, list[int]] | None = None
+
+    def __post_init__(self) -> None:
+        """Read a missing task (an env config's `None`) as every task."""
+        self.task = self.task or ""

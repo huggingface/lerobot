@@ -289,7 +289,7 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     monkeypatch.setitem(sys.modules, "libero", None)
     monkeypatch.delitem(sys.modules, "lerobot.sim.integrations.libero", raising=False)
     with pytest.raises(ModuleNotFoundError, match=r"pip install 'lerobot\[libero\]', or serve it"):
-        SimConfig.resolve({"type": "libero", "task": "libero_10"}, "libero_10")
+        SimConfig.resolve(SimSettings(type="libero", task="libero_10"), "libero_10")
 
     # Others import their simulator only when building an environment, possibly in a worker process.
     def build():

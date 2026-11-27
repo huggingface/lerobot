@@ -324,7 +324,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
                 The descriptor of the suite this one must match, e.g. the run's first suite, since one policy runs
                 them all. A suite that declares no features is described with its shapes until it is built.
         """
-        sim_type, task, options = settings.type, settings.task or "", settings.kwargs
+        sim_type, task, options = settings.type, settings.task, settings.kwargs
         with simulator_required(sim_type):
             integration = importlib.import_module(f"lerobot.sim.integrations.{sim_type}")
             vector_env_fns = getattr(integration, "vector_env_fns", None)
@@ -344,7 +344,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if self.task_group not in factories:
             raise ValueError(f"Unknown task {self.task_group!r}; this environment has {sorted(self.tasks)}")
         # Each suite has its own settings, e.g. its control rate or robot.
-        self.config = SimConfig.resolve(asdict(settings), self.task_group)
+        self.config = SimConfig.resolve(settings, self.task_group)
         task_factories = factories[self.task_group]
         # Default to the suite's first task id, not 0: a suite can be filtered (e.g. LIBERO's task_ids).
         self.task_id: int = next(iter(task_factories), 0) if task_id is None else task_id

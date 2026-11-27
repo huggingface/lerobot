@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from queue import Empty
 from threading import Event
 from typing import Any, cast
@@ -381,7 +381,7 @@ class EnvServer:
         if not task_group or task_group not in self.descriptor.tasks:
             return self.descriptor
         if task_group not in self._suite_descriptors:
-            config = SimConfig.resolve(asdict(self.config.sim), task_group)
+            config = SimConfig.resolve(self.config.sim, task_group)
             self._suite_descriptors[task_group] = describe_suite(
                 config, self.descriptor.tasks, self.descriptor
             )

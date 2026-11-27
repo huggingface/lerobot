@@ -20,6 +20,7 @@ import logging
 import threading
 import warnings
 from collections.abc import Iterator
+from dataclasses import replace
 
 import gymnasium as gym
 import numpy as np
@@ -200,10 +201,10 @@ def test_envhub_settings_come_from_the_repository(hub_repo):
         "    return {'fps': 15, 'control_mode': 'delta', 'semantics': 'reach-delta-v1', 'state_names': ['x', 'y'],"
         " 'action_names': ['dx', 'dy'], 'robot_type': 'so_follower'}\n"
     )
-    sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    sim = _envhub()
     # Repository values fill the settings left out; an explicit value wins over them.
     hub_repo(_ENVHUB_ENV + declared)
-    resolved = SimConfig.resolve({**sim, "fps": 50}, "reach_suite")
+    resolved = SimConfig.resolve(replace(sim, fps=50), "reach_suite")
     assert (resolved.fps, resolved.control_mode, resolved.semantics) == (50, "delta", "reach-delta-v1")
     assert (resolved.state_names, resolved.action_names) == (("x", "y"), ("dx", "dy"))
     assert resolved.robot_type == "so_follower"
@@ -230,7 +231,7 @@ def test_envhub_settings_come_from_the_repository(hub_repo):
 
 def test_envhub_still_reads_lerobot_sim_with_a_warning(hub_repo):
     # Repositories written for LeRobot 0.7 set a LEROBOT_SIM dict.
-    sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    sim = _envhub()
     hub_repo(_ENVHUB_ENV + "LEROBOT_SIM = {'fps': 15}\n")
     with pytest.warns(FutureWarning, match=r"define sim_settings\(task, \*\*make_env_kwargs\)"):
         assert SimConfig.resolve(sim, "reach_suite").fps == 15
