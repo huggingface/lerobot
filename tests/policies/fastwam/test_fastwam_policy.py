@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from dataclasses import replace
 
 import pytest
 import torch
@@ -37,6 +38,7 @@ from lerobot.processor import (
     UnnormalizerProcessorStep,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.feature_spec import FeatureSpec
 
 
 class FakeFastWAMCore(nn.Module):
@@ -412,8 +414,7 @@ def test_predicted_video_splits_the_clip_back_into_cameras(monkeypatch):
         assert frames["observation.images.wrist"].unique().tolist() == [10 + t]
 
 
-def test_cached_inference_paths_support_fullgraph_compile():
-    torch.manual_seed(0)
+def _tiny_fastwam() -> FastWAM:
     expert_kwargs = {
         "hidden_dim": 8,
         "action_dim": 3,
@@ -431,14 +432,20 @@ def test_cached_inference_paths_support_fullgraph_compile():
     mot = MoT(
         mixtures={"video": video_expert, "action": action_expert},
         mot_checkpoint_mixed_attn=False,
-    ).eval()
-    model = FastWAM(
+    )
+    return FastWAM(
         video_expert=video_expert,
         action_expert=action_expert,
         mot=mot,
         vae=nn.Identity(),
         text_dim=8,
-    ).eval()
+    )
+
+
+def test_cached_inference_paths_support_fullgraph_compile():
+    torch.manual_seed(0)
+    model = _tiny_fastwam().eval()
+    video_expert, mot = model.video_expert, model.mot
     video_tokens = torch.randn(1, 3, 8)
     video_freqs = video_expert.freqs[:3].view(3, 1, -1)
     video_t_mod = torch.zeros(1, 6, 8)
@@ -643,6 +650,23 @@ def test_frozen_components_excluded_from_params_but_follow_device_moves(monkeypa
     assert policy.model.text_encoder.weight.dtype == torch.float64
 
 
+def test_the_recorded_device_follows_device_moves():
+    model = _tiny_fastwam()
+    # Frozen VAE and text encoder stand-ins, kept out of the module tree like the real ones.
+    object.__setattr__(model, "vae", nn.Linear(2, 2).requires_grad_(False))
+    object.__setattr__(model, "text_encoder", nn.Linear(2, 2).requires_grad_(False))
+    assert "_device_marker" not in model.state_dict()
+    meta = torch.device("meta")
+
+    # A policy moves the core from its own `_apply`, as this parent does. Meta stands in for a GPU.
+    nn.Sequential(model).to("meta")
+    assert model.device == model.vae.weight.device == model.text_encoder.weight.device == meta
+
+    # Moving only the core's weights to the CPU, where FSDP2 CPU offload keeps them, leaves the device alone.
+    model.mot.to_empty(device="cpu")
+    assert model.device == meta
+
+
 def test_pretrained_config_round_trips_fastwam_features(tmp_path):
     cfg = FastWAMConfig(action_dim=7, proprio_dim=8, image_size=(224, 448), base_model_id=None)
     cfg.save_pretrained(tmp_path)
@@ -707,3 +731,42 @@ def test_vae_adapter_empty_build_encode_decode_shapes():
 
     # list input is accepted and equals the batched path
     assert torch.equal(vae.encode([video[0]]), latents)
+
+
+def test_chunk_serving_declares_the_horizon_and_accepts_any_camera_size(monkeypatch):
+    monkeypatch.setattr(FastWAMPolicy, "_build_core_model", lambda self, config: FakeFastWAMCore())
+    cfg = FastWAMConfig(
+        action_dim=3,
+        proprio_dim=2,
+        action_horizon=4,
+        n_action_steps=2,
+        num_video_frames=5,
+        action_video_freq_ratio=1,
+        image_size=(16, 16),
+        input_features={
+            "observation.images.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 16, 16)),
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        base_model_id=None,
+    )
+    assert cfg.observation_delta_indices == [0, 1, 2, 3, 4]
+
+    policy = FastWAMPolicy(cfg)
+    spec = policy.chunk_inference_spec()
+
+    assert (spec.prediction_steps, spec.execution_steps) == (4, 2)
+    camera = FeatureSpec(
+        "observation.images.image", (480, 640, 3), "uint8", kind="rgb", semantics="RGB pixels"
+    )
+    state = FeatureSpec(OBS_STATE, (2,), "float32", semantics="joint positions")
+    policy.validate_chunk_input_features((camera, state))
+    with pytest.raises(ValueError, match="RGB camera"):
+        policy.validate_chunk_input_features((replace(camera, kind="tensor"), state))
+    with pytest.raises(ValueError, match="Tensor feature shape"):
+        policy.validate_chunk_input_features((camera, replace(state, shape=(3,))))
+    with pytest.raises(ValueError, match="names must exactly match"):
+        policy.validate_chunk_input_features((camera,))
+    policy.config.n_obs_steps = 2
+    with pytest.raises(ValueError, match="n_obs_steps=1"):
+        policy.chunk_inference_spec()
