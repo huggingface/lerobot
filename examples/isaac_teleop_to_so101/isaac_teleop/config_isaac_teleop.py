@@ -133,3 +133,50 @@ class SO101LeaderArmConfig(IsaacTeleopConfig):
     gripper_close_rad: float = _DEFAULT_GRIPPER_CLOSE_RAD
     """Leader gripper angle [rad] at fully CLOSED -> follower jaw 0. Provisional default;
     set from the plugin's ``calibrate`` subcommand. See ``_DEFAULT_GRIPPER_CLOSE_RAD``."""
+
+
+# Stream (URDF) joint names -> rebot_b601_follower motor names, in stream order. The plugin
+# streams the ``reBot-DevArm_fixend`` URDF names; the follower names its seven Damiao motors
+# functionally. Same physical joints, so the mapping is a pure rename.
+_DEFAULT_REBOT_JOINT_NAME_MAP: dict[str, str] = {
+    "joint1": "shoulder_pan",
+    "joint2": "shoulder_lift",
+    "joint3": "elbow_flex",
+    "joint4": "wrist_flex",
+    "joint5": "wrist_yaw",
+    "joint6": "wrist_roll",
+    "gripper": "gripper",
+}
+
+
+@IsaacTeleopConfig.register_subclass("rebot_devarm_leader")
+@dataclass(kw_only=True)
+class RebotDevArmLeaderArmConfig(IsaacTeleopConfig):
+    """Config for an Isaac Teleop reBot DevArm *leader arm* (generic joint-space device).
+
+    Mirrors the leader's joint angles 1:1 onto a follower reBot B601 (LeRobot's
+    ``rebot_b601_follower``) — the same 6-DOF + gripper hardware, so no IK, clutch,
+    retargeter, or gripper normalization is needed. Both DevArm builds work: the plugin
+    drives Damiao motors over a dm-serial adapter (B601-DM) or RobStride motors over
+    SocketCAN (B601-RS), selected by the shape of :attr:`port`. The leader state is streamed
+    in radians by the native ``rebot_devarm_leader`` plugin (which torque-disables the
+    motors so the arm is back-drivable) and read via a ``JointStateSource``; the device
+    converts all joints to degrees and renames them via :attr:`joint_name_map`.
+    """
+
+    port: str = ""
+    """Device of the physical LEADER arm, forwarded to the plugin (which owns the bus) when
+    the example launches it. The plugin picks its backend from the path shape: a serial path
+    (e.g. ``/dev/ttyACM0``) selects the Damiao dm-serial backend (B601-DM build), a bare
+    SocketCAN interface name (e.g. ``can0``) selects the RobStride backend (B601-RS build),
+    and empty runs the hardware-free synthetic trajectory."""
+
+    collection_id: str = "rebot_devarm_leader"
+    """Tensor collection id the leader plugin pushes on; must match the running
+    ``rebot_devarm_leader`` plugin (its second positional arg, default
+    ``"rebot_devarm_leader"``)."""
+
+    joint_name_map: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_REBOT_JOINT_NAME_MAP))
+    """Stream (URDF) joint name -> follower motor name. Defaults to the
+    ``rebot_b601_follower`` motor names; override to drive a follower with a different
+    naming scheme. Stream joints absent from the map are dropped from the action."""
