@@ -87,6 +87,8 @@
     title: NAT VLA
   - local: fastwam
     title: FastWAM
+  - local: cae_fastwam
+    title: CAE-FastWAM
   - local: longwam
     title: Long-WAM
   - local: flux3
