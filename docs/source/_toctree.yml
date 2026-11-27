@@ -89,6 +89,8 @@
     title: FastWAM
   - local: longwam
     title: Long-WAM
+  - local: sana_robot
+    title: SANA-Robot
   - local: flux3
     title: FLUX 3 Action (flux3)
   - local: evo1

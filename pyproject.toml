@@ -280,6 +280,7 @@ lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
 g05 = ["lerobot[transformers-dep]"]
 nat_vla = ["lerobot[transformers-dep]"]
+sana_robot = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -383,6 +384,7 @@ all = [
     "lerobot[lingbot_vla_v2]",
     "lerobot[g05]",
     "lerobot[nat_vla]",
+    "lerobot[sana_robot]",
     "lerobot[lawam]",
     "lerobot[cosmos3]",
     "lerobot[praxis]",
@@ -478,6 +480,9 @@ ignore = [
 "__init__.py" = ["F401", "F403", "E402", "D104"]
 # N803: Triton kernels name their constexpr arguments in upper case by convention
 "src/lerobot/policies/praxis/praxis_core/kernels/*.py" = ["N803"]
+# The Triton kernels of SANA-Robot keep their upstream text: upper-case constexpr arguments and pointers (N803,
+# N806, E741) and nested constexpr / runtime conditions (SIM102)
+"src/lerobot/policies/sana_robot/sana_robot_core/*_triton.py" = ["N803", "N806", "E741", "SIM102"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -571,6 +576,7 @@ default.extend-ignore-identifiers-re = [
     "temperal_downsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
+    "dne",  # gradient of the even rotated channel in the vendored SANA-Robot Triton kernels
 ]
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently
@@ -630,7 +636,12 @@ enable_error_code = [
 # One ruleset for all checked code. Excluded: lerobot.rl (not typed yet) and the vendored
 # molmoact2_hf_model (kept verbatim so upstream syncs stay clean).
 [[tool.mypy.overrides]]
-module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
+module = [
+    "lerobot.rl.*",
+    "lerobot.policies.molmoact2.molmoact2_hf_model.*",
+    # Vendored from the SANA-Robot code release; kept in sync with the upstream files.
+    "lerobot.policies.sana_robot.sana_robot_core.*",
+]
 ignore_errors = true
 
 # ZeroMQ's public stubs re-export names from Python modules. Follow those modules

@@ -57,10 +57,11 @@ def make_env_pre_post_processors(
     Create preprocessor and postprocessor pipelines for environment observations.
 
     Returns a tuple of (preprocessor, postprocessor). By default, delegates to
-    ``env_cfg.get_env_processors()``.  The XVLAConfig and Cosmos3Config overrides for LIBERO environments
-    stay here because they depend on the *policy* config, not the env config.
+    ``env_cfg.get_env_processors()``.  The XVLAConfig, Cosmos3Config and SanaRobotConfig overrides for LIBERO
+    environments stay here because they depend on the *policy* config, not the env config.
     """
     from lerobot.policies.cosmos3.configuration_cosmos3 import Cosmos3Config
+    from lerobot.policies.sana_robot.configuration_sana_robot import SanaRobotConfig
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
     if isinstance(policy_cfg, XVLAConfig) and isinstance(env_cfg, LiberoEnvConfig):
@@ -72,6 +73,13 @@ def make_env_pre_post_processors(
         from lerobot.policies.cosmos3.processor_cosmos3 import make_cosmos3_libero_pre_post_processors
 
         return make_cosmos3_libero_pre_post_processors()
+
+    if isinstance(policy_cfg, SanaRobotConfig) and isinstance(env_cfg, LiberoEnvConfig):
+        from lerobot.policies.sana_robot.processor_sana_robot import (
+            make_sana_robot_libero_pre_post_processors,
+        )
+
+        return make_sana_robot_libero_pre_post_processors()
 
     return env_cfg.get_env_processors()
 
