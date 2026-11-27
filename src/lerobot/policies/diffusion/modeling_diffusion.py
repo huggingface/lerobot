@@ -201,6 +201,21 @@ def _action_dim(config: DiffusionConfig) -> int:
     return action_feature.shape[0]
 
 
+def _rename_compiled_unet_keys(
+    module: "DiffusionModel", state_dict: dict[str, Tensor], prefix: str, *args: Any
+) -> None:
+    """`load_state_dict` pre-hook that loads the U-Net's weights saved with either `compile_model` setting."""
+    # Renamed at load, not at save, so the saved names stay the same for other LeRobot releases.
+    unet = f"{prefix}unet."
+    # Checks the wrapper itself, since a module that forwards attributes (a PEFT wrapper) has `_orig_mod` too.
+    wrapper = "_orig_mod." if "_orig_mod" in module.unet._modules else ""
+    for key in [key for key in state_dict if key.startswith(unet)]:
+        renamed = unet + wrapper + key.removeprefix(unet).removeprefix("_orig_mod.")
+        # Never overwrites a key, so a single file that holds both names still fails a strict load.
+        if renamed not in state_dict:
+            state_dict[renamed] = state_dict.pop(key)
+
+
 class DiffusionModel(nn.Module):
     def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
@@ -227,6 +242,7 @@ class DiffusionModel(nn.Module):
             global_cond_dim += self.config.env_state_feature.shape[0]
 
         self.unet = DiffusionConditionalUnet1d(config, global_cond_dim=global_cond_dim * config.n_obs_steps)
+        self.register_load_state_dict_pre_hook(_rename_compiled_unet_keys)
 
         if config.compile_model:
             # Compile the U-Net. "reduce-overhead" is preferred for the small-batch repetitive loops

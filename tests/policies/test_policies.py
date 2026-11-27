@@ -540,6 +540,64 @@ def test_sharded_load_without_a_hook_streams_the_shards(dummy_dataset_metadata, 
     policy_cls.from_pretrained(save_dir, config=policy_cfg, strict=False)
 
 
+def _small_diffusion_config(dummy_dataset_metadata, compile_model):
+    features = dataset_to_policy_features(dummy_dataset_metadata.features)
+    actions = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
+    inputs = {key: ft for key, ft in features.items() if key not in actions}
+    return make_policy_config(
+        "diffusion",
+        compile_model=compile_model,
+        down_dims=(64, 128),
+        input_features=inputs,
+        output_features=actions,
+    )
+
+
+# A plain save and load is already covered by test_save_and_load_pretrained.
+@pytest.mark.skipif("diffusion" not in AVAILABLE_POLICIES, reason="needs diffusers")
+@pytest.mark.parametrize(("saved_compiled", "loaded_compiled"), [(True, True), (True, False), (False, True)])
+def test_diffusion_loads_weights_saved_with_either_compile_model(
+    dummy_dataset_metadata, tmp_path, saved_compiled, loaded_compiled
+):
+    saved = _small_diffusion_config(dummy_dataset_metadata, saved_compiled)
+    loaded = _small_diffusion_config(dummy_dataset_metadata, loaded_compiled)
+    policy_cls = get_policy_class("diffusion")
+    policy = policy_cls(saved)
+    policy.to(saved.device)
+    policy.save_pretrained(tmp_path)
+    # The rename is only exercised if a compiled policy really saves the wrapper's names.
+    saved_keys = load_file(tmp_path / SAFETENSORS_SINGLE_FILE)
+    assert any(key.startswith("diffusion.unet._orig_mod.") for key in saved_keys) == saved_compiled
+
+    loaded_policy = policy_cls.from_pretrained(tmp_path, config=loaded, strict=True)
+
+    torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
+
+
+@pytest.mark.skipif("diffusion" not in AVAILABLE_POLICIES, reason="needs diffusers")
+def test_diffusion_keeps_the_names_of_a_peft_wrapper_around_its_compiled_unet(dummy_dataset_metadata):
+    peft = pytest.importorskip("peft")
+    policy = get_policy_class("diffusion")(
+        _small_diffusion_config(dummy_dataset_metadata, compile_model=True)
+    )
+    # `--peft.full_training_modules=[unet]` wraps the U-Net in a module that forwards attribute lookups.
+    model = peft.get_peft_model(policy, peft.LoraConfig(target_modules=["out"], modules_to_save=["unet"]))
+
+    model.load_state_dict(model.state_dict(), strict=True)
+
+
+@pytest.mark.skipif("diffusion" not in AVAILABLE_POLICIES, reason="needs diffusers")
+def test_diffusion_strict_load_rejects_both_names_of_a_unet_weight(dummy_dataset_metadata):
+    policy = get_policy_class("diffusion")(
+        _small_diffusion_config(dummy_dataset_metadata, compile_model=True)
+    )
+    state_dict = policy.state_dict()
+    state_dict |= {key.replace("_orig_mod.", ""): value for key, value in state_dict.items()}
+
+    with pytest.raises(RuntimeError, match="Unexpected key"):
+        policy.load_state_dict(state_dict, strict=True)
+
+
 @pytest.mark.parametrize("multikey", [True, False])
 def test_multikey_construction(multikey: bool):
     """
