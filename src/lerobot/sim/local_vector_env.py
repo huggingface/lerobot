@@ -372,7 +372,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         if name == "_max_episode_steps":
             # The descriptor may come from another task, whose episode limit can differ: read this task's own.
             self._build()
-            return (self._max_steps[0],) * self.num_envs
+            return tuple(self._max_steps)
         if name == "task":
             return (self.task_group,) * self.num_envs
         if name == "task_description":
@@ -420,7 +420,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         except BaseException:
             self._close_envs()
             raise
-        # A vector env has one limit, for all of its envs.
+        # A native batched simulator exposes one shared limit; separate envs expose their own limits.
         limits = [_max_episode_steps(env) for env in self._envs] * (self.num_envs if self._batched else 1)
         if None in limits:
             logger.warning(
@@ -460,7 +460,7 @@ class LocalVectorEnv(gym.vector.VectorEnv):
             control_mode=config.control_mode,
             fps=config.fps,
             tasks=self.tasks,
-            max_episode_steps=self._max_steps[0],
+            max_episode_steps=max(self._max_steps),
             robot_type=config.robot_type,
             config=asdict(config),
         )
