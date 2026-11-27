@@ -522,6 +522,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         Inefficient but safe autoregressive decoding for FAST tokens.
         Matches the pattern of _generate_subtask_tokens.
         TODO: jadechoghari, should we move this logic to PI0FastPolicy class?
+
+        As in ``sample_actions_fast_kv_cache``, greedy decoding stops once every sequence
+        emits the end-of-action marker, leaving the remaining positions zero-filled.
+        Stochastic decoding and traced calls (``torch.compile``, as with ``compile_model=True``,
+        ``torch.export`` or ``torch.jit.trace``) always run to ``max_decoding_steps``.
         """
         if max_decoding_steps is None:
             max_decoding_steps = self.config.max_action_tokens
@@ -530,6 +535,18 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
         device = tokens.device
         lm_head = self.paligemma_with_expert.paligemma.lm_head
         tokenizer = self._require_paligemma_tokenizer()
+
+        # detokenize_actions() cuts at the first "|", so greedy decoding can stop once
+        # every sequence has emitted it. Keep stochastic decoding unchanged because
+        # skipping multinomial calls would shift the RNG state for subsequent calls, and
+        # keep the loop a fixed length while tracing (torch.compile, torch.export,
+        # torch.jit.trace), which cannot record a data-dependent break.
+        end_of_action_token_id: int | None = None
+        finished: torch.Tensor | None = None
+        tracing = torch.compiler.is_compiling() or torch.jit.is_tracing()
+        if temperature == 0 and not tracing:
+            end_of_action_token_id = tokenizer.convert_tokens_to_ids("|")
+            finished = torch.zeros(bsize, dtype=torch.bool, device=device)
 
         # add bos token after tokens
         bos_token = torch.full((bsize, 1), tokenizer.bos_token_id, dtype=torch.long, device=device)
@@ -576,6 +593,11 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
                 next_token = torch.argmax(last_logits[:, -1], dim=-1, keepdim=True)
 
             generated_action_tokens[:, t] = next_token.squeeze(-1)
+
+            if finished is not None:
+                finished |= next_token.squeeze(-1) == end_of_action_token_id
+                if bool(finished.all()):
+                    break
 
             # 3. Update sequence for next iteration (unless it's the last step)
             if t < max_decoding_steps - 1:
