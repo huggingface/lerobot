@@ -216,8 +216,10 @@ def analyze_actions(
 def flag_outliers(values: Mapping[int, float], k: float) -> set[int]:
     """Flag episodes that are IQR outliers on one metric.
 
-    Episodes with NaN values are ignored (not flagged). When the interquartile range is zero
-    — all episodes identical on that metric — nothing is flagged.
+    Episodes with NaN values are ignored (not flagged). A zero interquartile range does not
+    imply all episodes are identical: with coincident fences only values strictly outside the
+    common quartile are flagged, so an all-identical metric flags nothing while a single
+    distinct value (e.g. one spiky episode among identical smooth ones) is still flagged.
 
     Args:
         values: Mapping of episode index to the metric value.
@@ -231,8 +233,6 @@ def flag_outliers(values: Mapping[int, float], k: float) -> set[int]:
         return set()
     q1, q3 = np.percentile(finite, [25, 75])
     iqr = q3 - q1
-    if iqr == 0:
-        return set()
     low, high = q1 - k * iqr, q3 + k * iqr
     return {ep for ep, v in values.items() if math.isfinite(v) and (v < low or v > high)}
 

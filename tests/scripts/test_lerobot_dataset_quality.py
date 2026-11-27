@@ -163,6 +163,16 @@ class TestFlagOutliers:
 
         assert flag_outliers(values, k=1.5) == set()
 
+    @pytest.mark.parametrize("outlier", [-100.0, 100.0])
+    def test_zero_iqr_with_distinct_tail_still_flags_outlier(self, outlier):
+        # Q1 == Q3 does not imply all values are equal: a single distinct episode
+        # among identical ones must still be flagged.
+        values = dict.fromkeys(range(8), 1.0)
+        values[8] = outlier
+        values[9] = math.nan
+
+        assert flag_outliers(values, k=1.5) == {8}
+
     def test_nan_values_are_ignored(self):
         values = {0: 0.0, 1: 1.0, 2: math.nan, 3: 2.0, 4: 100.0}
 
