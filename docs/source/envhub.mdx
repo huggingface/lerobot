@@ -81,14 +81,15 @@ Published examples: [SO-101 tabletop in MuJoCo](https://huggingface.co/spaces/le
 
 ### The repository
 
-| File               | Required               | Content                                                                                                                        |
-| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `env.py`           | yes                    | `make_env`, the environment, and optionally `LEROBOT_SIM`                                                                      |
-| `requirements.txt` | no                     | Python packages `env.py` needs, installed in the server image                                                                  |
-| `packages.txt`     | no                     | Ubuntu packages, one per line, installed in the server image                                                                   |
-| `index.html`       | yes for a static Space | A page presenting the environment and explaining how to run it                                                                 |
-| `README.md`        | yes                    | What the environment simulates, its observations, actions, task, rewards and episode end, the commands to run it, its licenses |
-| anything else      | no                     | Scenes, robot models, textures, configs: `env.py` finds them next to itself, in every mode                                     |
+| File                | Required               | Content                                                                                                                              |
+| ------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `env.py`            | yes                    | `make_env`, the environment, and optionally `LEROBOT_SIM`                                                                            |
+| `requirements.txt`  | no                     | Python packages `env.py` needs, installed in the server image                                                                        |
+| `packages.txt`      | no                     | Ubuntu packages, one per line, installed in the server image                                                                         |
+| `envhub.Dockerfile` | no                     | Your own simulator image, served instead of installing `requirements.txt` and `packages.txt` (see [Your own image](#your-own-image)) |
+| `index.html`        | yes for a static Space | A page presenting the environment and explaining how to run it                                                                       |
+| `README.md`         | yes                    | What the environment simulates, its observations, actions, task, rewards and episode end, the commands to run it, its licenses       |
+| anything else       | no                     | Scenes, robot models, textures, configs: `env.py` finds them next to itself, in every mode                                           |
 
 Publish your environment as a Space using [Static HTML](https://huggingface.co/docs/hub/spaces-sdks-static) for a page, [Gradio](https://huggingface.co/docs/hub/spaces-sdks-gradio) for an interactive demo, or [Docker](https://huggingface.co/docs/hub/spaces-sdks-docker) for a custom app. Document the task, robot, installation and evaluation commands, and link to the source and licenses. Videos and camera views help show what to expect. Beyond that, get creative with how you present your environment!
 
@@ -99,6 +100,26 @@ The Space's root `requirements.txt` and `packages.txt` are also installed in the
 LeRobot needs Python 3.12 or newer, and so does your environment: locally, `env.py` runs in LeRobot's process, and the server image runs Ubuntu 24.04's Python 3.12. A simulator that only supports an older Python (for example Isaac Sim 5 and Isaac Lab 2, on Python 3.11) runs neither way; use a release that supports Python 3.12 (Isaac Sim 6 and Isaac Lab 3, as [RoboLab](./robolab) does).
 
 The server image holds only what the server needs: neither torch nor the rest of LeRobot. List everything `env.py` imports in `requirements.txt`, torch included if your simulator needs it, and pin versions.
+
+### Your own image
+
+When your simulator doesn't install from `requirements.txt` and `packages.txt`, for example because it ships as a Docker image, install it in an `envhub.Dockerfile` instead, without LeRobot:
+
+```dockerfile
+# envhub.Dockerfile
+FROM python:3.12-slim
+ENV VIRTUAL_ENV=/opt/sim PATH=/opt/sim/bin:$PATH
+RUN python -m venv "$VIRTUAL_ENV" && pip install --no-cache-dir gymnasium numpy
+```
+
+`lerobot-env-server --docker=true` builds this image, then adds the server to it from your LeRobot checkout, so the server always matches its clients. The repository's `requirements.txt` and `packages.txt` are not installed. The image must:
+
+- set `VIRTUAL_ENV` to the Python 3.12 (or newer) environment `env.py` runs in, with its `bin` first on `PATH`. The server is installed there, along with the requirements it is missing. Packages already installed keep their versions, and one outside the range the server needs fails the build.
+- set what the simulator needs to start with `ENV`, or in its `ENTRYPOINT`, which runs the server.
+
+The server image preserves the simulator image's `USER`, `WORKDIR` and `ENTRYPOINT`. Installation runs as
+root during the build; the server then runs as the image's original user, in its original working directory.
+The image does not need a `user_lerobot` account or user-management tools.
 
 ### `make_env`
 

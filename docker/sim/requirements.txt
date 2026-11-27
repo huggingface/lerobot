@@ -1,9 +1,13 @@
-numpy==2.2.6
-gymnasium==1.4.0
-msgpack==1.2.3
-eclipse-zenoh==1.10.1
-pillow==13.0.0
-draccus==0.11.6
-huggingface-hub==1.33.0
-pyyaml==6.0.3
-termcolor==3.3.0
+# The LeRobot env server's dependencies (LeRobot itself is installed with --no-deps), as ranges: the in-tree
+# images resolve them at build time, and an EnvHub repository's own image keeps its installed versions within them.
+# They follow pyproject.toml, except numpy (its <2.3 bound is opencv's, which the server doesn't use) and
+# huggingface-hub (the server only downloads repositories), so that simulator environments fit.
+numpy>=2.0,<3
+gymnasium>=1.1.1,<2
+msgpack>=1.1,<2
+eclipse-zenoh>=1.9,<1.11
+pillow>=10,<14
+draccus>=0.11.6,<0.12
+huggingface-hub>=0.36,<3
+pyyaml>=6,<7
+termcolor>=2.4,<4

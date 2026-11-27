@@ -22,6 +22,7 @@ Every key of the config takes a nested override, e.g. `--sim.task=libero_10`.
 """
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -45,6 +46,8 @@ COMPOSE_FILE = "docker/sim/compose.server.yaml"
 DOCKERFILE = "docker/Dockerfile.sim"
 # Where the EnvHub stage of the Dockerfile copies the repository.
 ENVHUB_IMAGE_DIR = "/envhub"
+# An EnvHub repository's own simulator image, built before the server is added to it.
+ENVHUB_DOCKERFILE = "envhub.Dockerfile"
 
 
 @dataclass
@@ -101,8 +104,8 @@ class EnvServerLaunchConfig(EnvServerConfig):
                     else ", pin the commit you read (user/repo@<commit>)"
                 )
                 raise ValueError(
-                    f"Serving the EnvHub repository {hub_path} runs its code. Read its env.py, requirements.txt "
-                    f"and packages.txt{pin}, then pass --trust_remote_code=true"
+                    f"Serving the EnvHub repository {hub_path} runs its code. Read its env.py, requirements.txt, "
+                    f"packages.txt and {ENVHUB_DOCKERFILE}{pin}, then pass --trust_remote_code=true"
                 )
             # The EnvHub loader reads the consent from the simulator's options.
             self.sim.kwargs = {**self.sim.kwargs, "trust_remote_code": self.trust_remote_code}
@@ -141,7 +144,8 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         raise ValueError(f"Unsupported backend {backend!r}; choose from {sorted(supported)}")
     directory = HF_LEROBOT_HOME / "sim"
     directory.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "SIM": backend}
+    # Built-in stages use user_lerobot; repository images supply their own user after being built.
+    env = {**os.environ, "SIM": backend, "SIM_USER": "user_lerobot"}
     # The container reads the server's config; the launch options stay on this side.
     values = asdict(cfg)
     data = {item.name: values[item.name] for item in fields(EnvServerConfig)}
@@ -172,7 +176,29 @@ def run_in_docker(cfg: EnvServerLaunchConfig) -> None:
         if cfg.build or subprocess.run(inspect, capture_output=True).returncode:  # nosec B603
             command.append("--build")
             if backend == "envhub":
-                env["ENVHUB_DIR"] = str(envhub_context(hub_path, directory))
+                context = envhub_context(hub_path, directory)
+                env["ENVHUB_DIR"] = str(context)
+                if (context / ENVHUB_DOCKERFILE).is_file():
+                    env["ENVHUB_IMAGE"] = f"lerobot-envhub-simulator:{env['SIM_TAG']}"
+                    build = [
+                        "docker",
+                        "build",
+                        "-f",
+                        str(context / ENVHUB_DOCKERFILE),
+                        "-t",
+                        env["ENVHUB_IMAGE"],
+                    ]
+                    subprocess.run([*build, str(context)], env=env, check=True)  # nosec B603
+                    # Installation uses root, but the server runs in the simulator image's execution context.
+                    metadata = subprocess.run(  # nosec B603,B607
+                        ["docker", "image", "inspect", "--format", "{{json .Config}}", env["ENVHUB_IMAGE"]],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    image_config = json.loads(metadata.stdout)
+                    env["SIM_USER"] = image_config.get("User") or "0"
+                    env["ENVHUB_WORKDIR"] = image_config.get("WorkingDir") or "/"
         command.append("sim")
     subprocess.run(command, env=env, check=True)  # nosec B603
 
