@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 import torch
 
@@ -189,32 +188,20 @@ def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypa
 
 @pytest.mark.dataset
 @pytest.mark.skipif(not _datasets_available, reason="requires datasets")
-@pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
-def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
-    frames, drop_first, drop_last, max_eval_samples
-):
-    policy = SimpleNamespace(drop_n_first_frames=drop_first, drop_n_last_frames=drop_last)
-    expected = list(range(drop_first, frames - drop_last))
-
+@pytest.mark.parametrize("samples,max_eval_samples", [(7, 3), (32, 0)])
+def test_dataloaders_read_the_dataset_s_samples_without_consuming_policy_rng(samples, max_eval_samples):
     class Dataset(torch.utils.data.Dataset):
-        episodes = [0]
-        absolute_to_relative_idx = None
-        meta = SimpleNamespace(
-            episodes={"dataset_from_index": [0], "dataset_to_index": [frames]},
-            has_language_columns=False,
-        )
-        hf_dataset = SimpleNamespace(
-            data=SimpleNamespace(column=lambda name: SimpleNamespace(to_numpy=lambda: np.zeros(frames)))
-        )
+        # What the samples are is the dataset's training sampler; the loaders only order them.
+        sample_counts = {0: samples}
+        meta = SimpleNamespace(episodes={"tasks": [["pick"]]}, has_language_columns=False)
 
         def __len__(self):
-            return frames
+            return samples
 
-        def __getitem__(self, index):
-            return index
+        def __getitem__(self, key):
+            return {"sample": key.sample}
 
     cfg = SimpleNamespace(
-        trainable_config=policy,
         dataset=SimpleNamespace(streaming=False),
         resume=False,
         seed=42,
@@ -225,12 +212,13 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
         dataloader_multiprocessing_context=None,
         max_eval_samples=max_eval_samples,
     )
+    expected = list(range(samples))
     train, evaluation = make_dataloaders(cfg, Dataset(), Dataset(), 0, SimpleNamespace(device_type="cpu"))
-    assert sorted(train.sampler) == expected
+    assert sorted(key.sample for key in train.sampler) == expected
     rng = torch.get_rng_state().clone()
     next(iter(train))
     assert torch.equal(rng, torch.get_rng_state())
-    assert torch.cat(list(evaluation)).tolist() == (
+    assert torch.cat([batch["sample"] for batch in evaluation]).tolist() == (
         expected[:max_eval_samples] if max_eval_samples else expected
     )
     assert torch.equal(rng, torch.get_rng_state())
@@ -249,7 +237,7 @@ def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_worke
         def num_episodes_for_rank(self, rank, world_size):
             return 8
 
-        def num_frames_for_rank(self, rank, world_size, num_workers):
+        def num_samples_for_rank(self, rank, world_size, num_workers):
             assert num_workers <= 8
             return 80
 
@@ -281,7 +269,7 @@ def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
         meta = SimpleNamespace(has_language_columns=False)
         set_data_parallel_shard = MagicMock()
         num_episodes_for_rank = MagicMock(return_value=1)
-        num_frames_for_rank = MagicMock(return_value=1)
+        num_samples_for_rank = MagicMock(return_value=1)
 
         def __iter__(self):
             return iter([])

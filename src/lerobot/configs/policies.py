@@ -32,7 +32,8 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
-from .types import FeatureType, PolicyFeature
+from .sampling import TrainingSampler
+from .types import Deltas, FeatureType, PolicyFeature, reject_removed_delta_properties
 
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
@@ -110,19 +111,29 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             raise TypeError(f"Expected string from get_choice_name, got {type(choice_name)}")
         return choice_name
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        reject_removed_delta_properties(cls)
+
     @property
     @abc.abstractmethod
-    def observation_delta_indices(self) -> list[int] | None:
+    def training_sampler(self) -> TrainingSampler:
+        """What each training sample holds (the policy's inputs and its targets) and how many
+        samples each episode gives.
+
+        Usually ``FrameSampler(Deltas(...))``: windows around every frame (see
+        :mod:`lerobot.configs.sampling`). Training datasets load exactly these.
+        """
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def action_delta_indices(self) -> list[int] | None:
-        raise NotImplementedError
+    def inference_deltas(self) -> Deltas:
+        """The frames every inference runner gives ``predict_action_chunk``: its inputs only.
 
-    @property
-    @abc.abstractmethod
-    def reward_delta_indices(self) -> list[int] | None:
+        Usually a subset of the training windows: a model trained on future frames or
+        actions predicts them and drops them from its inputs. Never declares ``action``.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod

@@ -28,7 +28,8 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION
@@ -169,15 +170,16 @@ class LingBotVAConfig(PreTrainedConfig):
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
-    def observation_delta_indices(self) -> list[int]:
+    def training_sampler(self) -> TrainingSampler:
+        # Future frames are video targets: one per ``action_per_frame / 4`` actions, so the
+        # Wan2.2 VAE (temporal downsample 4) encodes ``frame_chunk_size`` latent frames.
         temporal_downsample = 4
         stride = max(1, self.action_per_frame // temporal_downsample)
-        return list(range(0, self.frame_chunk_size * temporal_downsample * stride, stride))
+        video = range(0, self.frame_chunk_size * temporal_downsample * stride, stride)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
+        return FrameSampler(Deltas(observation=observation, action=range(self.chunk_size)))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        # Past frames come back as chunk feedback (see ``LingBotVAPolicy.chunk_inference_spec``).
+        return Deltas()

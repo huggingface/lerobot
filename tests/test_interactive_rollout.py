@@ -33,6 +33,8 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Front-end and engine internals, imported from their defining modules.
+from lerobot.configs.sampling import FrameSampler  # noqa: E402
+from lerobot.configs.types import Deltas  # noqa: E402
 from lerobot.inference import (  # noqa: E402
     InferenceEngine,
     PlannerReply,
@@ -1349,7 +1351,12 @@ class _StubChunkPolicy:
 
         self.chunk_len = chunk_len
         self.action_dim = action_dim
-        self.config = SimpleNamespace(n_obs_steps=1, chunk_size=chunk_len, n_action_steps=chunk_len)
+        self.config = SimpleNamespace(
+            n_obs_steps=1,
+            chunk_size=chunk_len,
+            n_action_steps=chunk_len,
+            training_sampler=FrameSampler(Deltas(action=range(chunk_len))),
+        )
         self._release = Semaphore(0)
         self.in_inference = Event()
         self.predicted_tasks: list[str] = []

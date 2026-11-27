@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig, XVLAAdamWConfig
 from lerobot.utils.constants import OBS_IMAGES
 
@@ -255,13 +257,9 @@ class XVLAConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list[int] | None:
-        return None
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(action=range(self.chunk_size)))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> list[int] | None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

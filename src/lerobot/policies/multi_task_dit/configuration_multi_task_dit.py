@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas, FeatureType
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
 
@@ -252,13 +254,20 @@ class MultiTaskDiTConfig(PreTrainedConfig):
         return self.objective == "flow_matching"
 
     @property
-    def observation_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1))
+    def training_sampler(self) -> TrainingSampler:
+        window = range(1 - self.n_obs_steps, 1)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        return FrameSampler(
+            Deltas(
+                observation=observation,
+                action=range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon),
+            ),
+            drop_last=self.drop_n_last_frames or 0,
+        )
 
     @property
-    def action_delta_indices(self) -> list:
-        return list(range(1 - self.n_obs_steps, 1 - self.n_obs_steps + self.horizon))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        window = range(1 - self.n_obs_steps, 1)
+        return Deltas(
+            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        )

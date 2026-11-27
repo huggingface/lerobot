@@ -45,8 +45,8 @@ def test_groot_n1_7_optimizer_matches_isaac_training_contract():
 def test_groot_n1_7_sampler_excludes_incomplete_action_tails():
     config = GrootConfig(chunk_size=16, n_action_steps=16)
 
-    assert len(config.action_delta_indices) == 16
-    assert config.drop_n_last_frames == 15
+    assert len(config.training_sampler.deltas.action) == 16
+    assert config.training_sampler.drop_last == 15
 
 
 def test_groot_n1_7_scheduler_matches_isaac_hf_cosine_contract():

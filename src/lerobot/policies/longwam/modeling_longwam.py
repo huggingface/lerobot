@@ -172,7 +172,7 @@ class LongWAMPolicy(PreTrainedPolicy):
     def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict[str, float]]:
         cfg = self.config
         images = self._images(batch)
-        if images.ndim != 5 or images.shape[1] != len(cfg.observation_delta_indices):
+        if images.ndim != 5 or images.shape[1] != len(cfg.training_video_offsets):
             raise ValueError("Training needs the strided history/current/future window")
         context = self._context(batch, batch["observation.state"][:, cfg.past_obs_steps // cfg.video_stride])
         latents = self._encode_video(images.transpose(1, 2))

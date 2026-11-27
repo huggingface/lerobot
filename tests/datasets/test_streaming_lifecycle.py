@@ -40,10 +40,10 @@ def bare_dataset() -> StreamingLeRobotDataset:
     dataset._projected_columns = ["episode_index"]
     dataset._streaming_io_token = None
     dataset._rank_episodes = lambda: ([0, 1, 2, 3], 0, 1)
-    dataset._episode_frame_count = lambda episode: 6
+    dataset._episode_sample_count = lambda episode: 6
     dataset._make_video_cache = lambda *args: None
     dataset._load_episode_dataset = lambda *args: None
-    dataset._make_episode_item = lambda data, ep, frame, **kwargs: {"index": ep * 6 + frame}
+    dataset._make_episode_item = lambda data, key, **kwargs: {"index": key.episode * 6 + key.sample}
     dataset._apply_image_transforms = lambda item: None
     dataset.set_epoch(0)
     return dataset

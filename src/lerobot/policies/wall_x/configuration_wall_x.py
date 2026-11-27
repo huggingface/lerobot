@@ -20,6 +20,8 @@ from lerobot.configs import (
     PolicyFeature,
     PreTrainedConfig,
 )
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -220,13 +222,9 @@ class WallXConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(action=range(self.chunk_size)))
 
     @property
-    def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

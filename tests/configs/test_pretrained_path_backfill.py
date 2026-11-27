@@ -21,7 +21,9 @@ from lerobot.configs import parser
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import Deltas
 
 
 @PreTrainedConfig.register_subclass("_dummy_backfill")
@@ -30,14 +32,13 @@ class _DummyBackfillConfig(PreTrainedConfig):
     lr: float = 1e-4
 
     # abstract members of PreTrainedConfig (not exercised by this test)
-    def action_delta_indices(self) -> dict:
-        return {}
+    @property
+    def training_sampler(self) -> FrameSampler:
+        return FrameSampler()
 
-    def observation_delta_indices(self) -> dict:
-        return {}
-
-    def reward_delta_indices(self) -> dict:
-        return {}
+    @property
+    def inference_deltas(self) -> Deltas:
+        return Deltas()
 
     def get_optimizer_preset(self) -> dict:  # pragma: no cover
         return {}

@@ -17,6 +17,7 @@ from tokenizers.pre_tokenizers import Whitespace
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from transformers import PreTrainedTokenizerFast
 
+from lerobot.configs import FeatureType
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.configuration_longwam import LongWAMConfig
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
@@ -100,7 +101,7 @@ def stats(cfg):
 
 
 def batch(cfg, temporal=False, value=0.25, task="pick"):
-    shape = (1, len(cfg.observation_delta_indices)) if temporal else (1,)
+    shape = (1, len(cfg.training_sampler.deltas.observation[FeatureType.VISUAL])) if temporal else (1,)
     result = {
         **{key: torch.full((*shape, 3, 16, 16), value) for key in cfg.camera_keys},
         "observation.state": torch.full((*shape, cfg.proprio_dim), value),
@@ -288,7 +289,7 @@ def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointin
     pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
     assert any(type(step) is NormalizerProcessorStep for step in pre.steps)
     assert any(type(step) is TokenizerProcessorStep for step in pre.steps)
-    assert config.observation_delta_indices == list(range(-16, 17, 4))
+    assert list(config.training_sampler.deltas.observation[FeatureType.VISUAL]) == list(range(-16, 17, 4))
     frozen = {n: p.clone() for n, p in policy.named_parameters() if not p.requires_grad}
     trainable = {n: p.clone() for n, p in policy.named_parameters() if p.requires_grad}
     optimizer = config.get_optimizer_preset().build(policy.get_optim_params())

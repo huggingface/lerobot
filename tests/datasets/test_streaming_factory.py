@@ -18,6 +18,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs.default import DatasetConfig
+from lerobot.configs.sampling import FrameSampler
 from lerobot.datasets import factory
 from lerobot.datasets.storage import is_bucket_root
 from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
@@ -52,7 +53,6 @@ def test_factory_wires_production_streaming_settings(
         return SimpleNamespace(storage_format="lerobot", total_episodes=1)
 
     monkeypatch.setattr(factory, "load_dataset_metadata", load_metadata)
-    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: {"action": [0.0]})
     monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
     dataset_config = DatasetConfig(
         repo_id="owner/dataset",
@@ -73,7 +73,7 @@ def test_factory_wires_production_streaming_settings(
     )
     cfg = SimpleNamespace(
         dataset=dataset_config,
-        trainable_config=object(),
+        trainable_config=SimpleNamespace(training_sampler=FrameSampler()),
         seed=123,
         num_workers=0,
         tolerance_s=1e-4,
@@ -116,7 +116,7 @@ def _streaming_cfg(root: Path | None, seed: int | None) -> SimpleNamespace:
             video_backend="pyav",
             streaming_episode_pool_size=3,
         ),
-        trainable_config=object(),
+        trainable_config=SimpleNamespace(training_sampler=FrameSampler()),
         seed=seed,
         num_workers=0,
         tolerance_s=1e-4,
@@ -146,7 +146,6 @@ def test_factory_passes_train_seed_to_streaming_dataset(
         "load_dataset_metadata",
         lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
     )
-    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
     monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
 
     factory.make_dataset(_streaming_cfg(None, cfg_seed))
@@ -162,7 +161,6 @@ def test_make_dataset_streaming_order_follows_train_seed(
     lerobot_dataset_factory(
         root=root, repo_id=DUMMY_REPO_ID, total_episodes=6, total_frames=120, use_videos=False
     )
-    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
 
     def order(seed: int | None) -> list[int]:
         return _anchor_order(factory.make_dataset(_streaming_cfg(root, seed)), 60)
@@ -180,7 +178,6 @@ def test_make_dataset_streaming_resume_continues_same_seed_order(
     lerobot_dataset_factory(
         root=root, repo_id=DUMMY_REPO_ID, total_episodes=6, total_frames=120, use_videos=False
     )
-    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
     offset = 25
 
     full = _anchor_order(factory.make_dataset(_streaming_cfg(root, 5)), 60)

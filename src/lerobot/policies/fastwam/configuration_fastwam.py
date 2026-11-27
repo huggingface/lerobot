@@ -27,6 +27,8 @@ from lerobot.configs import (
     PolicyFeature,
     PreTrainedConfig,
 )
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -504,18 +506,12 @@ class FastWAMConfig(PreTrainedConfig):
         return (self.num_video_frames - 1) // self.action_video_freq_ratio + 1
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        # Load the video frames the model is supervised on: the future window subsampled by
-        # action_video_freq_ratio (e.g. [0, 4, 8, ..., 32] -> 9 frames). Each video frame is
-        # thus `action_video_freq_ratio` actions apart, while actions load at the full rate
-        # (`action_delta_indices` = range(action_horizon)). Returning None would load only the
-        # current frame, making the video target a static repeat (degenerate supervision).
-        return list(range(0, self.num_video_frames, self.action_video_freq_ratio))
+    def training_sampler(self) -> TrainingSampler:
+        # The current frame, then future video targets every ``action_video_freq_ratio`` actions.
+        video = range(0, self.num_video_frames, self.action_video_freq_ratio)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), video)
+        return FrameSampler(Deltas(observation=observation, action=range(self.action_horizon)))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.action_horizon))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

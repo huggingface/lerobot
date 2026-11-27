@@ -12,7 +12,8 @@ from typing import Any
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import ConstantWithWarmupSchedulerConfig, LRSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -560,16 +561,16 @@ class G05Config(PreTrainedConfig):
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        """Frame offsets of the observation history the policy consumes."""
-        return list(range(-(self.n_obs_steps - 1), 1))
+    def training_sampler(self) -> TrainingSampler:
+        window = range(1 - self.n_obs_steps, 1)
+        observation = dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        return FrameSampler(Deltas(observation=observation, action=range(self.chunk_size)))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        """Frame offsets of the action chunk the policy predicts."""
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        """G0.5 does not consume rewards."""
-        return None
+    def inference_deltas(self) -> Deltas:
+        if self.n_obs_steps == 1:
+            return Deltas()
+        window = range(1 - self.n_obs_steps, 1)
+        return Deltas(
+            observation=dict.fromkeys((FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV), window)
+        )

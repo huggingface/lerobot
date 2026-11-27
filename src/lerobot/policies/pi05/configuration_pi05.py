@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -200,27 +202,20 @@ class PI05Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas(observation=self._memory_windows(), action=range(self.chunk_size)))
 
     @property
-    def image_observation_delta_indices(self) -> list[int] | None:
-        if not self.use_visual_memory:
-            return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas(observation=self._memory_windows())
+
+    def _memory_windows(self) -> dict[FeatureType, range]:
+        """MEM conditions on ``memory_frames`` frames ``memory_stride`` apart, the current one last."""
         horizon = (self.memory_frames - 1) * self.memory_stride
-        return list(range(-horizon, 1, self.memory_stride))
-
-    @property
-    def state_observation_delta_indices(self) -> list[int] | None:
-        if not self.use_proprioceptive_memory:
-            return None
-        horizon = (self.memory_frames - 1) * self.memory_stride
-        return list(range(-horizon, 1, self.memory_stride))
-
-    @property
-    def action_delta_indices(self) -> list:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+        window = range(-horizon, 1, self.memory_stride)
+        windows = {}
+        if self.use_visual_memory:
+            windows[FeatureType.VISUAL] = window
+        if self.use_proprioceptive_memory:
+            windows[FeatureType.STATE] = window
+        return windows

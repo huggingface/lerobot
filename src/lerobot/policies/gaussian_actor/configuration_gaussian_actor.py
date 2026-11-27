@@ -18,6 +18,8 @@
 from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim import MultiAdamConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
@@ -220,13 +222,9 @@ class GaussianActorConfig(PreTrainedConfig):
         return [key for key in self.input_features if is_image_feature(key)]
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_sampler(self) -> TrainingSampler:
+        return FrameSampler(Deltas())  # SAC trains on single transitions
 
     @property
-    def action_delta_indices(self) -> None:
-        return None  # SAC typically predicts one action at a time
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

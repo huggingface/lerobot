@@ -29,7 +29,8 @@ import torch
 from draccus.utils import DecodingError
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import WarmupStableDecaySchedulerConfig
 from lerobot.utils.constants import ACTION
@@ -548,26 +549,23 @@ class Cosmos3Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> None:
-        return None
+    def training_sampler(self) -> TrainingSampler:
+        # Future frames are video targets.
+        return FrameSampler(
+            Deltas(
+                observation={FeatureType.VISUAL: range(self.chunk_size + 1)}, action=range(self.chunk_size)
+            ),
+            drop_last=self.drop_n_last_frames,
+        )
 
     @property
-    def image_observation_delta_indices(self) -> list[int]:
-        """The video clip of a training sample: the condition frame and the chunk_size frames the actions lead to."""
-        return list(range(self.chunk_size + 1))
+    def inference_deltas(self) -> Deltas:
+        return Deltas()
 
     @property
     def drop_n_last_frames(self) -> int:
         """Training windows end inside their episode (no padded clips)."""
         return self.chunk_size
-
-    @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
 
 
 @PreTrainedConfig.register_subclass("cosmos3_nano")

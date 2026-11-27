@@ -21,6 +21,8 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler
+from lerobot.configs.types import Deltas
 from lerobot.optim.optimizers import AdamConfig, OptimizerConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -31,16 +33,12 @@ class DummyCheckpointConfig(PreTrainedConfig):
     hidden: int = 4
 
     @property
-    def observation_delta_indices(self) -> list | None:
-        return None
+    def training_sampler(self) -> FrameSampler:
+        return FrameSampler()
 
     @property
-    def action_delta_indices(self) -> list | None:
-        return None
-
-    @property
-    def reward_delta_indices(self) -> list | None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()
 
     def get_optimizer_preset(self) -> OptimizerConfig:
         return AdamConfig(lr=1e-3)

@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, TypedDict
 import numpy as np
 import torch
 
+from lerobot.configs.sampling import SampleKey, TrainingSampler
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 from lerobot.streaming.location import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
@@ -52,7 +53,6 @@ if TYPE_CHECKING or _lancedb_available:
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
 from .depth_utils import dequantize_depth
-from .feature_utils import check_delta_timestamps, get_delta_indices
 
 # Re-exported: storage.py resolves localize_root on this module; the others are
 # this format's public helpers (converters, DataLoader worker context).
@@ -74,6 +74,7 @@ from .lance_utils import (  # noqa: F401
     resolve_lance_root,
     to_lance_column,
 )
+from .sample_windows import SampleWindows, column_of
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
@@ -216,6 +217,8 @@ class LanceDatasetReader(BaseDatasetReader):
         storage_options: dict[str, str] | None = None,
         video_decoder_cache_size: int | None = None,
         token: str | bool | None = None,
+        sampler: TrainingSampler | None = None,
+        rename_map: dict[str, str] | None = None,
     ):
         require_package("lancedb", extra="lancedb")
         self.meta = meta
@@ -254,10 +257,14 @@ class LanceDatasetReader(BaseDatasetReader):
         if episodes is not None and not episodes:
             raise ValueError("None of the requested episodes are in the dataset.")
         self.episodes = episodes
-        self.delta_indices = None
-        if delta_timestamps is not None:
-            check_delta_timestamps(delta_timestamps, self.meta.fps, tolerance_s)
-            self.delta_indices = get_delta_indices(delta_timestamps, self.meta.fps)
+        self.samples = SampleWindows(
+            meta,
+            episodes,
+            sampler=sampler,
+            rename_map=rename_map,
+            delta_timestamps=delta_timestamps,
+            tolerance_s=tolerance_s,
+        )
 
         self._ep_from = self._episode_numpy("dataset_from_index", np.int64)
         self._ep_to = self._episode_numpy("dataset_to_index", np.int64)
@@ -420,13 +427,10 @@ class LanceDatasetReader(BaseDatasetReader):
     def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
         return self._subset_index_mapping
 
-    def get_item(self, idx: int) -> dict:
-        return self.get_items([idx])[0]
-
-    def get_items(self, indices: list[int]) -> list[dict]:
+    def get_items(self, indices: list[int | SampleKey]) -> list[dict]:
         """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
         self._ensure_open()
-        plans = self._plan_batch(indices)
+        plans = self._plan_batch(self.keys(indices))
         rows, row_pos = self._batch_rows(plans)
 
         # Video prep (byte-index, header ranges, decoder creation, frame-window fetch)
@@ -468,41 +472,24 @@ class LanceDatasetReader(BaseDatasetReader):
                 windows.setdefault(file_key, []).append(span)
         return windows
 
-    def _plan_batch(self, indices: list[int]) -> list[_SamplePlan]:
+    def _plan_batch(self, keys: list[SampleKey]) -> list[_SamplePlan]:
         """Resolve each sample to the absolute rows it needs and its padding masks."""
         plans: list[_SamplePlan] = []
-        for idx in indices:
-            abs_idx = self._resolve_abs_idx(idx)
-            ep_idx = self._episode_index_for_abs_idx(abs_idx)
-            start, end = self._episode_bounds(ep_idx)
-            plan: _SamplePlan = {
-                "abs_idx": abs_idx,
-                "ep_idx": ep_idx,
-                "rows": {abs_idx},
-                "windows": {},
-                "padding": {},
-            }
-            if self.delta_indices is not None:
-                for key, deltas in self.delta_indices.items():
-                    window = [min(max(abs_idx + delta, start), end - 1) for delta in deltas]
-                    plan["windows"][key] = window
-                    plan["rows"].update(window)
-                    plan["padding"][f"{key}_is_pad"] = torch.BoolTensor(
-                        [not (start <= abs_idx + delta < end) for delta in deltas]
-                    )
-            plans.append(plan)
+        for key in keys:
+            abs_idx, windows, padding = self.samples.rows(key)
+            rows = {abs_idx}
+            for window in windows.values():
+                rows.update(window)
+            plans.append(
+                {
+                    "abs_idx": abs_idx,
+                    "ep_idx": key.episode,
+                    "rows": rows,
+                    "windows": windows,
+                    "padding": padding,
+                }
+            )
         return plans
-
-    def _resolve_abs_idx(self, idx: int) -> int:
-        idx = int(idx)
-        if idx < 0:
-            idx += self.num_frames
-        if not 0 <= idx < self.num_frames:
-            raise IndexError(f"Index {idx} is out of range for a dataset of {self.num_frames} frames.")
-        return self._subset_index_mapping.rel_to_abs(idx) if self._subset_index_mapping is not None else idx
-
-    def _episode_index_for_abs_idx(self, abs_idx: int) -> int:
-        return int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)
 
     def _episode_bounds(self, ep_idx: int) -> tuple[int, int]:
         return int(self._ep_from[ep_idx]), int(self._ep_to[ep_idx])
@@ -920,11 +907,6 @@ class LanceDatasetReader(BaseDatasetReader):
             elif key in self._string_keys:
                 value = data[base]
                 item[key] = value if isinstance(value, str) or value is None else str(value)
-            elif key in plan["windows"]:
-                window = data[[row_pos[row] for row in plan["windows"][key]]]
-                if len(shape) > 1:
-                    window = window.reshape(len(window), *shape)
-                item[key] = torch.from_numpy(np.ascontiguousarray(window))
             elif data.ndim > 1:
                 value = data[base]
                 if len(shape) > 1:
@@ -932,6 +914,14 @@ class LanceDatasetReader(BaseDatasetReader):
                 item[key] = torch.from_numpy(value.copy())
             else:
                 item[key] = torch.tensor(data[base])
+        for key, rows in plan["windows"].items():
+            if key in self.meta.video_keys:
+                continue
+            column = column_of(key)
+            window = columns[column][[row_pos[row] for row in rows]]
+            if len(shape := self._feature_shapes[column]) > 1:
+                window = window.reshape(len(window), *shape)
+            item[key] = torch.from_numpy(np.ascontiguousarray(window))
         item.update(plan["padding"])
         item["task"] = self._task_names[int(item["task_index"].item())]
         return item

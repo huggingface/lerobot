@@ -27,6 +27,7 @@ OBS_STATE = OBS_STR + ".state"
 OBS_IMAGE = OBS_STR + ".image"
 OBS_IMAGES = OBS_IMAGE + "s"
 OBS_LANGUAGE = OBS_STR + ".language"
+OBS_ACTION = OBS_STR + ".action"  # the commands executed at past frames, as a policy input
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
 OBS_LANGUAGE_CAUSAL_MARKS = OBS_LANGUAGE + ".causal_marks"

@@ -97,7 +97,7 @@ def load_sarm_resources(
 
     image_key = reward_model.config.image_key
     state_key = reward_model.config.state_key
-    delta_indices = reward_model.config.observation_delta_indices
+    delta_indices = reward_model.config.frame_offsets
 
     logging.info(f"Loading dataset: {dataset_repo_id}")
     temp_dataset = LeRobotDataset(dataset_repo_id, download_videos=True)

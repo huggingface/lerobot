@@ -20,13 +20,10 @@ from typing import Literal, cast
 
 import torch
 
-from lerobot.configs import PreTrainedConfig
-from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
-from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
+from lerobot.utils.constants import IMAGENET_STATS
 
-from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
@@ -36,77 +33,16 @@ from .utils import resolve_episode_indices
 logger = logging.getLogger(__name__)
 
 
-def resolve_delta_timestamps(
-    cfg: PreTrainedConfig | RewardModelConfig,
-    ds_meta: LeRobotDatasetMetadata,
-    rename_map: dict[str, str] | None = None,
-) -> dict[str, list[float]] | None:
-    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the config.
-
-    Args:
-        cfg (PreTrainedConfig | RewardModelConfig): The config to read delta_indices from. Both
-            ``PreTrainedConfig`` and concrete ``RewardModelConfig`` subclasses expose the
-            ``{observation,action,reward}_delta_indices`` properties used below.
-        ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
-            delta_timestamps against.
-
-    Returns:
-        dict[str, list[float]] | None: A dictionary of delta_timestamps, e.g.:
-            {
-                "observation.state": [-0.04, -0.02, 0]
-                "observation.action": [-0.02, 0, 0.02]
-            }
-            returns `None` if the resulting dict is empty.
-    """
-    # Only policies that opt into modality-specific history (currently Pi05 with MEM)
-    # define these; everything else falls back to the shared observation indices.
-    explicit_image_indices = getattr(cfg, "image_observation_delta_indices", None)
-    image_indices = (
-        explicit_image_indices if explicit_image_indices is not None else cfg.observation_delta_indices
+def resolve_delta_timestamps(*args, **kwargs):
+    """Removed: datasets read a policy's training sampler directly."""
+    raise TypeError(
+        "resolve_delta_timestamps was removed: pass the policy's sampler to the dataset instead, "
+        "LeRobotDataset(repo_id, sampler=policy_cfg.training_sampler, rename_map=rename_map)."
     )
-    explicit_state_indices = getattr(cfg, "state_observation_delta_indices", None)
-    state_indices = (
-        explicit_state_indices if explicit_state_indices is not None else cfg.observation_delta_indices
-    )
-
-    delta_timestamps: dict[str, list[float]] = {}
-    matched_image_keys: list[str] = []
-    for key in ds_meta.features:
-        policy_key = (rename_map or {}).get(key, key)
-        if policy_key == REWARD and cfg.reward_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
-        if policy_key == ACTION and cfg.action_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
-        # `OBS_IMAGE` matches both the `observation.image` and `observation.images.<cam>`
-        # conventions; matching `OBS_IMAGES` alone would silently give singular-key
-        # datasets no image history at all.
-        if policy_key.startswith(OBS_IMAGE):
-            indices = image_indices
-            matched_image_keys.append(key)
-        elif policy_key == OBS_STATE:
-            indices = state_indices
-        else:
-            indices = cfg.observation_delta_indices if policy_key.startswith(OBS_PREFIX) else None
-        if indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in indices]
-
-    # A policy asking for an image history that no dataset key can supply would train
-    # on single frames without any error, so fail instead of degrading silently.
-    if explicit_image_indices is not None and len(explicit_image_indices) > 1 and not matched_image_keys:
-        raise ValueError(
-            f"{type(cfg).__name__} requests {len(explicit_image_indices)} history frames per camera, but no "
-            f"dataset feature maps to an image key. Dataset features: {sorted(ds_meta.features)}. "
-            "Image keys must be named `observation.image*` after applying `--rename_map`."
-        )
-
-    if len(delta_timestamps) == 0:
-        return None
-
-    return delta_timestamps
 
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
-    """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
+    """Creates the training dataset, reading the policy's training sampler and setting up image transforms.
 
     Args:
         cfg (TrainPipelineConfig): A TrainPipelineConfig config which contains a DatasetConfig and a PreTrainedConfig.
@@ -141,7 +77,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
             repo_type=repo_type,
             storage_options=cfg.dataset.storage_options,
         )
-        delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta, cfg.rename_map)
+        sampler = cfg.trainable_config.training_sampler
         episodes = resolve_episode_indices(
             cfg.dataset.episodes, ds_meta.total_episodes, cfg.dataset.exclude_episodes
         )
@@ -162,7 +98,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 episodes=episodes,
-                delta_timestamps=delta_timestamps,
+                sampler=sampler,
+                rename_map=cfg.rename_map,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
@@ -178,7 +115,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 cfg.dataset.repo_id,
                 root=root,
                 episodes=episodes,
-                delta_timestamps=delta_timestamps,
+                sampler=sampler,
+                rename_map=cfg.rename_map,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 seed=cfg.seed if cfg.seed is not None else DEFAULT_STREAMING_SEED,
@@ -264,7 +202,7 @@ def make_train_eval_datasets(
         f"(eval_split={cfg.dataset.eval_split}, {len(task_to_episodes)} tasks)"
     )
 
-    delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, full_dataset.meta, cfg.rename_map)
+    sampler = cfg.trainable_config.training_sampler
 
     # On the "gpu" backend the workers only decode; lerobot-train augments each batch on the policy device.
     image_transforms_cfg = cfg.dataset.image_transforms
@@ -278,7 +216,8 @@ def make_train_eval_datasets(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=train_episodes,
-        delta_timestamps=delta_timestamps,
+        sampler=sampler,
+        rename_map=cfg.rename_map,
         image_transforms=train_image_transforms,
         depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,
@@ -294,7 +233,8 @@ def make_train_eval_datasets(
         cfg.dataset.repo_id,
         root=cfg.dataset.root,
         episodes=eval_episodes,
-        delta_timestamps=delta_timestamps,
+        sampler=sampler,
+        rename_map=cfg.rename_map,
         image_transforms=None,
         depth_output_unit=cfg.dataset.depth_output_unit,
         revision=cfg.dataset.revision,

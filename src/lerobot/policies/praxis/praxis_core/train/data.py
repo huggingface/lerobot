@@ -16,7 +16,7 @@
 
 Vendored from runwayml/praxis-1-oss at commit 8dad1a4 (``praxis/train/data.py``), the subset
 that does not read files. The DROID file reader of the original (``DroidWindowDataset``) is
-replaced by ``LeRobotDataset`` with the window of ``PraxisConfig.observation_delta_indices``;
+replaced by ``LeRobotDataset`` with the window of ``PraxisConfig.training_sampler``;
 ``PraxisPolicy.forward`` builds the windows from the batch with the functions here.
 
 The recipe of the checkpoint, which the LeRobot path keeps:

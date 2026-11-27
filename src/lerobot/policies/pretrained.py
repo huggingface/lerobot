@@ -30,6 +30,7 @@ from safetensors.torch import load_file, load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
+from lerobot.configs.sampling import FrameSampler
 from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
@@ -458,14 +459,11 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         config = self.config
         if config.n_obs_steps != 1:
             raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
-        for field_name in (
-            "observation_delta_indices",
-            "image_observation_delta_indices",
-            "state_observation_delta_indices",
+        sampler = config.training_sampler
+        if not isinstance(sampler, FrameSampler) or any(
+            offsets != (0,) for offsets in sampler.deltas.observation.values()
         ):
-            indices = getattr(config, field_name, None)
-            if indices is not None and list(indices) != [0]:
-                raise ValueError(f"Chunk inference cannot sample temporal history ({field_name}).")
+            raise ValueError("Chunk inference cannot sample temporal history (training_sampler).")
         if getattr(config, "temporal_ensemble_coeff", None) is not None:
             raise ValueError("Chunk inference does not support temporal ensembling.")
         if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):

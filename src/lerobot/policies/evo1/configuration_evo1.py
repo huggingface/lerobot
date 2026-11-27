@@ -21,7 +21,8 @@ from dataclasses import dataclass, field
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs.sampling import FrameSampler, TrainingSampler
+from lerobot.configs.types import Deltas, FeatureType, NormalizationMode, PolicyFeature
 from lerobot.optim.optimizers import AdamWConfig
 from lerobot.optim.schedulers import CosineAnnealingWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -255,13 +256,11 @@ class Evo1Config(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list[int]:
-        return [0]
+    def training_sampler(self) -> TrainingSampler:
+        # Trained on one-frame observation windows ([B, 1, ...]); served the current frame.
+        current = {kind: [0] for kind in (FeatureType.VISUAL, FeatureType.STATE, FeatureType.ENV)}
+        return FrameSampler(Deltas(observation=current, action=range(self.chunk_size)))
 
     @property
-    def action_delta_indices(self) -> list[int]:
-        return list(range(self.chunk_size))
-
-    @property
-    def reward_delta_indices(self) -> None:
-        return None
+    def inference_deltas(self) -> Deltas:
+        return Deltas()

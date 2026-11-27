@@ -192,7 +192,7 @@ def test_align_query_tokens(tiny_backbone, monkeypatch):
             return {name: torch.randn(2, 8, 16) for name in names}
 
     monkeypatch.setattr(modeling, "DistillationTeachers", Teachers)
-    assert cfg.image_observation_delta_indices == [0, CHUNK - 1]
+    assert list(cfg.training_sampler.deltas.observation[FeatureType.VISUAL]) == [0, CHUNK - 1]
     batch = _raw_batch(7)
     batch[CAMERA] = torch.stack([batch[CAMERA], batch[CAMERA].flip(-1)], dim=1)  # current, future
     policy.train()

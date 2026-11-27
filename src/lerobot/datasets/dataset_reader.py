@@ -24,18 +24,16 @@ import datasets
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
+from lerobot.configs.sampling import SampleKey, TrainingSampler
 
 from .dataset_metadata import LeRobotDatasetMetadata
-from .feature_utils import (
-    check_delta_timestamps,
-    get_delta_indices,
-    get_hf_features_from_features,
-)
+from .feature_utils import get_hf_features_from_features
 from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from .utils import delta_window, resolve_episode_indices, shift_timestamps, task_name
+from .sample_windows import SampleWindows, column_of
+from .utils import resolve_episode_indices, shift_timestamps, task_name
 from .video_utils import (
     apply_rgb_transforms,
     convert_image_depth_units,
@@ -59,10 +57,13 @@ class BaseDatasetReader(ABC):
     ``DataLoader`` workers can reopen their own connections.
 
     Subclasses must set :attr:`episodes` (the selected episode indices, or
-    ``None`` for all) during construction.
+    ``None`` for all) and :attr:`samples` (what each sample reads) during
+    construction. Items are addressed by :class:`SampleKey`, or by their
+    position among the samples (episodes in ascending order).
     """
 
     episodes: list[int] | None
+    samples: SampleWindows
 
     @property
     @abstractmethod
@@ -83,19 +84,20 @@ class BaseDatasetReader(ABC):
         (from metadata) differ from positions in the filtered view.
         """
 
+    def get_item(self, idx: int | SampleKey) -> dict:
+        """Return one fully assembled sample."""
+        return self.get_items([idx])[0]
+
     @abstractmethod
-    def get_item(self, idx: int) -> dict:
-        """Return one fully assembled frame dict for a relative index."""
+    def get_items(self, indices: list[int | SampleKey]) -> list[dict]:
+        """Return the samples of a batch of keys or positions."""
 
-    def get_items(self, indices: list[int]) -> list[dict]:
-        """Return frame dicts for a batch of relative indices.
-
-        Subclasses may override this with a batched implementation.
-        """
-        return [self.get_item(idx) for idx in indices]
+    def keys(self, indices: list[int | SampleKey]) -> list[SampleKey]:
+        """The keys of ``indices``: keys are kept, positions are looked up."""
+        return [idx if isinstance(idx, SampleKey) else self.samples.key_at(int(idx)) for idx in indices]
 
     def __len__(self) -> int:
-        return self.num_frames
+        return len(self.samples)
 
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
@@ -111,7 +113,7 @@ class BaseDatasetReader(ABC):
 class DatasetReader(BaseDatasetReader):
     """Default reader serving the parquet/mp4 storage format.
 
-    Owns: hf_dataset, _absolute_to_relative_idx, delta_indices.
+    Owns: hf_dataset, _absolute_to_relative_idx, samples.
     """
 
     def __init__(
@@ -125,6 +127,8 @@ class DatasetReader(BaseDatasetReader):
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        sampler: TrainingSampler | None = None,
+        rename_map: dict[str, str] | None = None,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -146,6 +150,8 @@ class DatasetReader(BaseDatasetReader):
                 instead of normalized float32.
             depth_output_unit: Physical unit depth maps are dequantized to
                 (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
+            sampler: A policy's training sampler, instead of ``delta_timestamps``.
+            rename_map: Dataset keys renamed to the sampler's policy keys.
         """
         self._meta = meta
         self.root = root
@@ -162,11 +168,15 @@ class DatasetReader(BaseDatasetReader):
         self._column_views_source: datasets.Dataset | None = None
         self._column_views_transform: Callable | None = None
 
-        # Setup delta_indices (doesn't depend on hf_dataset)
-        self.delta_indices = None
-        if delta_timestamps is not None:
-            check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
-            self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
+        # What each sample reads (doesn't depend on hf_dataset)
+        self.samples = SampleWindows(
+            meta,
+            self.episodes,
+            sampler=sampler,
+            rename_map=rename_map,
+            delta_timestamps=delta_timestamps,
+            tolerance_s=tolerance_s,
+        )
 
         self._depth_encoder_configs = depth_encoder_configs(meta)
         self._image_depth_units = image_depth_units(meta)
@@ -295,21 +305,6 @@ class DatasetReader(BaseDatasetReader):
         fpaths = list(set(fpaths))
         return fpaths
 
-    def _get_query_indices(
-        self, abs_idx: int, ep_idx: int
-    ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
-        """Compute query indices for delta timestamps."""
-        if self.delta_indices is None:
-            raise RuntimeError("Query indices require delta_timestamps, but the reader has none.")
-        ep = self._meta.episodes[ep_idx]
-        ep_start = ep["dataset_from_index"]
-        ep_end = ep["dataset_to_index"]
-        query_indices: dict[str, list[int]] = {}
-        padding: dict[str, torch.Tensor] = {}
-        for key, delta_idx in self.delta_indices.items():
-            query_indices[key], padding[f"{key}_is_pad"] = delta_window(abs_idx, delta_idx, ep_start, ep_end)
-        return query_indices, padding
-
     def _to_relative(self, indices: list[int]) -> list[int]:
         """Map absolute frame indices to relative row positions in ``hf_dataset``.
 
@@ -391,16 +386,16 @@ class DatasetReader(BaseDatasetReader):
     def _query_hf_dataset(self, query_indices_per_item: list[dict[str, list[int]] | None]) -> list[dict]:
         """Tabular columns to gather for each requested item, as one ``{key: stacked tensor}`` dict.
 
-        Per non-video key: the referenced rows stacked into the item's delta window.
+        Per non-video key: the referenced rows of its column stacked into the item's window.
         ``query_indices_per_item`` are batch-aligned (indices ABSOLUTE). Each key
         is read through its cached single-column view (see :meth:`_column_view`),
         so only that column is decoded — never the embedded camera images of the
         queried rows. Every row a key needs across the batch is read in a single
         shot, then redistributed (preserving per-item order and duplicates).
         """
-        # Pass 1: per item, collect the relative rows each non-video key needs.
+        # Pass 1: per item, collect the relative rows each non-video column needs.
         rel_per_item: list[dict[str, list[int]]] = []
-        per_key_rows: dict[str, set[int]] = {}
+        per_column_rows: dict[str, set[int]] = {}
         for query_indices in query_indices_per_item:
             rel = {
                 key: self._to_relative(q_idx)
@@ -409,22 +404,23 @@ class DatasetReader(BaseDatasetReader):
             }
             rel_per_item.append(rel)
             for key, q in rel.items():
-                per_key_rows.setdefault(key, set()).update(q)
+                per_column_rows.setdefault(column_of(key), set()).update(q)
 
-        if not per_key_rows:
+        if not per_column_rows:
             return [{} for _ in query_indices_per_item]
 
-        # Pass 2: one column-pruned Arrow read per key over its row union, keyed by row.
+        # Pass 2: one column-pruned Arrow read per column over its row union, keyed by row.
         gathered: dict[str, tuple[list, dict[int, int]]] = {}
-        for key, rows in per_key_rows.items():
+        for column_name, rows in per_column_rows.items():
             rel_sorted = sorted(rows)
-            column = self._column_view(key)[rel_sorted][key]
-            gathered[key] = (column, {rel: j for j, rel in enumerate(rel_sorted)})
+            column = self._column_view(column_name)[rel_sorted][column_name]
+            gathered[column_name] = (column, {rel: j for j, rel in enumerate(rel_sorted)})
 
-        return [
-            {key: torch.stack([gathered[key][0][gathered[key][1][r]] for r in q]) for key, q in rel.items()}
-            for rel in rel_per_item
-        ]
+        def window(key: str, q: list[int]) -> torch.Tensor:
+            values, position = gathered[column_of(key)]
+            return torch.stack([values[position[r]] for r in q])
+
+        return [{key: window(key, q) for key, q in rel.items()} for rel in rel_per_item]
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
@@ -461,59 +457,40 @@ class DatasetReader(BaseDatasetReader):
             futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
             return dict(f.result() for f in futures)
 
-    def get_item(self, idx: int) -> dict:
-        """Return one fully assembled frame dict for a single *relative* index.
-
-        "Relative" is the row position in the (possibly episode-filtered) ``hf_dataset``,
-        not the dataset-wide absolute index (see :attr:`absolute_to_relative_idx`).
-        Delegates to :meth:`get_items` so single- and batched-access share one
-        code path (and identical output).
-
-        Args:
-            idx: Relative row position in the loaded ``hf_dataset``.
-
-        Returns:
-            The fully assembled frame dict for ``idx``.
-        """
-        return self.get_items([idx])[0]
-
-    def get_items(self, indices: list[int]) -> list[dict]:
-        """Assemble frame dicts for a batch of *relative* indices.
-
-        "Relative" indices are row positions in the (possibly episode-filtered) ``hf_dataset``,
-        not the dataset-wide absolute indices (see :attr:`absolute_to_relative_idx`).
+    def get_items(self, indices: list[int | SampleKey]) -> list[dict]:
+        """Assemble the samples of a batch of keys or positions (see :class:`SampleWindows`).
 
         Tabular rows are gathered from the Arrow-backed HF dataset in one shot,
         while video frames are decoded one item at a time to avoid competing with the multiple workers of the DataLoader.
 
         Args:
-            indices: Relative row positions in the loaded ``hf_dataset``.
+            indices: Sample keys, or positions among the samples.
 
         Returns:
-            One fully assembled frame dict per entry in ``indices``, in order.
+            One fully assembled sample dict per entry in ``indices``, in order.
         """
         # One-shot load after finalize()
         hf_dataset = self.hf_dataset if self.hf_dataset is not None else self.load_and_activate()
         if len(indices) == 0:
             return []
 
-        n = len(indices)
+        keys = self.keys(indices)
+        n = len(keys)
 
-        # Batched tabular gather: one Arrow read for all base rows.
-        base = hf_dataset[indices]
+        # Each sample's own row and its windows (absolute rows) with their padding masks.
+        rows = [self.samples.rows(key) for key in keys]
+        query_indices_per_item: list[dict[str, list[int]] | None] = [
+            windows or None for _, windows, _ in rows
+        ]
+
+        # Batched tabular gather: one Arrow read for all base rows, then one per windowed column.
+        base = hf_dataset[self._to_relative([row for row, _, _ in rows])]
         items: list[dict] = [{key: base[key][i] for key in base} for i in range(n)]
-        ep_idxs = [int(items[i]["episode_index"]) for i in range(n)]
-        abs_idxs = [int(items[i]["index"]) for i in range(n)]
-
-        # Delta windows: per-item absolute query indices + padding, then one
-        # batched tabular gather across the whole batch.
-        query_indices_per_item: list[dict[str, list[int]] | None] = [None] * n
-        if self.delta_indices is not None:
-            for i in range(n):
-                query_indices_per_item[i], padding = self._get_query_indices(abs_idxs[i], ep_idxs[i])
-                items[i].update(padding)
-            for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
-                items[i].update(tabular)
+        ep_idxs = [key.episode for key in keys]
+        for item, (_, _, padding) in zip(items, rows, strict=True):
+            item.update(padding)
+        for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
+            items[i].update(tabular)
 
         # Video frames: decoded one item at a time. We do not group decoding by physical
         # MP4 across the batch as it competes with the multiple workers of the DataLoader.

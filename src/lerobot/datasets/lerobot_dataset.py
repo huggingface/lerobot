@@ -26,6 +26,7 @@ from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
+from lerobot.configs.sampling import SampleKey, TrainingSampler
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -76,6 +77,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
         storage_options: dict[str, str] | None = None,
+        sampler: TrainingSampler | None = None,
+        rename_map: dict[str, str] | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -178,7 +181,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 conversion. This works for both image-backed and video-backed observations and can later be
                 updated with `set_image_transforms()` or cleared with `clear_image_transforms()`.
                 Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
+            delta_timestamps (dict[list[float]] | None, optional): Offsets in seconds, by dataset key, of
+                the frames each item holds around its frame. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
@@ -226,6 +230,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
             storage_options (dict[str, str] | None, optional): Storage connection options used for
                 both remote metadata and data reads. Currently supported by the Lance backend,
                 which forwards them to ``lancedb.connect``. Defaults to None.
+            sampler (TrainingSampler | None, optional): A policy's training sampler (see
+                :mod:`lerobot.configs.sampling`), instead of ``delta_timestamps``: what each item holds and
+                how many items each episode gives. Defaults to None (one item per frame).
+            rename_map (dict[str, str] | None, optional): Dataset keys renamed to the sampler's policy keys.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -252,6 +260,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
         self._requested_root = Path(root) if root else None
         self.delta_timestamps = delta_timestamps
+        self.sampler = sampler
+        self.rename_map = rename_map
         self.tolerance_s = tolerance_s
         self.revision: str | None = revision if revision else CODEBASE_VERSION
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
@@ -310,6 +320,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "root": self._storage_root or root,
                 "episodes": episodes,
                 "delta_timestamps": delta_timestamps,
+                "sampler": sampler,
+                "rename_map": rename_map,
                 "image_transforms": image_transforms,
                 "tolerance_s": tolerance_s,
                 "return_uint8": return_uint8,
@@ -345,6 +357,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=return_uint8,
             depth_output_unit=depth_output_unit,
+            sampler=sampler,
+            rename_map=rename_map,
         )
         self.reader = reader
 
@@ -435,6 +449,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
                 depth_output_unit=self._depth_output_unit,
+                sampler=self.sampler,
+                rename_map=self.rename_map,
             )
         return self.reader
 
@@ -587,27 +603,40 @@ class LeRobotDataset(torch.utils.data.Dataset):
     # ── Core Dataset methods ──────────────────────────────────────────
 
     def __len__(self):
-        """Return the number of frames in the selected episodes."""
-        return self.num_frames
+        """Return the number of samples: one per frame of the selected episodes unless a sampler says otherwise."""
+        if self.reader is None:
+            return self.num_frames
+        return len(self.reader)
+
+    @property
+    def num_samples(self) -> int:
+        """Number of samples of one epoch (see :attr:`sample_counts`)."""
+        return len(self)
+
+    @property
+    def sample_counts(self) -> dict[int, int]:
+        """Samples per selected episode (see :class:`~lerobot.datasets.sampler.EpisodeAwareSampler`)."""
+        return self._ensure_reader().samples.sample_counts
 
     @overload
-    def __getitem__(self, idx: int) -> dict: ...
+    def __getitem__(self, idx: int | SampleKey) -> dict: ...
 
     @overload
     def __getitem__(self, idx: slice) -> list[dict]: ...
 
-    def __getitem__(self, idx: int | slice) -> dict | list[dict]:
-        """Return one frame or a slice of frames, with all transforms applied.
+    def __getitem__(self, idx: int | SampleKey | slice) -> dict | list[dict]:
+        """Return one sample or a slice of samples, with all transforms applied.
 
-        Loads the frame from the underlying HF dataset, expands delta-timestamp
+        Loads the sample's rows from the underlying HF dataset, expands its
         windows, decodes video frames, and applies image transforms. Delegates
         the core logic to :class:`DatasetReader`.
 
         Args:
-            idx: Integer index or slice into the possibly episode-filtered dataset.
+            idx: A sample key, or the position of a sample (episodes in ascending
+                order; one sample per frame by default), or a slice of positions.
 
         Returns:
-            A frame dictionary for an integer index, or a list of frame
+            A sample dictionary for a key or a position, or a list of sample
             dictionaries for a slice.
 
         Raises:
@@ -619,7 +648,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return self._ensure_reader().get_item(idx)
 
-    def __getitems__(self, indices: list[int]) -> list[dict]:
+    def __getitems__(self, indices: list[int | SampleKey]) -> list[dict]:
         return self._ensure_reader().get_items(list(indices))
 
     def select_columns(self, column_names: str | list[str]):
@@ -868,6 +897,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
         obj.delta_timestamps = None
+        obj.sampler = None
+        obj.rename_map = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
@@ -982,6 +1013,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.tolerance_s = tolerance_s
         obj.image_transforms = None
         obj.delta_timestamps = None
+        obj.sampler = None
+        obj.rename_map = None
         obj.episodes = None
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False

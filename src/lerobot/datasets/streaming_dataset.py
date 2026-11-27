@@ -31,6 +31,7 @@ import numpy as np
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
+from lerobot.configs.sampling import SampleKey, TrainingSampler
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
@@ -40,9 +41,10 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
+from .feature_utils import get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .language import LANGUAGE_COLUMNS
+from .sample_windows import SampleWindows, column_of, episode_bounds
 from .storage import is_bucket_root
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
@@ -50,7 +52,6 @@ from .streaming_sidecar import (
 )
 from .utils import (
     check_version_compatibility,
-    delta_window,
     resolve_episode_indices,
     shift_timestamps,
     task_name,
@@ -242,6 +243,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         native_http_subranges: int = 1,
         sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
+        sampler: TrainingSampler | None = None,
+        rename_map: dict[str, str] | None = None,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
 
@@ -320,6 +323,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
+            sampler (`TrainingSampler | None`, *optional*):
+                A policy's training sampler, instead of ``delta_timestamps``: what each sample holds and
+                how many samples each episode gives (see :mod:`lerobot.configs.sampling`).
+            rename_map (`dict[str, str] | None`, *optional*):
+                Dataset keys renamed to the sampler's policy keys.
         """
         super().__init__()
         if is_bucket_root(repo_id, root):
@@ -419,13 +427,15 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             else list(dict.fromkeys(resolved_episodes))
         )
 
-        self.delta_timestamps: dict[str, list[float]] | None = None
-        self.delta_indices: dict[str, list[int]] | None = None
-
-        if delta_timestamps is not None:
-            check_delta_timestamps(delta_timestamps, self.fps, tolerance_s)
-            self.delta_timestamps = delta_timestamps
-            self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
+        self.delta_timestamps = delta_timestamps
+        self.samples = SampleWindows(
+            self.meta,
+            self._selected_episodes,
+            sampler=sampler,
+            rename_map=rename_map,
+            delta_timestamps=delta_timestamps,
+            tolerance_s=tolerance_s,
+        )
 
         self._data_root = streaming_data_root(
             self.meta,
@@ -457,6 +467,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     def num_frames(self) -> int:
         """Return the frame count across all selected episodes, before rank sharding."""
         return sum(self._episode_frame_count(episode) for episode in self._selected_episodes)
+
+    @property
+    def num_samples(self) -> int:
+        """Return the sample count of one epoch across all selected episodes, before rank sharding."""
+        return sum(self._episode_sample_count(episode) for episode in self._selected_episodes)
 
     @property
     def num_episodes(self) -> int:
@@ -504,11 +519,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         share, resume_offset = self._worker_share(rank_episodes, self._resume_offset)
         consumer_episodes = share.episodes
         self._resume_offset = 0
-        consumer_frame_count = sum(self._episode_frame_count(episode) for episode in consumer_episodes)
-        if not self.repeat and resume_offset >= consumer_frame_count:
-            return  # this worker already gave all its frames; without repeat there is no next epoch
-        if consumer_frame_count:
-            worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
+        consumer_sample_count = sum(self._episode_sample_count(episode) for episode in consumer_episodes)
+        if not self.repeat and resume_offset >= consumer_sample_count:
+            return  # this worker already gave all its samples; without repeat there is no next epoch
+        if consumer_sample_count:
+            worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_sample_count)
         else:
             worker_epoch_delta = 0
         if self.shuffle:
@@ -529,7 +544,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 else None
             )
             planner = ExactCoveragePool(
-                [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
+                [(episode, self._episode_sample_count(episode)) for episode in consumer_episodes],
                 pool_size=share.pool_size,
                 sampling_strategy=self.sampling_strategy,
                 seed=self.seed,
@@ -592,13 +607,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             def decode_item(
                 episode_future: Future[_EpisodeData],
                 episode_index: int,
-                frame_index: int,
+                sample_index: int,
             ) -> dict[str, Any]:
                 """Assemble a planned sample after its episode table is ready."""
                 return self._make_episode_item(
                     episode_future.result(),
-                    episode_index,
-                    frame_index,
+                    SampleKey(episode_index, sample_index, epoch),
                     video_cache=video_cache,
                     apply_transforms=not transform_on_consumer,
                 )
@@ -626,7 +640,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             while decoded_futures or not planner_exhausted:
                 while not planner_exhausted and len(decoded_futures) < self.decoded_queue_size:
                     try:
-                        episode_index, frame_index = next(planner)
+                        episode_index, sample_index = next(planner)
                     except StopIteration:
                         planner_exhausted = True
                         break
@@ -639,7 +653,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                             decode_item,
                             episode_future,
                             episode_index,
-                            frame_index,
+                            sample_index,
                         )
                     except Exception:
                         if video_cache is not None:
@@ -723,10 +737,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                         f"A resume offset of {rank_offset} samples is not a whole number of batches of "
                         f"{batch_size}; resuming with {num_workers} DataLoader workers needs whole batches."
                     )
-                frames = [sum(counts[episode] for episode in shard) for shard in shards]
-                # With repeat, a worker never ends unless it has no frames; without it, after its last batch.
+                samples = [sum(self._episode_sample_count(episode) for episode in shard) for shard in shards]
+                # With repeat, a worker never ends unless it has no samples; without it, after its last batch.
                 limits: list[int | None] = [
-                    0 if not total else None if self.repeat else -(-total // batch_size) for total in frames
+                    0 if not total else None if self.repeat else -(-total // batch_size) for total in samples
                 ]
                 batches, next_worker = _batches_per_worker(rank_offset // batch_size, limits)
                 batches = [count * batch_size for count in batches]
@@ -749,19 +763,22 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     @cached_property
     def _episode_frame_counts(self) -> np.ndarray:
         """Read only episode boundaries once for rank balancing and coverage planning."""
-        boundaries = self.meta.episodes.select_columns(
-            ["dataset_from_index", "dataset_to_index"]
-        ).with_format(None)[:]
-        return np.asarray(boundaries["dataset_to_index"], dtype=np.int64) - np.asarray(
-            boundaries["dataset_from_index"], dtype=np.int64
-        )
+        return episode_bounds(self.meta)[1]
 
     def _episode_frame_count(self, episode_index: int) -> int:
         """Return the complete episode length from its absolute dataset boundaries."""
         return int(self._episode_frame_counts[episode_index])
 
-    def num_frames_for_rank(self, rank: int, world_size: int, num_workers: int) -> int:
-        """Return frames owned by one training rank under balanced whole-episode sharding."""
+    @cached_property
+    def _sample_counts(self) -> dict[int, int]:
+        return self.samples.sample_counts
+
+    def _episode_sample_count(self, episode_index: int) -> int:
+        """Return how many samples the episode gives per epoch."""
+        return self._sample_counts.get(episode_index, 0)
+
+    def num_samples_for_rank(self, rank: int, world_size: int, num_workers: int) -> int:
+        """Return the samples of one epoch owned by one training rank under balanced whole-episode sharding."""
         if world_size <= 0 or rank < 0 or rank >= world_size:
             raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
         counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
@@ -771,7 +788,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 f"Rank {rank} owns {len(shards[rank])} streaming episodes, fewer than its {num_workers} "
                 "DataLoader workers. Reduce --num_workers."
             )
-        return sum(counts[episode] for episode in shards[rank])
+        return sum(self._episode_sample_count(episode) for episode in shards[rank])
 
     def num_episodes_for_rank(self, rank: int, world_size: int) -> int:
         """Return the number of whole episodes one training rank owns."""
@@ -827,7 +844,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         episode = self.meta.episodes[episode_index]
         # Zero-copy views share the episode's lifetime and fixed HF transform. Project
         # before row lookup so action/state windows cannot decode unrelated images.
-        column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
+        column_keys = set(self._hf_features) - set(self.meta.video_keys) - set(LANGUAGE_COLUMNS)
         if self.meta.video_keys:
             column_keys.add("timestamp")
         return _EpisodeData(
@@ -885,23 +902,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     def _make_episode_item(
         self,
         episode_data: _EpisodeData,
-        episode_index: int,
-        frame_index: int,
+        key: SampleKey,
         *,
         video_cache: EpisodeByteCache | None,
         apply_transforms: bool = True,
     ) -> dict[str, Any]:
-        """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
-        episode_length = len(episode_data.dataset)
+        """Assemble a sample's windows, padding masks and decoded camera frames."""
+        episode_index = key.episode
+        # Episode-local rows: the whole episode is resident, so rows are 0..length-1.
+        frame_index, windows, padding = self.samples.rows(key, start=0)
         item = episode_data.get_item(frame_index)
         episode_start = episode_data.dataset_from_index
-
-        # Episode-local windows: the whole episode is resident, so rows are 0..length-1.
-        windows: dict[str, list[int]] = {}
-        for key, deltas in self._delta_arrays.items():
-            windows[key], item[f"{key}_is_pad"] = delta_window(frame_index, deltas, 0, episode_length)
-            if key not in self.meta.video_keys:
-                item[key] = episode_data.get_column(key, windows[key])
+        item.update(padding)
+        for name, rows in windows.items():
+            if name not in self.meta.video_keys:
+                item[name] = episode_data.get_column(column_of(name), rows)
 
         if self.meta.video_keys:
             if video_cache is None:
@@ -944,11 +959,6 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 f"Episode {episode_index} frame {frame_index} has unexpected absolute index {item['index']}"
             )
         return item
-
-    @cached_property
-    def _delta_arrays(self) -> dict[str, np.ndarray]:
-        """Frame offsets of each temporal window, converted once for ``delta_window``."""
-        return {key: np.asarray(deltas, dtype=np.int64) for key, deltas in (self.delta_indices or {}).items()}
 
     @cached_property
     def _task_names(self) -> list[Any]:

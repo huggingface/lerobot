@@ -13,21 +13,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import math
 from collections.abc import Iterator, Mapping
 
 import numpy as np
 import torch
 
-logger = logging.getLogger(__name__)
+from lerobot.configs.sampling import SampleKey
 
 
 class EpisodeAwareSampler:
-    """Sampler over episode frames that stores only per-episode boundaries.
+    """Sampler over the samples of every episode that stores only per-episode counts.
 
-    Logical positions map to frame indices on the fly (O(num_episodes) construction memory)
-    instead of materializing a Python list of every frame index.
+    It yields :class:`~lerobot.configs.sampling.SampleKey` s: sample ``k`` of an episode in the
+    current epoch. What a sample reads is up to the dataset's training sampler (one per frame by
+    default); this class only orders them. Logical positions map to keys on the fly
+    (O(num_episodes) construction memory) instead of materializing every key.
 
     Each epoch is shuffled with a `torch.randperm` seeded from `(seed, epoch)`, so the data order
     is a pure function of `(seed, epoch)`: it reproduces on every rank without synchronizing the
@@ -44,76 +45,24 @@ class EpisodeAwareSampler:
     starts (e.g. on resume or in tests).
     """
 
-    def __init__(
-        self,
-        dataset_from_indices: list[int],
-        dataset_to_indices: list[int],
-        episode_indices_to_use: list | None = None,
-        drop_n_first_frames: int = 0,
-        drop_n_last_frames: int = 0,
-        shuffle: bool = False,
-        seed: int = 0,
-        absolute_to_relative_idx: Mapping[int, int] | None = None,
-    ):
+    def __init__(self, sample_counts: Mapping[int, int], shuffle: bool = False, seed: int = 0):
         """
         Args:
-            dataset_from_indices: Start index of each episode in the dataset.
-            dataset_to_indices: End index of each episode in the dataset.
-            episode_indices_to_use: Episode indices to use; None means all.
-            drop_n_first_frames: Frames to drop from the start of each episode.
-            drop_n_last_frames: Frames to drop from the end of each episode.
-            shuffle: Whether to shuffle the indices.
+            sample_counts: Samples per dataset episode, e.g. ``LeRobotDataset.sample_counts``.
+            shuffle: Whether to shuffle the samples.
             seed: Seed the permutation is derived from (together with the epoch).
         """
-        if drop_n_first_frames < 0:
-            raise ValueError(f"drop_n_first_frames must be >= 0, got {drop_n_first_frames}")
-        if drop_n_last_frames < 0:
-            raise ValueError(f"drop_n_last_frames must be >= 0, got {drop_n_last_frames}")
-
-        from_indices = np.asarray(dataset_from_indices, dtype=np.int64)
-        to_indices = np.asarray(dataset_to_indices, dtype=np.int64)
-        if from_indices.shape != to_indices.shape:
-            raise ValueError(
-                f"dataset_from_indices and dataset_to_indices must have the same length, "
-                f"got {len(from_indices)} and {len(to_indices)}"
-            )
-
-        used: np.ndarray = np.ones(len(from_indices), dtype=bool)
-        if episode_indices_to_use is not None:
-            used = np.zeros(len(from_indices), dtype=bool)
-            used[np.asarray(episode_indices_to_use, dtype=np.int64)] = True
-
-        starts = from_indices + drop_n_first_frames
-        lengths = to_indices - drop_n_last_frames - starts
-        for episode_idx in np.flatnonzero(used & (lengths <= 0)):
-            logger.warning(
-                "Episode %d has %d frames but drop_n_first_frames=%d and "
-                "drop_n_last_frames=%d removes all frames. Skipping.",
-                episode_idx,
-                to_indices[episode_idx] - from_indices[episode_idx],
-                drop_n_first_frames,
-                drop_n_last_frames,
-            )
-        used &= lengths > 0
-        if not used.any():
-            raise ValueError(
-                "No valid frames remain after applying drop_n_first_frames and drop_n_last_frames. "
-                "All episodes were either filtered out or had too few frames."
-            )
-
-        self._starts = starts[used]
-        self._cum_lengths = np.cumsum(lengths[used])
-        self._num_frames = int(self._cum_lengths[-1])
+        episodes = np.asarray([ep for ep, count in sample_counts.items() if count > 0], dtype=np.int64)
+        counts = np.asarray([count for count in sample_counts.values() if count > 0], dtype=np.int64)
+        if not len(counts):
+            raise ValueError("No episode gives any sample: every episode was filtered out or is too short.")
+        self._episodes = episodes
+        self._ends = np.cumsum(counts)
+        self._num_samples = int(self._ends[-1])
         self.shuffle = shuffle
         self.seed = seed
         self._epoch = 0
         self._start_index = 0
-        self._absolute_to_relative = absolute_to_relative_idx
-
-    @property
-    def indices(self) -> list[int]:
-        """Materialized frame indices in unshuffled order; O(num_frames), introspection only."""
-        return [self._frame_index(k) for k in range(self._num_frames)]
 
     def set_epoch(self, epoch: int) -> None:
         self._epoch = epoch
@@ -131,41 +80,38 @@ class EpisodeAwareSampler:
         epoch_seed = int(np.random.SeedSequence([self.seed, epoch]).generate_state(1, dtype=np.uint64)[0])
         return torch.Generator().manual_seed(epoch_seed)
 
-    def _frame_index(self, position: int) -> int:
-        episode = int(np.searchsorted(self._cum_lengths, position, side="right"))
-        position_in_episode = position - (int(self._cum_lengths[episode - 1]) if episode > 0 else 0)
-        absolute_idx = int(self._starts[episode]) + position_in_episode
-        if self._absolute_to_relative is not None:
-            return self._absolute_to_relative[absolute_idx]
-        return absolute_idx
+    def _key(self, position: int, epoch: int) -> SampleKey:
+        slot = int(np.searchsorted(self._ends, position, side="right"))
+        first = int(self._ends[slot - 1]) if slot else 0
+        return SampleKey(int(self._episodes[slot]), position - first, epoch)
 
-    def __iter__(self) -> Iterator[int]:
+    def __iter__(self) -> Iterator[SampleKey]:
         # Advance epoch state eagerly, not on first consumption of the generator.
         epoch, start = self._epoch, self._start_index
         self._epoch += 1
         self._start_index = 0
         return self._iter_epoch(epoch, start)
 
-    def _iter_epoch(self, epoch: int, start: int) -> Iterator[int]:
+    def _iter_epoch(self, epoch: int, start: int) -> Iterator[SampleKey]:
         if self.shuffle:
-            order = torch.randperm(self._num_frames, generator=self._epoch_generator(epoch))
-            for k in range(start, self._num_frames):
-                yield self._frame_index(int(order[k]))
+            order = torch.randperm(self._num_samples, generator=self._epoch_generator(epoch))
+            for k in range(start, self._num_samples):
+                yield self._key(int(order[k]), epoch)
         else:
-            for k in range(start, self._num_frames):
-                yield self._frame_index(k)
+            for k in range(start, self._num_samples):
+                yield self._key(k, epoch)
 
     def __len__(self) -> int:
-        return self._num_frames
+        return self._num_samples
 
 
-def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_processes: int) -> dict:
+def compute_sampler_state(step: int, num_samples: int, batch_size: int, num_processes: int) -> dict:
     """Map an optimization step to an `EpisodeAwareSampler` state for sample-exact resume.
 
     Under accelerate's batch sharding, one step consumes `batch_size * num_processes` sampler
-    positions and each rank sees `ceil(ceil(num_frames / batch_size) / num_processes)` batches
+    positions and each rank sees `ceil(ceil(num_samples / batch_size) / num_processes)` batches
     per epoch (`even_batches` padding included). The start index provably stays below
-    `num_frames`; the `min` is defensive.
+    `num_samples`; the `min` is defensive.
 
     Assumptions (resume is only sample-exact when they hold):
         - `num_processes` and `batch_size` match the run that wrote the checkpoint. Both scale how
@@ -175,7 +121,7 @@ def compute_sampler_state(step: int, num_frames: int, batch_size: int, num_proce
           mirrors that padding; with `even_batches=False` the per-epoch batch count differs and
           the boundary is off.
     """
-    batches_per_epoch = math.ceil(math.ceil(num_frames / batch_size) / num_processes)
+    batches_per_epoch = math.ceil(math.ceil(num_samples / batch_size) / num_processes)
     epoch, batches_into_epoch = divmod(step, batches_per_epoch)
-    start_index = min(batches_into_epoch * batch_size * num_processes, num_frames)
+    start_index = min(batches_into_epoch * batch_size * num_processes, num_samples)
     return {"epoch": epoch, "start_index": start_index}
