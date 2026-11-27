@@ -32,14 +32,14 @@ from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 
 from lerobot.sim.config import SimConfig
 from lerobot.sim.integrations import simulator_required
-from lerobot.sim.types import EnvDescriptor, StepResult
+from lerobot.sim.types import EnvDescriptor, NoRGBObservationError, StepResult
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 logger = logging.getLogger(__name__)
 
 # Env attributes copied from a worker process after it builds the env and after each reset.
-_ENV_ATTRS = ("task_description", "task", "num_envs")
+_ENV_ATTRS = ("task_description", "task", "num_envs", "render_mode")
 # Episode limit for an env that declares none.
 _DEFAULT_MAX_EPISODE_STEPS = 500
 # Gymnasium 0.29, which some simulators pin (RoboMME's ManiSkill), has no AutoresetMode; there a vector env always
@@ -124,6 +124,8 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                     result: Any = env.reset(seed=argument)
                 elif command == "step":
                     result = env.step(argument)
+                elif command == "render":
+                    result = env.render()
                 elif command == "spaces":
                     result = _spaces(env)
                 else:  # "attrs"
@@ -205,6 +207,9 @@ class _ProcessEnv:
     def step(self, action: np.ndarray) -> Any:
         self.send("step", action)
         return self.receive()
+
+    def render(self) -> np.ndarray | None:
+        return self._call("render")
 
     def request_close(self) -> None:
         """Ask the process to close its environment and exit, without waiting. Asks only once."""
@@ -386,8 +391,28 @@ class LocalVectorEnv(gym.vector.VectorEnv):
         return self.call(name)
 
     def render(self) -> tuple[np.ndarray, ...]:
-        """Return each env's latest RGB frame, taken from the last observation instead of a new render."""
-        return self.latest.frames()
+        """Return the latest RGB observation, or render each independent env if it provides RGB arrays."""
+        try:
+            return self.latest.frames()
+        except NoRGBObservationError:
+            # A native batch can keep stepping a finished row, so its renderer might lose terminal frames.
+            if self._batched or any(getattr(env, "render_mode", None) != "rgb_array" for env in self._envs):
+                raise
+
+        frames = []
+        for env in self._envs:
+            frame = env.render()
+            if (
+                not isinstance(frame, np.ndarray)
+                or frame.dtype != np.uint8
+                or frame.ndim != 3
+                or frame.shape[-1] != 3
+            ):
+                raise ValueError(
+                    "Environment render() must return an RGB uint8 array of shape (height, width, 3)"
+                )
+            frames.append(frame.copy())
+        return tuple(frames)
 
     def close(self, **kwargs: Any) -> None:
         """Release simulator resources, once.
