@@ -25,7 +25,9 @@ backend: 54 of 56 episodes with `praxis-1-droid`, on LeRobot 0.6's stack and on 
 (torch 2.15, transformers 5.22); the praxis repository's own runner also scores 54 of 56 on the
 same episodes. Given the same inputs the policy's commands are bitwise equal to the praxis
 repository's. See `docs/source/praxis.mdx` for the per-task numbers of both checkpoints and the
-paired comparison with the praxis repository's runner.
+paired comparison with the praxis repository's runner. `examples/praxis/sim_env` runs the suite
+(`pip install praxis-sim`, then `--env.type=envhub --env.hub_path=examples/praxis/sim_env
+--env.trust_remote_code=true`).
 
 ## Fine-tuning
 

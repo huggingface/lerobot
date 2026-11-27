@@ -16,6 +16,20 @@ python examples/praxis/convert_checkpoint.py \
 See the [Praxis-1 guide](../../docs/source/praxis.mdx) for installation, the results in the praxis
 simulation, fine-tuning and the parity checks.
 
+## Simulation
+
+[`sim_env`](sim_env/env.py) is the MuJoCo rig of the praxis repository (`pip install praxis-sim`) as
+an EnvHub environment, with the observations and actions of `praxis-1-droid`: a batched env for
+`lerobot-eval`, a sim robot for `lerobot-rollout` and `lerobot-record`. From the repository root:
+
+```bash
+MUJOCO_GL=egl lerobot-eval --policy.path=runwayml/praxis-1-droid-lerobot --policy.device=cuda \
+    --env.type=envhub --env.hub_path=examples/praxis/sim_env --env.trust_remote_code=true \
+    --eval.n_episodes=8 --eval.batch_size=8 --seed=0 --output_dir=outputs/eval/praxis_guard
+```
+
+"Simulation" in the guide has the rollout, recording and fine-tuning commands.
+
 ## Fine-tuning helpers
 
 [`select_droid_episodes.py`](select_droid_episodes.py) writes the DROID episodes of the praxis

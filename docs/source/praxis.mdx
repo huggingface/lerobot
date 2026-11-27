@@ -28,7 +28,8 @@ Resources:
 The model code lives in-tree under `lerobot/policies/praxis/praxis_core` (vendored from the praxis
 repository at commit 8dad1a4 plus the canvas rule of `praxis-1-droid`, import paths rewritten; the file headers
 name the upstream commits). The MuJoCo simulation is the `praxis-sim` package on PyPI (developed in
-the praxis repository's `packages/praxis-sim`, no torch); LeRobot has no environment for it.
+the praxis repository's `packages/praxis-sim`, no torch); `examples/praxis/sim_env` runs it as an
+[EnvHub](./envhub) environment (see "Simulation").
 
 ## Installation
 
@@ -179,12 +180,120 @@ The base checkpoint gets a directory without processors that `init_heads.py` com
 the shards, the index and its own `SHA256SUMS` (`sha256sum -c` passes in it) (LeRobot policies read and write sharded safetensors in the transformers
 layout; `PraxisPolicy.save_pretrained` writes 5 GB shards), and the two processor files. `--vae-id` and `--text-encoder-id` set where the frozen parts come from (Hub ids by default).
 
+## Simulation
+
+`examples/praxis/sim_env` is the MuJoCo rig of the praxis repository as an [EnvHub](./envhub)
+environment: a folder with an `env.py` over the `praxis-sim` package (a Franka arm with a Robotiq
+2F-85 gripper, an exterior and a wrist camera at 512 x 288, 15 Hz, and the fixed evaluation suites
+`droid`, `droid_guard` and `hard`). Its observations and actions are the ones of `praxis-1-droid`
+(`observation.images.exterior`, `observation.images.wrist`, the seven pose and gripper values), so
+the checkpoint runs in it without a rename map, as a batched env for `lerobot-eval` and as a sim
+robot for `lerobot-rollout` and `lerobot-record` (see [Simulation](./simulation)).
+
+```bash
+pip install praxis-sim            # MuJoCo, Gymnasium and numpy; the robot models download on first use
+export MUJOCO_GL=egl              # headless rendering; MUJOCO_EGL_DEVICE_ID picks its GPU
+SIM="--env.type=envhub --env.hub_path=examples/praxis/sim_env --env.trust_remote_code=true"
+ROBOT="--robot.type=sim --robot.env.type=envhub --robot.env.hub_path=examples/praxis/sim_env --robot.env.trust_remote_code=true"
+```
+
+`trust_remote_code` is the consent every EnvHub environment asks for: the folder's `env.py` runs in
+your process. Run the commands from the repository root, or give the folder's full path.
+
+### Evaluate
+
+The `droid_guard` suite (7 tasks x 8 scenes; the LeRobot seed of an episode is its scene seed):
+
+```bash
+lerobot-eval --policy.path=runwayml/praxis-1-droid-lerobot --policy.device=cuda $SIM \
+    --eval.n_episodes=8 --eval.batch_size=8 --seed=0 --output_dir=outputs/eval/praxis_guard
+```
+
+`--env.make_env_kwargs='{"suite": "hard"}'` selects another suite, and
+`'{"suite": "lift_cube,block_in_bowl"}'` a list of tasks. Each episode of `eval_info.json` carries
+the task's `progress` and its `success_tick` (-1 without success) under `metrics`. On one H100 with
+the stack LeRobot 0.7 locks and the `flash` backend, this command scores the 54 of 56 of the
+`lerobot-eval`, torch 2.15 column of "`praxis-1-droid`, the released checkpoint" below, task by task
+(about 9 minutes).
+
+### Roll out and record
+
+The same environment as a robot. The base strategy runs the policy and starts the next scene when
+an episode ends:
+
+```bash
+lerobot-rollout --strategy.type=base $ROBOT \
+    --robot.env.make_env_kwargs='{"suite": "droid_guard"}' --robot.task_id=2 \
+    --policy.path=runwayml/praxis-1-droid-lerobot --device=cuda --inference.type=sync --fps=15 \
+    --task="Put the red block in the bowl." --duration=60 \
+    --return_to_initial_position=false --play_sounds=false
+```
+
+- `--robot.task_id` is the index of the task in the suite, and `--task` its instruction
+  (`task_descriptions.json` of an evaluation lists them). The tasks that name a colour or a direction
+  choose it per scene (`move_block`), so one `--task` does not fit all of their scenes.
+- `lerobot-eval` seeds every episode. A sim robot resets without a seed: here each episode that ran
+  is followed by the next scene, from `"first_scene"` (0) of `make_env_kwargs`.
+- `--inference.type=sync` is the only backend: the policy conditions on the frames of the executed
+  chunk, which the RTC and remote runners do not provide (see "Known limits"). A model call (0.7 s on
+  an H100) blocks the control loop once per chunk; the simulation waits for it.
+- `--fps=15` is the rate of the rig and of the policy. Leave `--interpolation_multiplier` at 1: the
+  commands hold Euler angles, and the roll of a downward gripper sits at the wrap from -pi to pi.
+
+The episodic strategy records the rollouts as a dataset, one simulated episode per recorded episode:
+
+```bash
+lerobot-rollout --strategy.type=episodic --strategy.reset_to_initial_position=false $ROBOT \
+    --robot.env.make_env_kwargs='{"suite": "droid_guard", "after_success_s": 8.0}' --robot.task_id=0 \
+    --policy.path=runwayml/praxis-1-droid-lerobot --device=cuda --inference.type=sync --fps=15 \
+    --dataset.repo_id=${HF_USER}/rollout_praxis_sim --dataset.no_stamp=true \
+    --dataset.root=outputs/datasets/rollout_praxis_sim \
+    --dataset.single_task="Pick up the red cube." --dataset.fps=15 --dataset.num_episodes=6 \
+    --dataset.episode_time_s=120 --dataset.reset_time_s=0 --dataset.push_to_hub=false \
+    --return_to_initial_position=false --play_sounds=false
+```
+
+`--resume=true` with another `--robot.task_id` and `--dataset.single_task` adds a task to the same
+dataset (a resumed recording needs its `--dataset.root`). A training window is 93 frames (6.2 s), so an episode of N frames holds N - 93 window
+starts, and by default an episode ends one second after its success: a success within 5 s leaves
+no window (`lerobot-train` skips such an episode with a warning). `"after_success_s": 8.0` keeps a
+successful episode running for 8 more seconds or until the task's time limit: the episodes of
+`lift_cube` are then 165 frames. The dataset records the body as `Franka`, as `lerobot/droid_1.0.1`
+does, at 15 Hz, with `observation.state` and `action` as the seven values
+`x, y, z, roll, pitch, yaw, gripper`.
+
+`lerobot-record` records a teleoperator in the same way (`$ROBOT --teleop.type=...`). The
+teleoperator has to send the seven values under those names; LeRobot has none that does, so it is a
+[plugin](./integrate_hardware) of your own.
+
+### Fine-tune on the recorded dataset
+
+The dataset has the keys the policy reads, so the commands of "Training" below run on it without a
+rename map. A LoRA fine-tune on 4 GPUs:
+
+```bash
+torchrun --nproc-per-node=4 $(which lerobot-train) \
+    --dataset.repo_id=${HF_USER}/rollout_praxis_sim --dataset.root=outputs/datasets/rollout_praxis_sim \
+    --policy.path=runwayml/praxis-1-droid-lerobot --policy.device=cuda --policy.push_to_hub=false \
+    --parallelism.dp_shard=4 --accelerator.fsdp.mixed_precision_policy.reduce_dtype=float32 \
+    --peft.r=16 --peft.lora_alpha=32 --batch_size=1 --steps=200 --save_freq=200 \
+    --output_dir=outputs/train/praxis_sim_lora
+```
+
+`lerobot-eval` and `lerobot-rollout` load the adapter on top of its base with
+`--policy.path=outputs/train/praxis_sim_lora/checkpoints/last/pretrained_model`. Measured on 4 x H100
+with 18 recorded episodes of three `droid_guard` tasks (3,996 frames): 3.6 s per step with one
+window per GPU and 30 GB of GPU memory per rank. After the 200 steps the adapter scores 56 of 56 on
+`droid_guard` against 54 for its base, which shows that the loop closes; a run this short on the
+policy's own rollouts is not a result.
+
 ## Results
 
 The closed-loop numbers below come from the MuJoCo rig of the praxis repository (the `praxis-sim`
 package: Franka + Robotiq 2F-85, 512 x 288 cameras, 15 Hz) and its fixed evaluation suites; the
-LeRobot seed of an episode is its scene seed. The environment that runs the suites through
-`lerobot-eval` is not part of LeRobot.
+LeRobot seed of an episode is its scene seed. They were measured through `lerobot-eval` with an
+environment config that is not part of LeRobot; the environment of "Simulation" above runs the same
+episodes.
 
 While it samples, the policy pins the numerical settings praxis runs with (no cuDNN benchmark
 mode, float32 matmuls for the MoE router, TF32 allowed in cuDNN) and restores the host settings
@@ -543,7 +652,7 @@ ported.
   (`bimanual`). Fine-tuning and the simulation are single-arm.
 - Praxis outputs Cartesian pose targets for an arm with an impedance controller; LeRobot's robot
   classes do not include a Franka, so real-robot use goes through a client that executes
-  Cartesian targets.
+  Cartesian targets. In simulation `lerobot-rollout` drives the rig (see "Simulation").
 - A `select_action` batch runs its environments sequentially (one model call per environment).
 - Remote serving is not supported. The default chunk runner (`lerobot/inference/policy_runner.py`)
   refuses a policy that conditions on past observations, and Praxis conditions on the frames of the
