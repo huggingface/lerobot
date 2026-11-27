@@ -23,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -30,6 +31,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import lerobot.datasets.dataset_metadata as dataset_metadata_module
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
+from lerobot.configs import DepthEncoderConfig
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.dataset_writer import DatasetWriter
@@ -545,6 +547,43 @@ def test_resume_can_add_more_episodes(tmp_path):
     resumed.save_episode()
 
     assert resumed.meta.total_episodes == 2
+
+
+def test_resume_reuses_recorded_depth_encoder(tmp_path):
+    """resume() reuses the recorded depth settings and refuses ones that would decode wrong."""
+    root = tmp_path / "ds"
+    features = {
+        "observation.images.depth": {
+            "dtype": "video",
+            "shape": (48, 64, 1),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": True},
+        }
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=root,
+        use_videos=True,
+        depth_encoder=DepthEncoderConfig(depth_max=5.0, use_log=False),
+    )
+    image = np.full((48, 64, 1), 1000, dtype=np.uint16)
+    for _ in range(4):
+        dataset.add_frame({"observation.images.depth": image, "task": "Dummy task"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    assert resumed.writer._depth_encoder.depth_max == 5.0
+    assert resumed.writer._depth_encoder.use_log is False
+
+    with pytest.raises(ValueError, match="depth_max"):
+        LeRobotDataset.resume(
+            repo_id=DUMMY_REPO_ID,
+            root=root,
+            depth_encoder=DepthEncoderConfig(depth_max=10.0, use_log=False),
+        )
 
 
 # ── Writer guard ─────────────────────────────────────────────────────

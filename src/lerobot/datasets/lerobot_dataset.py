@@ -25,7 +25,8 @@ import torch.utils
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig, VideoEncoderConfig
+from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES, VIDEO_ENCODER_INFO_FIELD_NAMES
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -437,6 +438,76 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 depth_output_unit=self._depth_output_unit,
             )
         return self.reader
+
+    @staticmethod
+    def _resolve_resume_encoders(
+        meta: LeRobotDatasetMetadata,
+        rgb_encoder: RGBEncoderConfig | None,
+        depth_encoder: DepthEncoderConfig | None,
+    ) -> tuple[RGBEncoderConfig | None, DepthEncoderConfig | None]:
+        """Reuse encoders recorded in ``info.json`` when :meth:`resume` is not given one.
+
+        A feature counts as recorded when its ``info`` block contains encoder fields. That includes
+        a crash during episode 0, which writes those fields before ``total_episodes`` increments.
+        ``None`` means nothing is recorded yet (or nothing was passed) and the writer defaults apply.
+        Codec, pixel format, and depth quantization must match the recorded values, the same fields
+        dataset merging refuses to ignore. Tuning fields (GOP, CRF, preset, and the other
+        ``VIDEO_ENCODER_INFO`` keys) may differ and only warn.
+        """
+        stored_encoder_keys = (
+            "video.codec",
+            "video.pix_fmt",
+            *(f"video.{name}" for name in VIDEO_ENCODER_INFO_FIELD_NAMES),
+            *(f"video.{name}" for name in DEPTH_ENCODER_INFO_FIELD_NAMES),
+        )
+
+        def resolve[EncoderT: VideoEncoderConfig](
+            keys: list[str],
+            passed: EncoderT | None,
+            config_cls: type[EncoderT],
+            strict: tuple[str, ...],
+            encoder_name: str,
+        ) -> EncoderT | None:
+            stored: EncoderT | None = None
+            for key in keys:
+                info = meta.features[key].get("info") or {}
+                # Absent fields are not a recorded encoder: from_video_info would fill class defaults.
+                if not any(info.get(name) not in (None, {}) for name in stored_encoder_keys):
+                    continue
+                config = config_cls.from_video_info(info)
+                if stored is None:
+                    stored = config
+                    continue
+                differing = [name for name in strict if getattr(stored, name) != getattr(config, name)]
+                if differing:
+                    raise ValueError(f"'{key}' was recorded with different {', '.join(differing)}.")
+                if config != stored:
+                    logger.warning(
+                        f"'{key}' was recorded with different encoder settings; using the first key's."
+                    )
+            if stored is None:
+                return passed
+            if passed is None:
+                return stored
+            differing = [name for name in strict if getattr(stored, name) != getattr(passed, name)]
+            if differing:
+                raise ValueError(
+                    f"Cannot resume with {encoder_name} settings that differ on {', '.join(differing)}. "
+                    f"Omit {encoder_name}_encoder to reuse the recorded ones."
+                )
+            if passed != stored:
+                logger.warning("New episodes use encoder settings that differ from the recorded ones.")
+            return passed
+
+        # Same split as dataset merging: codec and pixel format must match, tuning fields may not.
+        stream_strict = ("vcodec", "pix_fmt")
+        depth_strict = (*stream_strict, *DEPTH_ENCODER_INFO_FIELD_NAMES)
+        rgb_keys = [key for key in meta.video_keys if key not in meta.depth_keys]
+        depth_keys = [key for key in meta.video_keys if key in meta.depth_keys]
+        return (
+            resolve(rgb_keys, rgb_encoder, RGBEncoderConfig, stream_strict, "rgb"),
+            resolve(depth_keys, depth_encoder, DepthEncoderConfig, depth_strict, "depth"),
+        )
 
     @staticmethod
     def _build_streaming_encoder(
@@ -949,9 +1020,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             batch_encoding_size: Number of episodes to accumulate before
                 batch-encoding videos.
             rgb_encoder: Video encoder settings for cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.video.rgb_encoder_defaults` is used.
+                When ``None``, the settings recorded in ``info.json`` are reused
+                (or the defaults when nothing is recorded yet). A codec or pixel format
+                that differs from the recorded one raises ``ValueError``.
             depth_encoder: Video encoder settings for depth cameras (codec, quality, etc.).
-                When ``None``, :func:`~lerobot.configs.video.depth_encoder_defaults` is used.
+                When ``None``, the settings recorded in ``info.json`` are reused
+                (or the defaults when nothing is recorded yet). A codec, pixel format,
+                or depth quantization that differs from the recorded one raises ``ValueError``.
             encoder_threads: Number of encoder threads (global). ``None``
                 lets the codec decide.
             image_writer_processes: Subprocesses for async image writing.
@@ -1006,6 +1081,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Reader is lazily created on first access (write-only mode)
         obj.reader = None
+
+        # Encode new episodes the way existing ones were encoded (see _resolve_resume_encoders).
+        rgb_encoder, depth_encoder = cls._resolve_resume_encoders(obj.meta, rgb_encoder, depth_encoder)
 
         streaming_enc = None
         if streaming_encoding and len(obj.meta.video_keys) > 0:
