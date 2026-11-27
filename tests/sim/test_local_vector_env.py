@@ -27,7 +27,7 @@ from gymnasium.wrappers.vector import RecordEpisodeStatistics
 from lerobot.env_server import EnvClient, RemoteVectorEnv
 from lerobot.envs import EnvClientConfig
 from lerobot.envs.factory import descriptor_features, make_env, make_task_env
-from lerobot.sim import SimConfig
+from lerobot.sim import SimConfig, SimSettings
 from lerobot.sim.integrations.utils import canonical_observation
 from lerobot.sim.local_vector_env import LocalVectorEnv, _ProcessEnv
 from tests.fixtures.toy_env import ToyEnv, ToyEnvConfig, ToyVectorEnv
@@ -90,7 +90,7 @@ def test_every_run_mode_takes_the_same_steps():
     batched = {**per_env, "type": "toy_vector"}
     runs = []
     for config, use_async_envs in ((per_env, False), (per_env, True), (batched, False), (batched, True)):
-        env = LocalVectorEnv(config, num_envs=3, use_async_envs=use_async_envs)
+        env = LocalVectorEnv(SimSettings(**config), num_envs=3, use_async_envs=use_async_envs)
         try:
             env.reset(seed=[4, 5, 6])
             steps = [env.latest]
@@ -118,7 +118,7 @@ def test_every_run_mode_takes_the_same_steps():
 
 
 def test_simulator_metrics_freeze_with_the_env_that_reported_them():
-    env = LocalVectorEnv(ToyEnvConfig().sim_settings(), num_envs=2)
+    env = LocalVectorEnv(SimSettings(**ToyEnvConfig().sim_settings()), num_envs=2)
     try:
         # A reset reports no metric; the simulator fills them on its steps.
         assert env.reset(seed=[4, 5])[1]["metrics"] == {}
@@ -142,7 +142,7 @@ def test_a_batched_simulator_that_autoresets_is_rejected():
         "kwargs": {"autoreset_mode": "NEXT_STEP"},
     }
     with pytest.raises(ValueError, match="must not autoreset"):
-        LocalVectorEnv(config, num_envs=2)
+        LocalVectorEnv(SimSettings(**config), num_envs=2)
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
@@ -190,7 +190,7 @@ def test_other_tasks_build_their_simulators_on_first_use():
     config = ToyEnvConfig()
     first = make_task_env(config, n_envs=2)
     before = ToyEnv.builds
-    env = LocalVectorEnv(config.sim_settings(), 2, descriptor=first.descriptor)
+    env = LocalVectorEnv(SimSettings(**config.sim_settings()), 2, descriptor=first.descriptor)
     try:
         assert ToyEnv.builds == before
         env.reset(seed=[1, 2])
@@ -216,7 +216,7 @@ def test_a_filtered_suite_starts_with_its_first_task():
 
 
 def test_local_and_served_environments_agree_on_tasks():
-    settings = ToyEnvConfig(task_ids=(3, 5)).sim_settings()
+    settings = SimSettings(**ToyEnvConfig(task_ids=(3, 5)).sim_settings())
     local = LocalVectorEnv(settings)
     try:
         # Nothing is opened before the first reset, so no server is needed.
@@ -257,7 +257,7 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
         return {task: {0: [lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(_Reach(), 1000))]}}
 
     _register_integration(monkeypatch, "wrapped", env_fns)
-    env = LocalVectorEnv({"type": "wrapped", "task": "reach"})
+    env = LocalVectorEnv(SimSettings(type="wrapped", task="reach"))
     try:
         assert env.call("_max_episode_steps") == (1000,)
         assert env.descriptor.max_episode_steps == 1000
@@ -300,9 +300,9 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     )
     expected = r"some_sim simulator is not installed \('some_simulator' is missing\): install it, or serve it"
     with pytest.raises(ModuleNotFoundError, match=expected):
-        LocalVectorEnv({"type": "some_sim", "task": "reach"})
+        LocalVectorEnv(SimSettings(type="some_sim", task="reach"))
     with pytest.raises(RuntimeError, match=expected):
-        LocalVectorEnv({"type": "some_sim", "task": "reach"}, num_envs=2, use_async_envs=True)
+        LocalVectorEnv(SimSettings(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)
 
 
 class _NativeEnv:
@@ -333,7 +333,7 @@ def test_a_new_simulator_needs_only_its_factories_and_observation_adapter(monkey
     _register_integration(
         monkeypatch, "new_engine", lambda task, n_envs: {task: {0: [_NativeEnv] * n_envs}}, adapter
     )
-    env = LocalVectorEnv({"type": "new_engine", "task": "pick", "semantics": "new-engine-v1"})
+    env = LocalVectorEnv(SimSettings(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
         assert env.single_observation_space["observation.state"].shape == (1,)
         obs, _ = env.reset(seed=[7])
@@ -361,7 +361,7 @@ def test_batched_simulator_can_reuse_observation_storage(monkeypatch, end):
 
         monkeypatch.setattr(ToyVectorEnv, "step", truncate)
     config = {**ToyEnvConfig().sim_settings(), "type": "toy_vector"}
-    env = LocalVectorEnv(config, num_envs=2)
+    env = LocalVectorEnv(SimSettings(**config), num_envs=2)
     try:
         env.reset(seed=[4, 5])
         terminal_obs, _, terminated, truncated, _ = env.step(np.array([[2, 0], [0, 0]], np.float32))

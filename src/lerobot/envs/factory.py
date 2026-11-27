@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import gymnasium as gym
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.sim import EnvDescriptor, LocalVectorEnv
+from lerobot.sim import EnvDescriptor, LocalVectorEnv, SimSettings
 from lerobot.sim.integrations import envhub
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE
 
@@ -224,9 +224,10 @@ def _env_factory(
 
         return descriptor, make
 
+    sim = SimSettings(**settings)
     parallel = use_async_envs and n_envs > 1
     # Reuse the env built to read the descriptor for its own task instead of building it twice.
-    first = [LocalVectorEnv(settings, n_envs, task_group, task_id, parallel)]
+    first = [LocalVectorEnv(sim, n_envs, task_group, task_id, parallel)]
     descriptor = first[0].descriptor
 
     def make_local(group: str, task_id: int) -> LocalVectorEnv | RemoteVectorEnv:
@@ -236,7 +237,7 @@ def _env_factory(
                 return env
             env.close()
         # With the descriptor given, the other tasks build their sims on first use.
-        return LocalVectorEnv(settings, n_envs, group, task_id, parallel, descriptor)
+        return LocalVectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
 
     return descriptor, make_local
 

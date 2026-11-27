@@ -27,7 +27,7 @@ import pytest
 
 from lerobot.envs import EnvClientConfig, HubEnvConfig
 from lerobot.envs.factory import make_env, make_task_env
-from lerobot.sim import LocalVectorEnv, SimConfig
+from lerobot.sim import LocalVectorEnv, SimConfig, SimSettings
 from lerobot.sim.integrations import envhub
 
 _ENVHUB_ENV = """
@@ -75,12 +75,8 @@ def hub_repo(tmp_path, monkeypatch):
     return (snapshot / "env.py").write_text
 
 
-def _envhub(hub_path: str = "user/reach", trust_remote_code: bool = True) -> dict:
-    return {
-        "type": "envhub",
-        "task": "",
-        "kwargs": {"hub_path": hub_path, "trust_remote_code": trust_remote_code},
-    }
+def _envhub(hub_path: str = "user/reach", trust_remote_code: bool = True) -> SimSettings:
+    return SimSettings(type="envhub", kwargs={"hub_path": hub_path, "trust_remote_code": trust_remote_code})
 
 
 def test_envhub_runs_a_hub_repository(hub_repo):
@@ -124,7 +120,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
 """
     )
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
-    env = LocalVectorEnv(config.sim_settings())
+    env = LocalVectorEnv(SimSettings(**config.sim_settings()))
     try:
         shapes = {f.name: f.shape for f in env.descriptor.features}
         assert shapes["observation.images.front"] == (4, 4, 3)
@@ -454,7 +450,7 @@ def test_envhub_settings_differ_per_suite(hub_repo, monkeypatch):
             for suite in envs.values():
                 suite[0].close()
     # Given the settings, as a server configured with every suite has them, an env resolves its own suite.
-    served = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    served = SimSettings(type="envhub", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
     env = LocalVectorEnv(served, 2, "far")
     try:
         assert env.descriptor.fps == 15
@@ -468,7 +464,6 @@ def _serve_every_suite(**make_env_kwargs) -> Iterator[str]:
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
     from lerobot.env_server import EnvServer, EnvServerConfig
-    from lerobot.sim import SimSettings
     from lerobot.transport.zenoh import ZenohConfig
     from tests.fixtures.sim_server import free_port
 

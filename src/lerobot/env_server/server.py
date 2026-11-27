@@ -243,8 +243,6 @@ class EnvServer:
         self.sessions: dict[str, _Session] = {}
         # Created at startup to describe the env, then reused by the first session asking for the same batch.
         self._startup_env: LocalVectorEnv | None = None
-        # The simulator's settings as configured; each env resolves its own suite's from them.
-        self.settings: dict[str, Any] = asdict(config.sim)
         # The first suite's descriptor, and each suite's once described.
         self.descriptor: EnvDescriptor
         self._suite_descriptors: dict[str, EnvDescriptor] = {}
@@ -261,14 +259,14 @@ class EnvServer:
             # Open the transport first, so a port already in use fails before the slow simulator build.
             self.transport.open()
             # Described from its declared features, nothing is built until a session opens a suite.
-            self._startup_env = LocalVectorEnv(self.settings)
+            self._startup_env = LocalVectorEnv(self.config.sim)
             if not self._startup_env.config.features:
                 # Info, not a warning, until the built-in simulators declare their features.
                 logger.info(
                     "%s suite %r has no declared features (its observation and action shapes, returned by "
                     "sim_settings), so its simulator was built at startup to describe it. With them, the server "
                     "starts without building any and builds only the suites sessions open.",
-                    self.settings["type"],
+                    self.config.sim.type,
                     self._startup_env.task_group,
                 )
             self.descriptor = self._startup_env.descriptor
@@ -288,8 +286,8 @@ class EnvServer:
             zenoh = self.config.zenoh
             logger.info(
                 "Serving %s task %r as deployment %r on %s",
-                self.settings["type"],
-                self.settings.get("task") or "",
+                self.config.sim.type,
+                self.config.sim.task,
                 self.config.deployment,
                 ", ".join(zenoh.listen_endpoints or zenoh.connect_endpoints),
             )
@@ -383,7 +381,7 @@ class EnvServer:
         if not task_group or task_group not in self.descriptor.tasks:
             return self.descriptor
         if task_group not in self._suite_descriptors:
-            config = SimConfig.resolve(self.settings, task_group)
+            config = SimConfig.resolve(asdict(self.config.sim), task_group)
             self._suite_descriptors[task_group] = describe_suite(
                 config, self.descriptor.tasks, self.descriptor
             )
@@ -458,7 +456,7 @@ class EnvServer:
             env.close()
         # Built against the description clients were given, so a simulator that differs is refused.
         return LocalVectorEnv(
-            self.settings, num_envs, task_group, task_id, use_async_envs, self._describe(task_group)
+            self.config.sim, num_envs, task_group, task_id, use_async_envs, self._describe(task_group)
         )
 
     def _reap_sessions(self) -> None:
