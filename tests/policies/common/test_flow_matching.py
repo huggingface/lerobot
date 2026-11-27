@@ -29,7 +29,7 @@ asserted bit-identical (``torch.equal`` / ``atol=0``) to it on the same RNG stre
 import pytest
 import torch
 
-from lerobot.configs import RTCAttentionSchedule
+from lerobot.configs import RTCAttentionSchedule, RTCGuidanceJacobian
 from lerobot.policies.common import flow_matching
 from lerobot.policies.common.flow_matching import (
     FlowConvention,
@@ -717,7 +717,7 @@ def test_forward_convention_walks_the_forward_time_grid():
 # ---------------------------------------------------------------------------
 
 
-def _make_rtc_processor(debug=False):
+def _make_rtc_processor(debug=False, guidance_jacobian=RTCGuidanceJacobian.IDENTITY):
     return RTCProcessor(
         RTCConfig(
             enabled=True,
@@ -725,16 +725,18 @@ def _make_rtc_processor(debug=False):
             max_guidance_weight=10.0,
             execution_horizon=4,
             debug=debug,
+            guidance_jacobian=guidance_jacobian,
         )
     )
 
 
+@pytest.mark.parametrize("guidance_jacobian", [RTCGuidanceJacobian.IDENTITY, RTCGuidanceJacobian.VJP])
 @pytest.mark.parametrize("leftover", [True, False])
-def test_rtc_guidance_is_convention_invariant(leftover):
+def test_rtc_guidance_is_convention_invariant(leftover, guidance_jacobian):
     """The NOISE_AT_ZERO time/velocity flips must reproduce the openpi-convention guided step.
 
     Covers both the guided path and the ``prev_chunk_left_over is None`` short-circuit, where
-    ``RTCProcessor`` just returns the (flipped) base velocity.
+    ``RTCProcessor`` just returns the (flipped) base velocity. Runs for both ``guidance_jacobian`` modes.
     """
     torch.manual_seed(7)
     num_steps = 5
@@ -749,7 +751,11 @@ def test_rtc_guidance_is_convention_invariant(leftover):
         "execution_horizon": 4,
     }
     backward_out = euler_integrate(
-        backward_field, noise, num_steps, rtc_processor=_make_rtc_processor(), **kwargs
+        backward_field,
+        noise,
+        num_steps,
+        rtc_processor=_make_rtc_processor(guidance_jacobian=guidance_jacobian),
+        **kwargs,
     )
     forward_out = euler_integrate(
         forward_field,
@@ -757,7 +763,7 @@ def test_rtc_guidance_is_convention_invariant(leftover):
         num_steps,
         convention=FlowConvention.NOISE_AT_ZERO,
         step_aware=True,
-        rtc_processor=_make_rtc_processor(),
+        rtc_processor=_make_rtc_processor(guidance_jacobian=guidance_jacobian),
         **kwargs,
     )
     assert torch.equal(backward_out, forward_out)
