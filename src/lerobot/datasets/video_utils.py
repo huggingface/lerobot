@@ -22,6 +22,7 @@ import queue
 import shutil
 import tempfile
 import threading
+import time
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -1103,38 +1104,57 @@ class StreamingVideoEncoder:
             raise RuntimeError("No active episode to finish.")
 
         results: dict[str, tuple[Path, dict | None]] = {}
+        first_error: RuntimeError | None = None
 
-        # Report dropped frames
-        for video_key, count in self._dropped_frames.items():
-            if count > 0:
-                logger.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
+        try:
+            # Report dropped frames
+            for video_key, count in self._dropped_frames.items():
+                if count > 0:
+                    logger.warning(f"Episode finished with {count} dropped frame(s) for {video_key}.")
 
-        # Send sentinel to all queues
-        for video_key in self._frame_queues:
-            self._frame_queues[video_key].put(None)
+            # Send sentinel to all queues without hanging if a thread died with a full queue
+            sentinel_deadline = time.monotonic() + 120
+            for video_key, frame_queue in self._frame_queues.items():
+                thread = self._threads[video_key]
+                while thread.is_alive():
+                    remaining = sentinel_deadline - time.monotonic()
+                    if remaining <= 0:
+                        logger.error(f"Timed out sending stop sentinel to encoder thread for {video_key}")
+                        self._stop_events[video_key].set()
+                        break
+                    try:
+                        frame_queue.put(None, timeout=min(1.0, remaining))
+                        break
+                    except queue.Full:
+                        continue
 
-        # Wait for all threads and collect results
-        for video_key in self._threads:
-            self._threads[video_key].join(timeout=120)
-            if self._threads[video_key].is_alive():
-                logger.error(f"Encoder thread for {video_key} did not finish in time")
-                self._stop_events[video_key].set()
-                self._threads[video_key].join(timeout=5)
-                results[video_key] = (self._video_paths[video_key], None)
-                continue
+            # Wait for all threads and collect results
+            for video_key in self._threads:
+                self._threads[video_key].join(timeout=120)
+                if self._threads[video_key].is_alive():
+                    logger.error(f"Encoder thread for {video_key} did not finish in time")
+                    self._stop_events[video_key].set()
+                    self._threads[video_key].join(timeout=5)
+                    results[video_key] = (self._video_paths[video_key], None)
+                    continue
 
-            try:
-                status, data = self._result_queues[video_key].get(timeout=5)
-                if status == "error":
-                    raise RuntimeError(f"Encoder thread for {video_key} failed: {data}")
-                results[video_key] = (self._video_paths[video_key], data)
-            except queue.Empty:
-                logger.error(f"No result from encoder thread for {video_key}")
-                results[video_key] = (self._video_paths[video_key], None)
+                try:
+                    status, data = self._result_queues[video_key].get(timeout=5)
+                    if status == "error":
+                        if first_error is None:
+                            first_error = RuntimeError(f"Encoder thread for {video_key} failed: {data}")
+                        continue
+                    results[video_key] = (self._video_paths[video_key], data)
+                except queue.Empty:
+                    logger.error(f"No result from encoder thread for {video_key}")
+                    results[video_key] = (self._video_paths[video_key], None)
 
-        self._cleanup()
-        self._episode_active = False
-        return results
+            if first_error is not None:
+                raise first_error
+            return results
+        finally:
+            self._cleanup()
+            self._episode_active = False
 
     def cancel_episode(self) -> None:
         """Cancel the current episode, stopping encoder threads and cleaning up."""

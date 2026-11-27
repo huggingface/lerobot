@@ -525,6 +525,75 @@ class TestStreamingVideoEncoder:
         encoder.cancel_episode()
         encoder.close()
 
+    def test_finish_episode_does_not_hang_when_thread_dies_with_full_queue(self, tmp_path):
+        """finish_episode() must not deadlock putting the sentinel into a full queue of a dead thread."""
+        video_key = f"{OBS_IMAGES}.cam"
+        encoder = StreamingVideoEncoder(fps=30, queue_maxsize=1)
+
+        # Simulate a dead encoder thread whose bounded queue is completely full.
+        dead_thread = threading.Thread(target=lambda: None)
+        dead_thread.start()
+        dead_thread.join(timeout=5)
+        assert not dead_thread.is_alive()
+
+        full_queue: queue.Queue = queue.Queue(maxsize=1)
+        full_queue.put(np.zeros((8, 8, 3), dtype=np.uint8))
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        result_queue.put(("error", "encoder crashed"))
+
+        encoder._frame_queues[video_key] = full_queue
+        encoder._result_queues[video_key] = result_queue
+        encoder._threads[video_key] = dead_thread
+        encoder._stop_events[video_key] = threading.Event()
+        encoder._video_paths[video_key] = tmp_path / "dead.mp4"
+        encoder._episode_active = True
+
+        with pytest.raises(RuntimeError, match="encoder crashed"):
+            encoder.finish_episode()
+
+        assert not encoder._episode_active
+        assert encoder._threads == {}
+        assert encoder._frame_queues == {}
+
+    def test_finish_episode_joins_all_threads_and_cleans_up_on_error(self, tmp_path):
+        """An error on one camera must still join other camera threads and clean up episode state."""
+        cam1 = f"{OBS_IMAGES}.cam1"
+        cam2 = f"{OBS_IMAGES}.cam2"
+        encoder = StreamingVideoEncoder(fps=30, queue_maxsize=2)
+
+        dead_thread = threading.Thread(target=lambda: None)
+        dead_thread.start()
+        dead_thread.join(timeout=5)
+
+        cam2_queue: queue.Queue = queue.Queue(maxsize=2)
+        cam2_result: queue.Queue = queue.Queue(maxsize=1)
+
+        def cam2_worker():
+            while cam2_queue.get(timeout=5) is not None:
+                pass
+            cam2_result.put(("ok", None))
+
+        cam2_thread = threading.Thread(target=cam2_worker, daemon=True)
+        cam2_thread.start()
+
+        cam1_result: queue.Queue = queue.Queue(maxsize=1)
+        cam1_result.put(("error", "cam1 failed"))
+
+        encoder._frame_queues = {cam1: queue.Queue(maxsize=1), cam2: cam2_queue}
+        encoder._result_queues = {cam1: cam1_result, cam2: cam2_result}
+        encoder._threads = {cam1: dead_thread, cam2: cam2_thread}
+        encoder._stop_events = {cam1: threading.Event(), cam2: threading.Event()}
+        encoder._video_paths = {cam1: tmp_path / "cam1.mp4", cam2: tmp_path / "cam2.mp4"}
+        encoder._episode_active = True
+
+        with pytest.raises(RuntimeError, match="cam1 failed"):
+            encoder.finish_episode()
+
+        assert not cam2_thread.is_alive()
+        assert not encoder._episode_active
+        assert encoder._threads == {}
+        assert encoder._frame_queues == {}
+
 
 # ─── Integration tests with LeRobotDataset ───
 
