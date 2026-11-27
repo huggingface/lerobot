@@ -64,7 +64,8 @@ lerobot-train \
     --policy.repo_id=your_repo_id \
     --policy.compile_model=true \
     --policy.gradient_checkpointing=true \
-    --policy.dtype=bfloat16 \
+    --policy.dtype=float32 \
+    --accelerator.mixed_precision=bf16 \
     --policy.freeze_vision_encoder=false \
     --policy.train_expert_only=false \
     --steps=3000 \
@@ -76,7 +77,7 @@ lerobot-train \
 
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
-- **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
+- **`--policy.dtype=float32`** + **`--accelerator.mixed_precision=bf16`**: Keep the trainable weights in fp32 and compute in bf16. Setting `--policy.dtype=bfloat16` instead stores the trainable weights in bf16 with no fp32 master copy, so AdamW silently rounds away any update smaller than |w|/512 ([arXiv:2610.31859](https://arxiv.org/abs/2610.31859))
 - **`--batch_size=32`**: Batch size for training, adapt this based on your GPU memory
 - **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)

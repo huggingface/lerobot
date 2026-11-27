@@ -87,7 +87,8 @@ lerobot-train \
     --policy.freeze_vision_encoder=false \
     --policy.train_expert_only=false \
     --policy.gradient_checkpointing=true \
-    --policy.dtype=bfloat16 \
+    --policy.dtype=float32 \
+    --accelerator.mixed_precision=bf16 \
     --policy.device=cuda \
     --policy.push_to_hub=false \
     --output_dir=./outputs/pi05_libero \
@@ -153,7 +154,8 @@ lerobot-train \
     --policy.freeze_vision_encoder=true \
     --policy.train_expert_only=true \
     --policy.gradient_checkpointing=true \
-    --policy.dtype=bfloat16 \
+    --policy.dtype=float32 \
+    --accelerator.mixed_precision=bf16 \
     --policy.device=cuda \
     --policy.push_to_hub=false \
     --output_dir=./outputs/pi05_libero_expert \
@@ -169,7 +171,7 @@ lerobot-train \
 
 - **`--policy.compile_model=true`**: Enables model compilation for faster training
 - **`--policy.gradient_checkpointing=true`**: Reduces memory usage significantly during training
-- **`--policy.dtype=bfloat16`**: Use mixed precision training for efficiency
+- **`--policy.dtype=float32`** + **`--accelerator.mixed_precision=bf16`**: Keep the trainable weights in fp32 and compute in bf16. Setting `--policy.dtype=bfloat16` instead stores the trainable weights in bf16 with no fp32 master copy, so AdamW silently rounds away any update smaller than |w|/512 ([arXiv:2610.31859](https://arxiv.org/abs/2610.31859))
 - **`--batch_size=64`**: Batch size for training, adapt this based on your GPU memory
 - **`--policy.pretrained_path=lerobot/pi05_base`**: The base π₀.₅ model you want to finetune, options are:
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
@@ -190,7 +192,8 @@ lerobot-train \
     --policy.type=pi05 \
     --policy.pretrained_path=lerobot/pi05_base \
     --policy.rtc_training_max_delay=10 \
-    --policy.dtype=bfloat16 \
+    --policy.dtype=float32 \
+    --accelerator.mixed_precision=bf16 \
     --policy.device=cuda \
     --batch_size=8 \
     --steps=30000 \
