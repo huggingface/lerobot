@@ -19,11 +19,13 @@ import sys
 import tempfile
 from argparse import ArgumentError
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import is_dataclass
 from functools import wraps
+from itertools import pairwise
 from pathlib import Path
 from pkgutil import ModuleInfo
 from types import ModuleType
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args, get_origin, get_type_hints
 
 import draccus
 import torch
@@ -93,6 +95,33 @@ def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
         else:
             args.append(f"--{full_key}={value}")
     return args
+
+
+def parse_pretrained_config[T](config_cls: type[T], config_file: str, overrides: list[str]) -> T:
+    """Apply checkpoint overrides and reject null values on non-nullable dataclass fields."""
+    with draccus.config_type("json"):
+        config = draccus.parse(config_cls, config_file, args=overrides)
+
+    # draccus 0.11.6 passes null through scalar decoders even for required fields.
+    # Check the resolved value so a CLI override can still replace a null from YAML.
+    for arg, following in pairwise([*overrides, ""]):
+        key, separator, value = arg.partition("=")
+        if not key.startswith("--") or (value if separator else following) != "null":
+            continue
+        *parents, name = key[2:].split(".")
+        owner: Any = config
+        for parent in parents:
+            owner = getattr(owner, parent, None)
+        if is_dataclass(owner) and getattr(owner, name, ...) is None:
+            hint = get_type_hints(type(owner))[name]
+            choices = get_args(hint) if draccus.utils.is_union(hint) else (hint,)
+            if not any(
+                choice in (Any, object, type(None))
+                or (get_origin(choice) is Literal and None in get_args(choice))
+                for choice in choices
+            ):
+                raise ValueError(f"{key[2:]} cannot be null in {config_cls.__name__}")
+    return config
 
 
 def get_cli_overrides(field_name: str, args: Sequence[str] | None = None) -> list[str] | None:

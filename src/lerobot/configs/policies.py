@@ -27,6 +27,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
+from lerobot.configs.parser import parse_pretrained_config
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
@@ -245,8 +246,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config_file = f.name
 
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
-        with draccus.config_type("json"):
-            config = draccus.parse(config_cls, config_file, args=cli_overrides)
+        config = parse_pretrained_config(config_cls, config_file, cli_overrides)
 
         # The serialized config.json does not carry the source path, so parsing
         # yields pretrained_path=None. Backfill it: downstream code (e.g.

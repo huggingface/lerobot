@@ -308,6 +308,31 @@ def test_training_config_clears_saved_option(tmp_path, monkeypatch, suffix):
     assert config.policy.push_to_hub is False
 
 
+@pytest.mark.parametrize("override", ["use_vae:", "optimizer_lr: null"])
+def test_training_config_rejects_null_for_required_policy_field(tmp_path, monkeypatch, override):
+    monkeypatch.setattr(parser, "_config_path_args", {})
+    monkeypatch.setattr(parser, "_config_yaml_overrides", {})
+    checkpoint = tmp_path / "checkpoint"
+    ACTConfig(device="cpu", push_to_hub=False).save_pretrained(checkpoint)
+    source = tmp_path / "train.yaml"
+    source.write_text(f"dataset:\n  repo_id: local/test\npolicy:\n  path: {checkpoint}\n  {override}\n")
+    monkeypatch.setattr(sys, "argv", ["prog", f"--config_path={source}"])
+
+    @parser.wrap()
+    def load(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
+        cfg.validate()
+        return cfg
+
+    field_name = override.split(":")[0]
+    with pytest.raises(ValueError, match=f"{field_name} cannot be null"):
+        load()
+
+    # The CLI still has the last word when the file contains a blank value.
+    value = {"use_vae": "false", "optimizer_lr": "0.002"}[field_name]
+    monkeypatch.setattr(sys, "argv", [*sys.argv, f"--policy.{field_name}", value])
+    assert getattr(load().policy, field_name) == json.loads(value)
+
+
 @pytest.mark.parametrize("with_config_file", [False, True])
 def test_cli_policy_path_keeps_precedence(tmp_path, monkeypatch, with_config_file):
     monkeypatch.setattr(parser, "_config_path_args", {})
