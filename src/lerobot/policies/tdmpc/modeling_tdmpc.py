@@ -756,11 +756,7 @@ class TDMPCObservationEncoder(nn.Module):
         feat = []
         # NOTE: Order of observations matters here.
         if self.config.image_features:
-            feat.append(
-                flatten_forward_unflatten(
-                    self.image_enc_layers, obs_dict[next(iter(self.config.image_features))]
-                )
-            )
+            feat.append(flatten_forward_unflatten(self.image_enc_layers, obs_dict[OBS_IMAGE]))
         if self.config.env_state_feature:
             feat.append(self.env_state_enc_layers(obs_dict[OBS_ENV_STATE]))
         if self.config.robot_state_feature:
