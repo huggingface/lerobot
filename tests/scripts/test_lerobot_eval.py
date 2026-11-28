@@ -31,7 +31,7 @@ from lerobot.policies import PreTrainedPolicy
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
-from lerobot.scripts.lerobot_eval import eval_policy_all, rollout
+from lerobot.scripts.lerobot_eval import eval_policy, eval_policy_all, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.fixtures.toy_env import ToyEnvConfig
 from tests.policies.flux3.helpers import task_config
@@ -286,3 +286,42 @@ def test_rollout_saves_recordings_at_the_step_cap(tmp_path):
         dataset = LeRobotDataset(repo_id=f"eval_recording_env_{index}", root=root)
         assert [bool(dataset[i]["next.done"].item()) for i in range(len(dataset))] == expected
         assert bool(dataset[len(dataset) - 1]["next.success"].item()) == (index == 0)
+
+
+@pytest.mark.parametrize("n_episodes", [1, 2])
+def test_eval_policy_records_only_requested_episodes(tmp_path, n_episodes):
+    class _Policy(_RecordingPolicy):
+        def select_action(self, observation):
+            return torch.tensor([[0.75, 0.0], [-0.25, 0.0]])
+
+    PreTrainedPolicy.register(_Policy)
+    env = make_env(ToyEnvConfig(), n_envs=2)["reach"][0]
+    preprocessor, postprocessor = make_policy_processor_pipelines([], [])
+    recording_dir = tmp_path / "recordings"
+    try:
+        info = eval_policy(
+            env,
+            _Policy(),
+            env_preprocessor=PolicyProcessorPipeline(steps=[]),
+            env_postprocessor=PolicyProcessorPipeline(steps=[]),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            n_episodes=n_episodes,
+            start_seed=4,
+            recording_dir=recording_dir,
+            env_features={
+                OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+                ACTION: PolicyFeature(FeatureType.ACTION, (2,)),
+            },
+            max_episode_steps=2,
+        )
+    finally:
+        env.close()
+
+    assert [episode["seed"] for episode in info["per_episode"]] == list(range(4, 4 + n_episodes))
+    assert sorted(path.name for path in recording_dir.iterdir()) == [f"env_{i}" for i in range(n_episodes)]
+    for i in range(n_episodes):
+        root = recording_dir / f"env_{i}"
+        assert load_info(root).total_episodes == 1
+        dataset = LeRobotDataset(repo_id=f"eval_recording_env_{i}", root=root)
+        assert dataset[0][ACTION][0].item() == (0.75, -0.25)[i]
