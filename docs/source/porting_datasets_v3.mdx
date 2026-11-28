@@ -6,7 +6,7 @@ This tutorial explains how to port large-scale robotic datasets to the LeRobot D
 
 Validate the state/action mapping and episode boundaries on a few frames before downloading a large dataset. This example needs the `dataset` extra and writes only to a new local directory. It does not upload data.
 
-Save one frame per line in `frames.jsonl`:
+Save one frame per line in UTF-8 encoded `frames.jsonl`:
 
 ```jsonl
 {"episode_index": 0, "task": "open the gripper", "observation.state": [0.0, 0.1], "action": [0.1, 0.2]}
@@ -24,7 +24,7 @@ import numpy as np
 
 from lerobot.datasets import LeRobotDataset
 
-records = [json.loads(line) for line in Path("frames.jsonl").read_text().splitlines() if line.strip()]
+records = [json.loads(line) for line in Path("frames.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
 episode_indices = [record["episode_index"] for record in records]
 if (
     not episode_indices
