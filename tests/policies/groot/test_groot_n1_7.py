@@ -34,9 +34,9 @@ from lerobot.policies.groot.configuration_groot import (
     GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
-    infer_groot_n1_7_action_execution_horizon,
-    infer_groot_n1_7_action_horizon,
+    groot_n1_7_action_execution_horizon,
     normalize_groot_model_version,
+    read_groot_n1_7_action_horizons,
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
@@ -428,6 +428,7 @@ def test_groot_predict_action_chunk_forwards_n1_7_rtc_prefix(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    monkeypatch.setattr("lerobot.policies.groot.modeling_groot._read_base", lambda *args, **kwargs: None)
     config = _groot_config()
     policy = GrootPolicy(config)
     policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
@@ -459,6 +460,7 @@ def test_groot_predict_action_chunk_strips_padded_n1_7_rtc_prefix(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    monkeypatch.setattr("lerobot.policies.groot.modeling_groot._read_base", lambda *args, **kwargs: None)
     config = _groot_config()
     policy = GrootPolicy(config)
     policy.config.rtc_config = SimpleNamespace(execution_horizon=6)
@@ -2723,6 +2725,7 @@ def test_groot_policy_selects_n1_7_model_class(monkeypatch):
         return _DummyGrootModel()
 
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(fake_from_pretrained))
+    monkeypatch.setattr("lerobot.policies.groot.modeling_groot._read_base", lambda *args, **kwargs: None)
 
     policy = GrootPolicy(_groot_config())
 
@@ -2737,6 +2740,7 @@ def test_groot_policy_forwards_n1_7_qwen_inputs(monkeypatch):
 
     dummy_model = _DummyGrootModel()
     monkeypatch.setattr(GR00TN17, "from_pretrained", classmethod(lambda cls, **kwargs: dummy_model))
+    monkeypatch.setattr("lerobot.policies.groot.modeling_groot._read_base", lambda *args, **kwargs: None)
     policy = GrootPolicy(_groot_config())
 
     batch = {
@@ -2778,8 +2782,8 @@ def test_groot_n1_7_libero_execution_horizon_uses_core_eight_action_cadence(tmp_
     model_path = tmp_path / "libero_spatial"
     _write_raw_n1_7_libero_checkpoint(model_path)
 
-    assert infer_groot_n1_7_action_horizon(model_path, "libero_sim") == 16
-    assert infer_groot_n1_7_action_execution_horizon(model_path, "libero_sim") == 8
+    assert read_groot_n1_7_action_horizons(model_path)["libero_sim"] == 16
+    assert groot_n1_7_action_execution_horizon(16, "libero_sim") == 8
 
 
 def test_groot_select_action_rejects_relative_action_policies():
