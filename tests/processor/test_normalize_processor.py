@@ -2136,3 +2136,77 @@ def test_stats_reconstruction_after_load_state_dict():
         new_result[TransitionKey.OBSERVATION][OBS_STATE],
     )
     torch.testing.assert_close(original_result[TransitionKey.ACTION], new_result[TransitionKey.ACTION])
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [torch.float32, torch.float16, torch.bfloat16],
+)
+@pytest.mark.parametrize(
+    "mode",
+    [
+        NormalizationMode.MEAN_STD,
+        NormalizationMode.MIN_MAX,
+        NormalizationMode.QUANTILES,
+        NormalizationMode.QUANTILE10,
+    ],
+)
+def test_fp16_constant_feature_stays_finite_with_default_eps(dtype, mode):
+    """Default eps must remain representable after dtype adaptation (see #4973)."""
+    normalizer = NormalizerProcessorStep(
+        features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(2,))},
+        norm_map={FeatureType.STATE: mode},
+        stats={
+            OBS_STATE: {
+                "mean": [1.0, 0.0],
+                "std": [0.0, 1.0],
+                "min": [1.0, 0.0],
+                "max": [1.0, 1.0],
+                "q01": [1.0, 0.0],
+                "q99": [1.0, 1.0],
+                "q10": [1.0, 0.0],
+                "q90": [1.0, 1.0],
+            }
+        },
+    )
+    output = normalizer(
+        {
+            TransitionKey.OBSERVATION: {
+                OBS_STATE: torch.tensor([1.0, 0.5], dtype=dtype),
+            }
+        }
+    )[TransitionKey.OBSERVATION][OBS_STATE]
+
+    assert torch.isfinite(output).all()
+    assert output.dtype == dtype
+    if mode == NormalizationMode.MEAN_STD:
+        assert output[0].item() == pytest.approx(0.0, abs=1e-3)
+        assert output[1].item() == pytest.approx(0.5, abs=1e-3)
+    else:
+        assert output[0].item() == pytest.approx(-1.0, abs=1e-3)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+def test_mean_std_small_representable_std_preserves_scale(dtype):
+    """A one-std input with small but representable std must still normalize to ~1.
+
+    Adding a dtype-representable floor to every MEAN_STD denominator would double
+    std=2**-14 in float16 and reconstruct half the original action (see #4991).
+    """
+    std_val = 2**-14
+    features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(1,))}
+    norm_map = {FeatureType.ACTION: NormalizationMode.MEAN_STD}
+    stats = {ACTION: {"mean": [0.0], "std": [std_val]}}
+    normalizer = NormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+    unnormalizer = UnnormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    action = torch.tensor([std_val], dtype=dtype)
+    normalized = normalizer(create_transition(action=action))
+    normalized_action = normalized[TransitionKey.ACTION]
+
+    assert normalized_action.dtype == dtype
+    assert normalized_action.item() == pytest.approx(1.0, abs=1e-3)
+
+    reconstructed = unnormalizer(normalized)[TransitionKey.ACTION]
+    assert reconstructed.dtype == dtype
+    torch.testing.assert_close(reconstructed, action, rtol=1e-3, atol=1e-5)
