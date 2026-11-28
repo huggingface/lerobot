@@ -328,6 +328,11 @@ class GrootConfig(PreTrainedConfig):
     # Set to True only after installing a flash-attn build matching your torch/CUDA env.
     use_flash_attention: bool = False
 
+    # Inference-time knob: Capture the action head's denoise loop in a CUDA graph, once per input
+    # shape, and replay it for each action chunk. Same actions as the eager loop with fewer kernel
+    # launches. CUDA only; other devices and training mode run the eager loop.
+    denoise_cuda_graph: bool = False
+
     # Enable GR00T-style state-relative action chunks (action chunk expressed relative to the current
     # observation state).
     use_relative_actions: bool = False
