@@ -59,6 +59,11 @@ Only the trainable ~5B transformer is stored in the LeRobot
 UMT5-XXL text encoder runs on CPU by default (`config.text_encoder_device`) so the 5B
 transformer + VAE fit on a single 24–32 GB GPU.
 
+During inference, the policy retains text embeddings for the most recent task across
+episode resets, including the empty prompt when classifier-free guidance is enabled.
+At the start of the next episode, a different task or encoding configuration replaces
+the cached embeddings. Video and action streaming state is cleared for each episode.
+
 ## Evaluation (LIBERO)
 
 ```bash
