@@ -135,3 +135,103 @@ class TestSetFsdpWrapModules:
 
     def test_non_sharded_run_is_noop(self):
         set_fsdp_wrap_modules(_accelerator_with(None), _UndeclaredPolicy())
+
+
+class _Block(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = nn.Linear(8, 8)  # 72 parameters
+
+    def forward(self, x):
+        return self.proj(x)
+
+
+def _same_name_block_class() -> type[nn.Module]:
+    class _Block(nn.Module):  # a second class with the name above
+        def __init__(self):
+            super().__init__()
+            self.proj = nn.Linear(8, 8)
+
+        def forward(self, x):
+            return self.proj(x)
+
+    return _Block
+
+
+class _StackedPolicy(nn.Module):
+    """Blocks held in an `nn.ModuleList`, as most policies hold their layers."""
+
+    _fsdp_wrap_modules = None
+
+    def __init__(self, blocks: list[nn.Module] | None = None):
+        super().__init__()
+        self.blocks = nn.ModuleList(blocks if blocks is not None else [_Block(), _Block()])  # 144 parameters
+        self.head = nn.Linear(8, 2)
+
+
+class _FlatPolicy(nn.Module):
+    _fsdp_wrap_modules = None
+
+    def __init__(self):
+        super().__init__()
+        self.first = nn.Linear(8, 8)
+        self.second = nn.Linear(8, 8)
+
+
+def _accelerate_wrap_policy(plugin, model: nn.Module):
+    """Build the wrap predicate exactly as accelerate's FSDP2 `prepare()` does."""
+    from accelerate.utils.fsdp_utils import fsdp2_prepare_auto_wrap_policy
+
+    plugin.set_auto_wrap_policy(model)
+    return fsdp2_prepare_auto_wrap_policy(plugin, model)
+
+
+class TestSizeBasedWrapContainers:
+    """#5475: accelerate's FSDP2 size policy selects ModuleList/ModuleDict, which `fully_shard` rejects."""
+
+    @pytest.fixture(autouse=True)
+    def _requires_accelerate(self):
+        pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
+    def test_selected_containers_are_replaced_by_their_block_classes(self):
+        model = _StackedPolicy()
+        unpatched = FSDPConfig(min_num_params=50).build_plugin()
+        assert _accelerate_wrap_policy(unpatched, model)(model.blocks)  # the hazard is real
+
+        plugin = FSDPConfig(min_num_params=50).build_plugin()
+        set_fsdp_wrap_modules(_accelerator_with(plugin), model)
+
+        assert plugin.transformer_cls_names_to_wrap == ["Linear", "_Block"]
+        wrap = _accelerate_wrap_policy(plugin, model)
+        assert not wrap(model.blocks)
+        assert all(wrap(block) for block in model.blocks)
+
+    def test_size_policy_without_containers_is_unchanged(self):
+        from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+
+        plugin = FSDPConfig(min_num_params=50).build_plugin()
+        set_fsdp_wrap_modules(_accelerator_with(plugin), _FlatPolicy())
+
+        assert plugin.auto_wrap_policy is size_based_auto_wrap_policy
+        assert plugin.transformer_cls_names_to_wrap is None
+
+    def test_selecting_only_containers_fails_loudly(self):
+        plugin = FSDPConfig(min_num_params=100).build_plugin()  # above each block, below the list
+        with pytest.raises(ValueError, match="selects only ModuleList/ModuleDict"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), _StackedPolicy())
+
+    def test_ambiguous_block_names_fail_loudly(self):
+        model = _StackedPolicy([_Block(), _same_name_block_class()()])
+        plugin = FSDPConfig(min_num_params=50).build_plugin()
+        with pytest.raises(ValueError, match=r"\['_Block'\]"):
+            set_fsdp_wrap_modules(_accelerator_with(plugin), model)
+
+    def test_activation_checkpointed_blocks_keep_their_class(self):
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+
+        model = _StackedPolicy([checkpoint_wrapper(_Block()), checkpoint_wrapper(_Block())])
+        plugin = FSDPConfig(min_num_params=50).build_plugin()
+        set_fsdp_wrap_modules(_accelerator_with(plugin), model)
+
+        assert plugin.transformer_cls_names_to_wrap == ["Linear", "_Block"]
+        assert all(_accelerate_wrap_policy(plugin, model)(block) for block in model.blocks)

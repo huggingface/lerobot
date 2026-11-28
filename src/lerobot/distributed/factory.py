@@ -21,8 +21,11 @@ alone. `accelerate launch` without a `--config_file` remains equivalent (it only
 env vars in that mode); the yaml flow is superseded.
 """
 
+import logging
 import os
 from typing import TYPE_CHECKING
+
+from torch import nn
 
 from lerobot.configs.parallelism import world_size_from_env
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
@@ -31,6 +34,7 @@ from .utils import unwrap_peft_model
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
+    from accelerate.utils import FullyShardedDataParallelPlugin
 
     from lerobot.policies.pretrained import PreTrainedPolicy
 
@@ -114,8 +118,9 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
     silent default when no wrap source exists — is never accepted: it quietly forfeits all
     sharding memory savings.
 
-    No-op for the size-based policy (`--accelerator.fsdp.min_num_params`), which needs no class
-    names, and for non-sharded runs (no fsdp plugin).
+    The size-based policy (`--accelerator.fsdp.min_num_params`) needs no class names, unless it
+    would select an `nn.ModuleList` or `nn.ModuleDict`: see `_avoid_unshardable_size_units`.
+    No-op for non-sharded runs (no fsdp plugin).
 
     Args:
         accelerator (Accelerator): The accelerator whose FSDP plugin receives the wrap-unit
@@ -125,10 +130,14 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
 
     Raises:
         ValueError: If sharded class-based wrapping is configured but neither a user override
-            nor a policy declaration supplies wrap-unit class names.
+            nor a policy declaration supplies wrap-unit class names, or if the size-based policy
+            selects a container and no unambiguous wrap-unit classes replace it.
     """
     plugin = getattr(accelerator.state, "fsdp_plugin", None)
-    if plugin is None or plugin.min_num_params:
+    if plugin is None:
+        return
+    if plugin.min_num_params:
+        _avoid_unshardable_size_units(plugin, policy)
         return
     if plugin.transformer_cls_names_to_wrap:  # user override, set at build time
         return
@@ -144,3 +153,73 @@ def set_fsdp_wrap_modules(accelerator: "Accelerator", policy: "PreTrainedPolicy"
             "`_fsdp_wrap_modules` on the policy class."
         )
     plugin.transformer_cls_names_to_wrap = list(declared)
+
+
+def _is_unshardable_container(module: nn.Module) -> bool:
+    """Return whether `fully_shard` rejects this module, using torch's own check."""
+    return isinstance(module, (nn.ModuleList, nn.ModuleDict)) and type(module).forward is nn.Module.forward
+
+
+def _wrap_unit_class(module: nn.Module) -> type[nn.Module]:
+    """Return the class accelerate matches for this module, looking through activation checkpointing."""
+    return type(getattr(module, "_checkpoint_wrapped_module", module))
+
+
+def _avoid_unshardable_size_units(plugin: "FullyShardedDataParallelPlugin", model: nn.Module) -> None:
+    """Switch the size-based policy to class names when it would select a container.
+
+    accelerate's FSDP2 size policy selects every non-root module with more than `min_num_params`
+    parameters, including `nn.ModuleList` and `nn.ModuleDict`, which `fully_shard` rejects (#5475).
+    In that case the classes of the other selected modules become the wrap units, and every
+    instance of those classes is wrapped. A size policy that selects no container is unchanged.
+
+    Args:
+        plugin (FullyShardedDataParallelPlugin): The size-based plugin, updated in place.
+        model (nn.Module): The module passed to `accelerator.prepare()`, PEFT wrapper included.
+
+    Raises:
+        ValueError: If only containers are selected, or if a selected class name also names
+            another class in the model, since accelerate resolves wrap units by class name.
+    """
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+    min_num_params = plugin.min_num_params
+    modules = list(model.modules())
+    # accelerate always shards the root itself, so it is never a candidate.
+    selected = [m for m in modules[1:] if sum(p.numel() for p in m.parameters()) > min_num_params]
+    if not any(_is_unshardable_container(m) for m in selected):
+        return
+
+    selected_classes: dict[str, set[type[nn.Module]]] = {}
+    for module in selected:
+        if not _is_unshardable_container(module):
+            cls = _wrap_unit_class(module)
+            selected_classes.setdefault(cls.__name__, set()).add(cls)
+    hint = "set --accelerator.fsdp.wrap_modules to the class names of the policy's blocks"
+    if not selected_classes:
+        raise ValueError(
+            f"fsdp.min_num_params={min_num_params} selects only ModuleList/ModuleDict containers, "
+            f"which fully_shard rejects. Lower it, or {hint}."
+        )
+
+    # accelerate resolves a class name to the first module with that name in `model.modules()` order.
+    resolved: dict[str, type[nn.Module]] = {}
+    for module in modules:
+        cls = _wrap_unit_class(module)
+        resolved.setdefault(cls.__name__, cls)
+    ambiguous = sorted(name for name, classes in selected_classes.items() if classes != {resolved[name]})
+    if ambiguous:
+        raise ValueError(
+            f"fsdp.min_num_params={min_num_params} selects ModuleList/ModuleDict containers, which "
+            f"fully_shard rejects, and their blocks cannot be named unambiguously: {ambiguous} each "
+            f"name more than one class in the model. Instead, {hint}."
+        )
+
+    plugin.auto_wrap_policy = transformer_auto_wrap_policy
+    plugin.transformer_cls_names_to_wrap = sorted(selected_classes)
+    logging.info(
+        "fsdp.min_num_params=%d selects ModuleList/ModuleDict containers, which fully_shard rejects. "
+        "Wrapping these classes instead: %s",
+        min_num_params,
+        plugin.transformer_cls_names_to_wrap,
+    )
