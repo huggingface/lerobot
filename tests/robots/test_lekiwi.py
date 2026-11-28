@@ -47,3 +47,31 @@ def test_lekiwi_calibrates_its_arm_by_hand_and_leaves_its_wheels_at_the_whole_en
         for motor in robot.base_motors
     }
     robot.bus.write_calibration.assert_called_once_with(robot.calibration)
+
+
+def test_lekiwi_teleop_base_only_only_maps_base_motors(tmp_path):
+    config = LeKiwiConfig(port="/dev/null", id="kiwi", calibration_dir=tmp_path, cameras={})
+    assert config.teleop_base_only is False
+
+    robot = LeKiwi(config)
+    assert set(robot.arm_motors) == {
+        "arm_shoulder_pan",
+        "arm_shoulder_lift",
+        "arm_elbow_flex",
+        "arm_wrist_flex",
+        "arm_wrist_roll",
+        "arm_gripper",
+    }
+    assert {motor.id for motor in robot.bus.motors.values()} == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+    base_only_config = LeKiwiConfig(
+        port="/dev/null", id="kiwi", calibration_dir=tmp_path, cameras={}, teleop_base_only=True
+    )
+    base_only_robot = LeKiwi(base_only_config)
+    assert base_only_robot.arm_motors == []
+    assert sorted(base_only_robot.base_motors) == ["base_back_wheel", "base_left_wheel", "base_right_wheel"]
+    assert {motor.id for motor in base_only_robot.bus.motors.values()} == {7, 8, 9}
+
+    expected_state_ft = {"x.vel": float, "y.vel": float, "theta.vel": float}
+    assert base_only_robot.observation_features == expected_state_ft
+    assert base_only_robot.action_features == expected_state_ft
