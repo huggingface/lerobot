@@ -668,6 +668,8 @@ def reencode_video(
                     if end_time_s is not None and frame_time_s >= end_time_s:
                         break
                     frame = frame.reformat(width=width, height=height, format=pix_fmt)
+                    # Drop the decoded I/P type, else every source keyframe is forced and `g` is ignored.
+                    frame.pict_type = av.video.frame.PictureType.NONE
                     if start_time_s is not None:
                         frame.pts = None  # reset timestamps so the trimmed output starts at t=0
                     packet = out_stream.encode(frame)
