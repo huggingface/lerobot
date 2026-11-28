@@ -37,6 +37,19 @@ from lerobot.utils.rotation import Rotation
 logger = logging.getLogger(__name__)
 
 
+def _assert_joints_present(q_raw: Any, observation: dict[str, Any]) -> None:
+    """Raise if the observation carried no joint positions.
+
+    `ForwardKinematicsJointsToEE*` pops every `<motor>.pos` key, so a pipeline that maps the
+    observation to end-effector space before a kinematics step leaves it with nothing to read.
+    """
+    if q_raw is None or np.size(q_raw) == 0:
+        raise ValueError(
+            "Joints observation is required for computing robot kinematics: no '<motor>.pos' key "
+            f"was found in the observation. Got keys: {sorted(k for k in observation if isinstance(k, str))}"
+        )
+
+
 @ProcessorStepRegistry.register("ee_reference_and_delta")
 @dataclass
 class EEReferenceAndDelta(RobotActionProcessorStep):
@@ -99,8 +112,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 dtype=float,
             )
 
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        _assert_joints_present(q_raw, observation)
 
         # Current pose from FK on measured joints
         t_curr = self.kinematics.forward_kinematics(q_raw)
@@ -324,8 +336,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        _assert_joints_present(q_raw, observation)
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
@@ -409,8 +420,7 @@ class GripperVelocityToJoint(RobotActionProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        _assert_joints_present(q_raw, observation)
 
         if self.discrete_gripper:
             # Map discrete command {0=close, 1=stay, 2=open} -> signed velocity.
@@ -600,8 +610,7 @@ class InverseKinematicsRLStep(ProcessorStep):
             [float(v) for k, v in observation.items() if isinstance(k, str) and k.endswith(".pos")],
             dtype=float,
         )
-        if q_raw is None:
-            raise ValueError("Joints observation is require for computing robot kinematics")
+        _assert_joints_present(q_raw, observation)
 
         if self.initial_guess_current_joints:  # Use current joints as initial guess
             self.q_curr = q_raw
