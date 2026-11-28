@@ -37,6 +37,8 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
 )
 from transformers.processing_utils import Unpack  # noqa: E402
 
+from lerobot.policies.common.export_utils import is_non_strict_exporting  # noqa: E402
+
 # from transformers.models.mistral.modeling_mistral import MistralMLP
 
 
@@ -76,8 +78,9 @@ class Qwen2FusedExperts(nn.Module):
         self.gate_proj = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
         self.up_proj = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
-        self.register_buffer("_gate_up_proj_cache", None, persistent=False)
-        self.register_buffer("_sparse_wd_cache", None, persistent=False)
+        # Plain attributes, not buffers, so that torch.export never stores the packed copies in a program.
+        self._gate_up_proj_cache = None
+        self._sparse_wd_cache = None
         self._sparse_cache_key = None
         self.reset_parameters()
 
@@ -97,6 +100,14 @@ class Qwen2FusedExperts(nn.Module):
         super()._load_from_state_dict(*args, **kwargs)
         self.clear_inference_cache()
 
+    def _apply(self, fn, recurse=True):
+        # `.to()` and the dtype casts skip plain attributes; convert the caches as buffers, so that a move that
+        # changes nothing keeps the tensors a captured CUDA graph reads.
+        if self._gate_up_proj_cache is not None:
+            self._gate_up_proj_cache = fn(self._gate_up_proj_cache)
+            self._sparse_wd_cache = fn(self._sparse_wd_cache)
+        return super()._apply(fn, recurse)
+
     def _sparse_packed_weights(self):
         """Per-expert packed weights for the padded sparse path.
 
@@ -105,7 +116,15 @@ class Qwen2FusedExperts(nn.Module):
         Cached inference-only, keyed on parameter versions (in-place updates such as
         optimizer.step or load_state_dict bump ``_version``); rebuilt each call under
         autograd so gradients flow into the Parameters.
+
+        Under torch.export the cache is neither read nor filled: the weights are packed from the
+        Parameters in the cache's layout, so the program matches eager exactly.
         """
+        if is_non_strict_exporting():
+            return (
+                torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2).contiguous(),
+                self.down_proj.transpose(1, 2).contiguous(),
+            )
         if torch.is_grad_enabled():
             return (
                 torch.cat([self.gate_proj, self.up_proj], dim=1).transpose(1, 2),

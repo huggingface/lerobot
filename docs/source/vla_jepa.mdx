@@ -245,6 +245,44 @@ lerobot-train \
 
 If you want to change `world_model_num_views` to a value other than 2, load the checkpoint with `strict=False` and reinitialize `model.video_predictor.predictor_embed` for the new `embed_dim`. All other predictor block weights (attention, MLP, norm, output projection) are camera-count-agnostic and can be reused from the pretrained checkpoint.
 
+## Export with torch.export
+
+`torch.export` cannot trace the stock Qwen3-VL vision tower, because it reads the image grid (`image_grid_thw`)
+into Python numbers. Export `VLAJEPAModel.predict_action`, which takes the Qwen3-VL processor tensors that
+`qwen_inputs` makes from a preprocessed batch, and pass it grid data built once for the camera layout you deploy.
+
+```python
+import torch
+
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid
+
+model = policy.model
+cameras = list(policy.config.image_features)
+images = [[batch[key][i] for key in cameras] for i in range(len(batch["task"]))]
+qwen_inputs = model.qwen_inputs(images, batch["task"])
+grid = Qwen3VisionGrid.build(model.qwen.model.model.visual, qwen_inputs["image_grid_thw"])
+keys = sorted(qwen_inputs)
+
+
+class Predict(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, state, noise, *tensors):
+        return self.model.predict_action(dict(zip(keys, tensors, strict=True)), state, noise=noise, vision_grid=grid)
+
+
+state = batch["observation.state"][:, None].float()
+noise = torch.randn(len(images), policy.config.chunk_size, policy.config.action_dim)
+with torch.no_grad():
+    program = torch.export.export(Predict(model), (state, noise, *(qwen_inputs[key] for key in keys)), strict=False)
+```
+
+The program refuses inputs whose image grid differs from the one `grid` was built for, and prompts without
+exactly `num_embodied_action_tokens_per_instruction` embodied action tokens. It keeps the batch size and prompt
+length it was exported with, and takes the starting `noise` as an input, so the caller draws it.
+
 ---
 
 ## Citation

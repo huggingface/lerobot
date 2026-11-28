@@ -42,14 +42,18 @@ from conftest import (  # noqa: E402
     N_ACTION_STEPS,
     QWEN_HIDDEN_SIZE,
     STATE_DIM,
+    TINY_QWEN_IMAGE_SIZE,
     make_config,
     make_inference_batch,
     make_train_batch,
     set_seed_all,
 )
+from lerobot.policies.common.qwen3_vision import Qwen3VisionGrid  # noqa: E402
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig  # noqa: E402
 from lerobot.policies.vla_jepa.modeling_vla_jepa import VLAJEPAModel, VLAJEPAPolicy  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
+from tests.policies.common.fixed_grid_checks import data_dependent_nodes  # noqa: E402
+from tests.policies.common.qwen3_vl_helpers import STOCK_DEEPSTACK_NODES  # noqa: E402
 
 PRETRAINED_REPO_ID = "ginwind/VLA-JEPA"
 PRETRAINED_SUBFOLDER = "LIBERO"
@@ -183,6 +187,99 @@ def test_predict_action_chunk_always_finite(patch_vla_jepa_external_models: None
         set_seed_all(seed)
         chunk = policy.predict_action_chunk(make_inference_batch())
         assert torch.isfinite(chunk).all(), f"non-finite actions with seed={seed}"
+
+
+def test_predict_action_exports_on_a_vision_grid(tiny_qwen_config: VLAJEPAConfig) -> None:
+    set_seed_all(0)
+    policy = VLAJEPAPolicy(tiny_qwen_config).eval()
+    batch = make_inference_batch(batch_size=1, image_size=TINY_QWEN_IMAGE_SIZE)
+    inputs = policy._prepare_model_inputs(batch, training=False)
+    qwen_inputs = policy.model.qwen_inputs(inputs["images"], inputs["instructions"])
+    keys = sorted(qwen_inputs)
+    state = inputs["state"]
+    noise = torch.randn(1, ACTION_HORIZON, ACTION_DIM)
+
+    grid = Qwen3VisionGrid.build(policy.model.qwen.model.model.visual, qwen_inputs["image_grid_thw"])
+
+    class PredictAction(nn.Module):
+        def __init__(self, vision_grid: Qwen3VisionGrid | None = grid):
+            super().__init__()
+            self.vision_grid = vision_grid
+
+        def forward(self, state: Tensor, noise: Tensor, *tensors: Tensor) -> Tensor:
+            return policy.model.predict_action(
+                dict(zip(keys, tensors, strict=True)), state, noise=noise, vision_grid=self.vision_grid
+            )
+
+    inputs = (state, noise, *(qwen_inputs[key] for key in keys))
+    with torch.no_grad():
+        expected = policy.model.predict_action(qwen_inputs, state, noise=noise)
+        assert torch.equal(PredictAction()(*inputs), expected)
+        with pytest.raises(ValueError, match="needs a vision_grid"):
+            torch.export.export(PredictAction(None), inputs, strict=False)
+        exported = torch.export.export(PredictAction(), inputs, strict=False)
+        torch.testing.assert_close(exported.module()(*inputs), expected)
+        # Other pixels on the same grid: the program must read them, not replay its example output.
+        other = {**qwen_inputs, "pixel_values": qwen_inputs["pixel_values"].flip(0).contiguous()}
+        expected_other = policy.model.predict_action(other, state, noise=noise)
+        assert not torch.equal(expected_other, expected)
+        torch.testing.assert_close(
+            exported.module()(state, noise, *(other[key] for key in keys)), expected_other
+        )
+    assert data_dependent_nodes(exported) == STOCK_DEEPSTACK_NODES
+
+    # A prompt with fewer or more embodied action tokens is refused, in eager mode and by the program.
+    input_ids = qwen_inputs["input_ids"]
+    embodied = policy.model.embodied_action_token_id
+    fewer = input_ids.masked_fill(input_ids == embodied, 0)
+    more = input_ids.index_fill(1, torch.tensor([0]), embodied)
+    for wrong in (fewer, more):
+        broken = tuple(wrong if key == "input_ids" else qwen_inputs[key] for key in keys)
+        with torch.no_grad():
+            with pytest.raises(ValueError, match="must hold 3 embodied action tokens"):
+                PredictAction()(state, noise, *broken)
+            with pytest.raises(RuntimeError, match="Runtime assertion failed"):
+                exported.module()(state, noise, *broken)
+
+
+def test_qwen_inputs_resize_the_images(
+    tiny_qwen_config: VLAJEPAConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`qwen_inputs` resizes images to `resize_images_to`, as the policy's input preparation does."""
+    size = TINY_QWEN_IMAGE_SIZE
+    tiny_qwen_config.resize_images_to = (size, size)
+    model = VLAJEPAPolicy(tiny_qwen_config).model
+    image = torch.rand(3, 2 * size, 2 * size)
+    resized = nn.functional.interpolate(image[None], size=(size, size), mode="area")[0]
+    native, expected = (model.qwen_inputs([[img]], ["pick up the cube"]) for img in (image, resized))
+    assert native.keys() == expected.keys()
+    assert all(torch.equal(native[key], expected[key]) for key in expected)
+    # A direct training call resizes too.
+    build_inputs, seen = model.qwen.build_inputs, []
+
+    def recorded(images, **kwargs):
+        seen.append(images[0][0].shape)
+        return build_inputs(images=images, **kwargs)
+
+    monkeypatch.setattr(model.qwen, "build_inputs", recorded)
+    with torch.no_grad():
+        model.forward([[image]], ["pick up the cube"])
+    assert seen == [resized.shape]
+
+
+def test_embodied_token_states_match_the_nonzero_gather() -> None:
+    """Counting finds the tokens `nonzero` does, in order, also in a prompt padded after them."""
+    model = SimpleNamespace(
+        config=SimpleNamespace(num_embodied_action_tokens_per_instruction=3), embodied_action_token_id=9
+    )
+    input_ids = torch.tensor([[1, 9, 2, 9, 9, 3, 0], [9, 4, 5, 9, 6, 9, 3]])
+    hidden = torch.randn(2, 7, 4)
+    expected = hidden[(input_ids == 9).nonzero(as_tuple=True)].view(2, 3, 4)
+    assert torch.equal(VLAJEPAModel._embodied_token_states(model, hidden, input_ids), expected)
+    # The count is per prompt: a split of 2 and 4 is refused although the batch total is right.
+    split = torch.tensor([[1, 9, 2, 9, 3, 0, 0], [9, 9, 5, 9, 6, 9, 3]])
+    with pytest.raises(ValueError, match=r"got \[2, 4\]"):
+        VLAJEPAModel._embodied_token_states(model, hidden, split)
 
 
 # ---------------------------------------------------------------------------
