@@ -302,6 +302,20 @@ class _NormalizationMixin:
         processed_action = self._apply_transform(action, ACTION, FeatureType.ACTION, inverse=inverse)
         return processed_action
 
+    def _eps_for(self, tensor: Tensor) -> float:
+        """
+        Return an epsilon value safe to use as a denominator floor for ``tensor.dtype``.
+
+        The configured ``eps`` (``1e-8``) underflows to zero in float16, which makes
+        constant coordinates (``std == 0`` or ``min == max``) produce ``NaN`` instead of
+        a finite result. Floor epsilon at the dtype's smallest normal positive value so
+        denominators stay representable while preserving the configured epsilon and
+        output dtype everywhere else.
+        """
+        if tensor.is_floating_point():
+            return max(self.eps, float(torch.finfo(tensor.dtype).tiny))
+        return self.eps
+
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
     ) -> Tensor:
@@ -349,6 +363,7 @@ class _NormalizationMixin:
 
         stats = self._tensor_stats[key]
 
+
         if norm_mode == NormalizationMode.MEAN_STD:
             mean = stats.get("mean", None)
             std = stats.get("std", None)
@@ -358,8 +373,9 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
-            # Avoid division by zero by adding a small epsilon.
-            denom = std + self.eps
+            eps_for_std = self._eps_for(std)
+            denom = std + eps_for_std
+
             if inverse:
                 return tensor * std + mean
             return (tensor - mean) / denom
@@ -377,8 +393,9 @@ class _NormalizationMixin:
             # When min_val == max_val, substitute the denominator with a small epsilon
             # to prevent division by zero. This consistently maps an input equal to
             # min_val to -1, ensuring a stable transformation.
+            eps_t = self._eps_for(tensor)
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0, torch.tensor(eps_t, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
                 # Map from [-1, 1] back to [min, max]
@@ -396,8 +413,9 @@ class _NormalizationMixin:
 
             denom = q99 - q01
             # Avoid division by zero by adding epsilon when quantiles are identical
+            eps_t = self._eps_for(tensor)
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0, torch.tensor(eps_t, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q01
@@ -413,8 +431,9 @@ class _NormalizationMixin:
 
             denom = q90 - q10
             # Avoid division by zero by adding epsilon when quantiles are identical
+            eps_t = self._eps_for(tensor)
             denom = torch.where(
-                denom == 0, torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0, torch.tensor(eps_t, device=tensor.device, dtype=tensor.dtype), denom
             )
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q10
