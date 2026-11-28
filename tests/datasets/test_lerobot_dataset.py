@@ -728,3 +728,33 @@ def test_create_record_finalize_read_roundtrip(tmp_path):
         item = reopened[3 + i]
         assert torch.allclose(item["state"], ep1_states[i], atol=1e-5)
         assert item["episode_index"].item() == 1
+
+
+@pytest.mark.parametrize(
+    ("lengths", "metadata_buffer_size"),
+    [([2, 1], 1), ([1, 2], 1), ([2] * 10 + [1], 10), ([1] * 10 + [2], 10)],
+)
+def test_single_frame_episodes_mixed_with_longer_ones_round_trip(tmp_path, lengths, metadata_buffer_size):
+    """Episodes of one frame and of several frames flushed in separate metadata batches must
+    share one Parquet schema, and the recorded statistics must survive a reopen."""
+    root = tmp_path / "dataset"
+    dataset = LeRobotDataset.create(
+        DUMMY_REPO_ID,
+        root=root,
+        fps=DEFAULT_FPS,
+        features={"state": {"dtype": "float32", "shape": (2,), "names": None}},
+        use_videos=False,
+        metadata_buffer_size=metadata_buffer_size,
+    )
+    for length in lengths:
+        for frame in range(length):
+            dataset.add_frame({"state": torch.full((2,), float(frame)), "task": "test"})
+        dataset.save_episode()
+    dataset.finalize()
+
+    reloaded = LeRobotDataset(DUMMY_REPO_ID, root=root)
+    assert reloaded.num_episodes == len(lengths)
+    assert reloaded.num_frames == sum(lengths)
+    assert reloaded.meta.episodes["length"] == lengths
+    assert reloaded.meta.stats["frame_index"]["count"].tolist() == [sum(lengths)]
+    assert reloaded.meta.stats["frame_index"]["min"].tolist() == [0.0]

@@ -176,6 +176,22 @@ def test_get_feature_stats_single_value():
     np.testing.assert_equal(result["count"], np.array([1]))
 
 
+@pytest.mark.parametrize("dtype", [np.int64, np.int32, np.bool_])
+def test_get_feature_stats_single_sample_is_floating_like_multi_sample(dtype):
+    """One sample and several samples must both give floating statistics, so episodes of
+    different lengths serialize to the same Arrow schema."""
+    single = get_feature_stats(np.array([[1, 0]], dtype=dtype), axis=0, keepdims=False)
+    multi = get_feature_stats(np.array([[1, 0], [0, 1]], dtype=dtype), axis=0, keepdims=False)
+    assert single.keys() == multi.keys()
+    for key in multi:
+        if key == "count":
+            assert np.issubdtype(multi[key].dtype, np.integer), key
+            assert np.issubdtype(single[key].dtype, np.integer), key
+            continue
+        assert np.issubdtype(multi[key].dtype, np.floating), key
+        assert np.issubdtype(single[key].dtype, np.floating), key
+
+
 def test_compute_episode_stats():
     depth_key = "observation.images.depth"
     episode_data = {
