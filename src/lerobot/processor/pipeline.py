@@ -36,7 +36,7 @@ import inspect
 import json
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1002,6 +1002,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
            - Resolve declared relative artifact paths against a local checkpoint
            - Download declared artifacts when loading the pipeline from the Hub
            - Reject absolute paths and path traversal before step construction
+           - Skip resolution for artifact keys explicitly replaced by step overrides
 
         1. **Class Resolution** (via _resolve_step_class):
            - **If "registry_name" exists**: Look up in ProcessorStepRegistry
@@ -1057,6 +1058,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             base_path,
             config_filename,
             hub_download_kwargs,
+            overrides=overrides,
         )
         steps, remaining_override_keys = cls._build_steps_from_config(
             loaded_config, overrides, trust_remote_code=trust_remote_code
@@ -1083,8 +1085,12 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         base_path: Path | None,
         config_filename: str,
         hub_download_kwargs: dict[str, Any],
+        *,
+        overrides: dict[str, Any] | None = None,
     ) -> None:
         """Resolve declared relative processor artifacts before step construction.
+
+        Overridden artifact declarations are validated but do not need to exist or be downloaded.
 
         Args:
             loaded_config: Mutable processor configuration containing step artifact declarations.
@@ -1092,6 +1098,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
             base_path: Local directory containing the resolved processor configuration.
             config_filename: Processor config path, whose parent is the artifact root on the Hub.
             hub_download_kwargs: Authentication, revision, and cache arguments for Hub downloads.
+            overrides: Constructor overrides keyed by registry name or final class name.
 
         Raises:
             ValueError: If a declared artifact path is absolute or escapes the checkpoint.
@@ -1107,6 +1114,16 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
                     raise ValueError(
                         f"Processor artifact path must be relative to the checkpoint: {relative_path!r}"
                     )
+
+                if overrides:
+                    step_key = (
+                        step_entry["registry_name"]
+                        if "registry_name" in step_entry
+                        else step_entry["class"].rsplit(".", 1)[-1]
+                    )
+                    step_overrides = overrides.get(step_key, {})
+                    if isinstance(step_overrides, Mapping) and config_key in step_overrides:
+                        continue
 
                 resolved_path = base_path / artifact_path if base_path is not None else artifact_path
                 if not resolved_path.exists() and not is_local:
