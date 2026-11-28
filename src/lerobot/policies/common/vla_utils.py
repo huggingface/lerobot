@@ -113,6 +113,30 @@ def clone_past_key_values(past_key_values):
     )
 
 
+class ReadOnlyPrefixCache:
+    """One chunk's prefix keys and values, shared by its denoise steps.
+
+    Each step's suffix attends to the prefix plus its own keys, as with a ``DynamicCache``, but
+    nothing is appended, so the steps need no per-step copy of the prefix. Implements the two
+    calls Gemma's attention and mask code make on a cache.
+    """
+
+    def __init__(self, kv: list[tuple[Tensor, Tensor]]):
+        self.kv = kv
+        self.prefix_len = kv[0][0].shape[-2]
+
+    @classmethod
+    def from_cache(cls, cache) -> "ReadOnlyPrefixCache":
+        return cls([(keys, values) for keys, values, _ in cache])
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self.prefix_len
+
+    def update(self, key_states: Tensor, value_states: Tensor, layer_idx: int, cache_kwargs=None):
+        keys, values = self.kv[layer_idx]
+        return torch.cat([keys, key_states], dim=-2), torch.cat([values, value_states], dim=-2)
+
+
 def pad_vector(vector: Tensor, new_dim: int, *, truncate: bool = False) -> Tensor:
     """Pad the last dimension of a vector to new_dim with zeros.
 
