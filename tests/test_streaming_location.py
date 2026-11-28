@@ -56,6 +56,17 @@ def test_storage_options_only_carry_the_token_to_hub_roots() -> None:
     assert StorageLocation.parse("local").storage_options("tok") == {}
 
 
+def test_storage_options_merge_user_options_for_uri_roots_only() -> None:
+    extra = {"profile": "x"}
+    assert StorageLocation.parse("s3://b/p").storage_options(None, extra) == extra
+    assert StorageLocation.parse("hf://buckets/o/b").storage_options("tok", extra) == {
+        "profile": "x",
+        "token": "tok",
+    }
+    assert StorageLocation.parse("local").storage_options(None, extra) == {}
+    assert extra == {"profile": "x"}  # caller's dict is not mutated
+
+
 @pytest.mark.parametrize(
     ("root", "commit"),
     [

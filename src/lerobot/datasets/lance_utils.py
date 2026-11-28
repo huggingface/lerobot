@@ -31,7 +31,6 @@ import io
 import json
 import multiprocessing
 import os
-import re
 import shutil
 from collections import OrderedDict
 from collections.abc import Callable
@@ -48,7 +47,7 @@ from lerobot.utils.import_utils import _lancedb_available, require_package
 if TYPE_CHECKING or _lancedb_available:
     import lancedb
 
-from .storage import is_remote_uri
+from .storage import is_remote_uri, remote_meta_cache_dir
 
 # Byte-index columns on the videos table: map a frame window to its byte ranges so a
 # batch's video fetch can be batched. Assume constant frame rate; mp4-only.
@@ -384,8 +383,8 @@ def resolve_lance_root(
         # Key the cache by revision too: an hf:// root at a non-default revision must not
         # reuse (or overwrite) another revision's materialized meta.
         cache_key = f"{db_uri}@{revision}" if revision else db_uri
-        # The same URI can name different datasets on different object stores.
-        # Preserve the existing path when no explicit routing options are set.
+        # The same URI can name different datasets on different object stores, so
+        # explicit routing options split the cache.
         routing_options = {
             key.lower(): value
             for key, value in (storage_options or {}).items()
@@ -394,7 +393,7 @@ def resolve_lance_root(
         if routing_options:
             identity = json.dumps(routing_options, sort_keys=True, separators=(",", ":"))
             cache_key += "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
-        local_root = HF_LEROBOT_HOME / "remote" / re.sub(r"[^A-Za-z0-9._-]+", "_", cache_key)
+        local_root = remote_meta_cache_dir(cache_key)
         if force_cache_sync:
             shutil.rmtree(local_root / "meta", ignore_errors=True)
         if not (local_root / "meta").exists():
