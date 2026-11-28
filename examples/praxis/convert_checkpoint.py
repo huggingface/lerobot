@@ -41,6 +41,7 @@ from lerobot.policies.praxis.configuration_praxis import (
     BIMANUAL_CAMERA_KEYS,
     EMBODIMENT_ARMS,
     PRAXIS_ACTION_DIM,
+    SO101_JOINT_DIM,
     PraxisConfig,
 )
 from lerobot.policies.praxis.praxis_core.checkpoint import (
@@ -97,18 +98,23 @@ def write_checksums(dst: Path, known: Mapping[str, str] | None = None) -> Path:
 
 
 DEFAULT_IMAGE_SHAPE = (3, 288, 512)  # the DROID rig cameras of the praxis sim; any size works
-# The serve settings of each rig's checkpoint (the praxis repository's `configs/sim_droid.yaml`, `configs/serve_yam.yaml`);
+# The serve settings of each rig's checkpoint (the praxis repository's `configs/sim_droid.yaml`, `configs/serve_yam.yaml`,
+# `configs/serve_so101.yaml`);
 # the single-arm values are the PraxisConfig defaults.
 RIG_SAMPLER_DEFAULTS: dict[str, dict[str, float | int]] = {
     "single_arm": {},
     "bimanual": {"num_steps": 2, "t_shift": 1.0, "cfg_scale": 1.0, "cfg_video_scale": 1.0},
+    # configs/serve_so101.yaml: the SO101 serve preset of the fine-tune
+    "so101": {"num_steps": 4, "t_shift": 12.5, "cfg_scale": 1.0, "cfg_video_scale": 4.0},
 }
+#: The camera shape each rig's config declares (the native SO-101 camera; any size works).
+RIG_IMAGE_SHAPES: dict[str, tuple[int, int, int]] = {"so101": (3, 480, 640)}
 
 
 def build_config(
     praxis_config: dict,
     *,
-    image_shape: tuple[int, int, int] = DEFAULT_IMAGE_SHAPE,
+    image_shape: tuple[int, int, int] | None = None,
     exterior_image_key: str = "observation.images.exterior",
     wrist_image_key: str = "observation.images.wrist",
     camera_keys: list[str] | None = None,
@@ -118,8 +124,10 @@ def build_config(
     """Return the LeRobot config of a praxis checkpoint config.
 
     The rig comes from ``embodiment``: the single-arm checkpoint takes the exterior and wrist keys,
-    the bimanual one ``camera_keys`` (default `BIMANUAL_CAMERA_KEYS`: top, left wrist, right wrist)
-    and the serve settings of its checkpoint (`RIG_SAMPLER_DEFAULTS`, unless overridden). A base
+    the bimanual one ``camera_keys`` (default `BIMANUAL_CAMERA_KEYS`: top, left wrist, right wrist),
+    an so101 one one or two ``camera_keys`` (exterior, then wrist; default the exterior and wrist
+    keys) and the follower's six joints as state and action. The bimanual and so101 configs get
+    the serve settings of their checkpoint (`RIG_SAMPLER_DEFAULTS`, unless overridden). A base
     checkpoint (no action heads) gets a config that only `examples/praxis/init_heads.py` completes.
     """
     embodiment = str(praxis_config.get("embodiment", "single_arm"))
@@ -135,22 +143,26 @@ def build_config(
     n_arms = EMBODIMENT_ARMS[embodiment]
     if embodiment == "bimanual":
         keys = list(camera_keys or BIMANUAL_CAMERA_KEYS)
+    elif embodiment == "so101":
+        keys = list(camera_keys or [exterior_image_key, wrist_image_key])
     else:
         keys = list(camera_keys or [exterior_image_key, wrist_image_key])
         exterior_image_key, wrist_image_key = keys
+    state_dim = SO101_JOINT_DIM if embodiment == "so101" else PRAXIS_ACTION_DIM * n_arms
+    shape = tuple(image_shape or RIG_IMAGE_SHAPES.get(embodiment, DEFAULT_IMAGE_SHAPE))
     settings = {**RIG_SAMPLER_DEFAULTS.get(embodiment, {}), **overrides}
     config = PraxisConfig(
         model_config=praxis_config,
         exterior_image_key=exterior_image_key,
         wrist_image_key=wrist_image_key,
-        camera_keys=keys if embodiment == "bimanual" else [],
+        camera_keys=keys if embodiment in ("bimanual", "so101") else [],
         chunk_size=chunk,
         n_action_steps=chunk,
         input_features={
-            **{key: PolicyFeature(type=FeatureType.VISUAL, shape=tuple(image_shape)) for key in keys},
-            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(PRAXIS_ACTION_DIM * n_arms,)),
+            **{key: PolicyFeature(type=FeatureType.VISUAL, shape=shape) for key in keys},
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
         },
-        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(PRAXIS_ACTION_DIM * n_arms,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(state_dim,))},
         device=device,
         **settings,
     )
@@ -212,7 +224,8 @@ def main() -> None:
     parser.add_argument(
         "--camera-keys",
         default=None,
-        help="comma list of the camera keys in canvas order (bimanual default: top_left, wrist_left, wrist_right)",
+        help="comma list of the camera keys in canvas order (bimanual default: top_left, wrist_left, "
+        "wrist_right; so101: one or two keys, exterior then wrist)",
     )
     parser.add_argument(
         "--num-steps", type=int, default=None, help="sampler steps (default: the rig's serve setting)"

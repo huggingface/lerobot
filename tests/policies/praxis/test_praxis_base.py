@@ -98,7 +98,7 @@ def save_tiny_base(path: Path, seed: int = 0) -> dict:
 def test_base_config_fixture_and_rig_config() -> None:
     base = json.loads((Path(__file__).parent / "checkpoint_configs" / "praxis-1-base.json").read_text())
     validate_base_config(base)
-    droid = json.loads((Path(__file__).parent / "checkpoint_configs" / "praxis-1-droid-m2.json").read_text())
+    droid = json.loads((Path(__file__).parent / "checkpoint_configs" / "praxis-1-droid.json").read_text())
     rebuilt = rig.single_arm_config(
         base, tile_height=224, tile_width=416, antialias=True, normalization=droid["normalization"]
     )

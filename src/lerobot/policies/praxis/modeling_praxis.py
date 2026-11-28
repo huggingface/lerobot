@@ -61,8 +61,8 @@ from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import require_package
 
 from ..chunk import ChunkPolicySpec
-from .configuration_praxis import PRAXIS_ACTION_DIM, PRAXIS_POSE_DIM, PraxisConfig
-from .praxis_core import bimanual, layers as praxis_layers
+from .configuration_praxis import PRAXIS_ACTION_DIM, PRAXIS_POSE_DIM, SO101_JOINT_DIM, PraxisConfig
+from .praxis_core import bimanual, layers as praxis_layers, so101
 from .praxis_core.action_expert import FLEX_DYNAMIC_KERNEL_OPTIONS
 from .praxis_core.backbone import _TeacherForcingMaskCache
 from .praxis_core.bimanual import BimanualChunkInputs, BimanualServeSession
@@ -77,6 +77,7 @@ from .praxis_core.single_arm import (
     q99_dims,
     tile_clip,
 )
+from .praxis_core.so101 import GripRange, So101ChunkInputs, So101ServeSession
 from .praxis_core.train.data import TrainingWindow, droid_pose8
 from .praxis_core.train.moe import update_expert_biases
 from .praxis_core.train.objective import FinetuneModel, encode_window
@@ -261,6 +262,30 @@ def _state_rows(batch: dict[str, Any], index: int, n_frames: int, n_arms: int = 
     return values.astype(np.float32)
 
 
+def _joint_rows(batch: dict[str, Any], index: int, n_frames: int) -> np.ndarray:
+    """The ``(n_frames, 6)`` joint rows of one so101 environment, in LeRobot's units as they come.
+
+    The state is ``(6,)`` (the follower's joints, ``use_degrees=True``) for one frame, or a stack
+    ``(T, 6)``. A stack with one camera frame per call gives its last row (the current state). The
+    so101 session converts the rows to the model's (`so101.lerobot_to_model`).
+    """
+    state = batch[OBS_STATE][index]
+    rows = state[None] if state.ndim == 1 else state
+    if rows.ndim != 2 or rows.shape[-1] != SO101_JOINT_DIM:
+        raise ValueError(
+            f"{OBS_STATE} must have the {SO101_JOINT_DIM} joints of the so101 rig per frame, got "
+            f"{tuple(state.shape)}"
+        )
+    if rows.shape[0] != n_frames:
+        if n_frames != 1:
+            raise ValueError(
+                f"{OBS_STATE} holds {rows.shape[0]} rows but the cameras hold {n_frames} frames; "
+                "a frame stack needs the state of every frame"
+            )
+        rows = rows[-1:]
+    return rows.detach().float().cpu().numpy().astype(np.float32)
+
+
 def _task_of(batch: dict[str, Any], index: int) -> str:
     task = batch.get("task")
     if task is None:
@@ -423,23 +448,35 @@ class _TextCache:
         self._by_tokens.clear()
 
 
-def _finish_chunk(
-    state: SingleArmServeSession | BimanualServeSession,
-    inputs: SingleArmChunkInputs | BimanualChunkInputs,
-    actions: Tensor,
-) -> tuple[np.ndarray, list[tuple[np.ndarray, np.ndarray]]]:
-    """Decode the sampled chunk and advance the session.
+Session = SingleArmServeSession | BimanualServeSession | So101ServeSession
+ChunkInputs = SingleArmChunkInputs | BimanualChunkInputs | So101ChunkInputs
 
-    Returns the normalized action rows and the ``(poses, grips)`` rows of each arm (one pair on
-    the single-arm rig, two on the bimanual rig), each session with the inputs it prepared.
+
+def _finish_chunk(
+    state: Session, inputs: ChunkInputs, actions: Tensor
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Decode the sampled chunk, advance the session, and return the normalized rows and the commands.
+
+    A command row is the praxis wire pose and the gripper of each arm (one arm on the single-arm
+    rig, two on the bimanual rig), or the six joint targets in LeRobot's units on the so101 rig.
+    Each session takes the inputs it prepared.
     """
+    if isinstance(state, So101ServeSession) and isinstance(inputs, So101ChunkInputs):
+        rows_norm, _rel = state.decode_actions(inputs, actions)
+        return rows_norm, list(state.finish(inputs, actions))
     if isinstance(state, BimanualServeSession) and isinstance(inputs, BimanualChunkInputs):
         rows_norm, _rel = state.decode_actions(inputs, actions)
-        return rows_norm, state.finish(inputs, actions)
-    if isinstance(state, SingleArmServeSession) and isinstance(inputs, SingleArmChunkInputs):
+        arms = state.finish(inputs, actions)
+    elif isinstance(state, SingleArmServeSession) and isinstance(inputs, SingleArmChunkInputs):
         rows_norm, _rel = state.decode_actions(inputs, actions)
-        return rows_norm, [state.finish(inputs, actions)]
-    raise TypeError(f"{type(inputs).__name__} is not the input of a {type(state).__name__}")
+        arms = [state.finish(inputs, actions)]
+    else:
+        raise TypeError(f"{type(inputs).__name__} is not the input of a {type(state).__name__}")
+    commands = [
+        np.concatenate([np.concatenate([poses[t], [grips[t]]]) for poses, grips in arms]).astype(np.float32)
+        for t in range(len(arms[0][0]))
+    ]
+    return rows_norm, commands
 
 
 class _EnvState:
@@ -448,7 +485,7 @@ class _EnvState:
     def __init__(self, stack_rows: int) -> None:
         # (the frames of each camera in canvas order, the pose row) per tick
         self.history: deque[tuple[tuple[Tensor | np.ndarray, ...], np.ndarray]] = deque(maxlen=stack_rows)
-        self.state: SingleArmServeSession | BimanualServeSession | None = None
+        self.state: Session | None = None
         self.seed = 0
         self.task = ""
         self.text: Tensor | None = None  # the instruction embedding from the tokenizer step's tokens
@@ -458,6 +495,8 @@ class _EnvState:
         # The real commands of the last `predict_action_chunk` row block (21 for the first chunk of a
         # context window, padded to `chunk_size`): the frames handed over after it count up to there.
         self.chunk_rows: int | None = None
+        # The canvas width of each camera in the last chunk (the predicted frames split by them).
+        self.view_widths: list[int] = []
 
 
 class PraxisPolicy(PreTrainedPolicy):
@@ -520,6 +559,7 @@ class PraxisPolicy(PreTrainedPolicy):
         self._antialias = bool(self.variant.antialias)
         self._camera_keys: list[str] = list(config.image_keys)
         self._n_arms = int(config.n_arms)
+        self._rig = config.embodiment
         # The training objective shares `self.model`; it is kept out of the module tree so the
         # state dict and the FSDP units stay those of the policy.
         object.__setattr__(self, "_finetune", None)
@@ -919,10 +959,10 @@ class PraxisPolicy(PreTrainedPolicy):
     def _training_windows(self, batch: dict[str, Any]) -> list[TrainingWindow]:
         """Build one praxis training window per sample of the batch (the praxis data recipe)."""
         cfg = self.config
-        if cfg.n_arms != 1:
+        if cfg.embodiment != "single_arm":
             raise NotImplementedError(
                 "fine-tuning is implemented for the single-arm rig; the praxis repository has no "
-                "bimanual training recipe to follow yet"
+                f"{cfg.embodiment} training recipe to follow yet"
             )
         frames_t = cfg.window_frames
         exterior_key, wrist_key = cfg.image_keys
@@ -989,7 +1029,7 @@ class PraxisPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
-        """Return the action chunk ``(B, chunk_size, 13)`` of the current observations, on the CPU.
+        """Return the action chunk ``(B, chunk_size, command_dim)`` of the current observations, on the CPU.
 
         The first call of a context window gives 21 commands (its first latent is the window's
         uncompressed anchor frame, which gives one command instead of four); the chunk is padded with
@@ -998,7 +1038,7 @@ class PraxisPolicy(PreTrainedPolicy):
         calls of the window give 24 commands, the full chunk. The call advances the sessions like
         ``select_action`` does, without queueing the commands. The next chunk is conditioned
         on the executed frames only when the call receives them: pass the frames executed since
-        the previous call as a stack ``(B, T, 3, H, W)`` with their states ``(B, T, 7 | 8)``
+        the previous call as a stack ``(B, T, 3, H, W)`` with their states ``(B, T, state values)``
         (oldest first); a call with one frame after a chunk starts the context again. Frames past
         the real commands of the previous chunk (those of its padded rows) are dropped: the
         context is the one of a caller that executed the real commands only.
@@ -1020,9 +1060,10 @@ class PraxisPolicy(PreTrainedPolicy):
     ) -> Tensor | PolicyOutput:
         """Return one command per environment, sampling a new chunk when the queue is empty.
 
-        The commands are ``(B, 13)`` float32 on the CPU: the praxis wire pose and the gripper
-        (the command processor step converts them to the DROID 7 values). They are numpy rows
-        of the session, so nothing is uploaded to the device for them.
+        The commands are ``(B, command_dim)`` float32 on the CPU: the praxis wire pose and the
+        gripper of each arm (the command processor step converts them to the DROID 7 values), or the
+        six joint targets of the so101 rig in LeRobot's units. They are numpy rows of the session,
+        so nothing is uploaded to the device for them.
         """
         self.eval()
         self._push_observations(batch)
@@ -1040,11 +1081,16 @@ class PraxisPolicy(PreTrainedPolicy):
         action = torch.from_numpy(np.stack(out)).to(torch.float32)
         if not self.config.return_prediction or any(f is None for f in frames):
             return action
-        canvas = torch.from_numpy(np.stack(frames))  # (B, 3, tile_h, n_views * tile_w) uint8
-        width = canvas.shape[-1] // len(self._camera_keys)
+        canvas = torch.from_numpy(np.stack(frames))  # (B, 3, tile_h, sum of the view widths) uint8
+        widths = self._envs[0].view_widths
+        if any(env.view_widths != widths for env in self._envs) or sum(widths) != canvas.shape[-1]:
+            raise ValueError(
+                f"the environments' canvases split differently: {[e.view_widths for e in self._envs]}"
+            )
+        starts = np.cumsum([0, *widths]).tolist()
         prediction = {
             "observation": {
-                key: canvas[..., v * width : (v + 1) * width] for v, key in enumerate(self._camera_keys)
+                key: canvas[..., starts[v] : starts[v + 1]] for v, key in enumerate(self._camera_keys)
             }
         }
         return {ACTION: action, PREDICTION: prediction}
@@ -1057,9 +1103,26 @@ class PraxisPolicy(PreTrainedPolicy):
         """Whether frames of this size take the antialiased canvas rule (never for tiles)."""
         return self._antialias and tuple(int(x) for x in frame_hw) != self._tile_hw
 
-    def _new_session(self) -> SingleArmServeSession | BimanualServeSession:
+    def _new_session(self) -> Session:
         """The praxis temporal context of one environment, on the model's parts."""
         chunking = self.config.model_config["chunking"]
+        if self._rig == "so101":
+            return So101ServeSession(
+                encode=self.vae.encode,
+                stats=self.stats,
+                device=self.model.device,
+                prompt="",
+                max_context_chunks=self.config.max_context_chunks,
+                fps=float(chunking.get("grid_hz", FPS)),
+                dims=so101.q99_dims(self.config.model_config),
+                control_mode="none",
+                exec_horizon=self.config.n_action_steps,
+                n_chunks=int(chunking.get("n_chunks", N_CHUNKS)),
+                tile_size=self.variant.tile_size,
+                antialias=self.variant.antialias,
+                n_views=len(self._camera_keys),
+                grip=GripRange(float(self.config.grip_closed), float(self.config.grip_open)),
+            )
         if self._n_arms == 2:
             return BimanualServeSession(
                 encode=self.vae.encode,
@@ -1096,7 +1159,7 @@ class PraxisPolicy(PreTrainedPolicy):
 
         The cameras hold one frame per environment ``(B, 3, H, W)``, or a stack ``(B, T, 3, H, W)``
         of the ``T`` observations since the previous call, oldest first, with the state of every
-        frame ``(B, T, 7 | 8)``: a caller that executes whole chunks hands over the executed frames
+        frame ``(B, T, 7 | 8)`` (``(B, T, 6)`` on the so101 rig): a caller that executes whole chunks hands over the executed frames
         this way, and the next chunk is conditioned on them as in a call-per-frame rollout.
         The tiles of the preprocessor stay on their device (the autoencoder reads them there);
         raw frames of a policy called without the pipeline become CPU bytes for the canvas rule.
@@ -1131,13 +1194,16 @@ class PraxisPolicy(PreTrainedPolicy):
                 f"for all {batch_size}, got {tuple(tokens.shape)}"
             )
         for i, env in enumerate(self._envs):
-            poses = _state_rows(batch, i, n_frames, self._n_arms)
+            if self._rig == "so101":
+                poses = _joint_rows(batch, i, n_frames)
+            else:
+                poses = _state_rows(batch, i, n_frames, self._n_arms)
             # After a padded chunk, the frames of its padded rows are not context.
             kept = n_frames if env.chunk_rows is None else min(n_frames, env.chunk_rows)
             env.chunk_rows = None
             for t in range(kept):
                 frames = tuple(cam[i, t] if cam.ndim == 5 else cam[i] for cam in cameras)
-                env.history.append((tuple(_frame_for_history(f, self._tile_hw) for f in frames), poses[t]))
+                env.history.append((self._history_frames(frames), poses[t]))
             env.task = _task_of(batch, i)
             if isinstance(tokens, Tensor):
                 # One instruction for the whole batch comes as one row (a single task string).
@@ -1152,6 +1218,32 @@ class PraxisPolicy(PreTrainedPolicy):
                 env.seed = self.config.seed + self.config.seed_stride * env.scene_seed
                 env.state = self._new_session()
 
+    def _history_frames(self, frames: tuple[Tensor, ...]) -> tuple[Tensor | np.ndarray, ...]:
+        """The frames of one tick for the history: tiles stay uint8 tensors on their device, raw frames
+        become CPU bytes for the canvas rule.
+
+        On the so101 rig the views of a tick are tiles when the fit rule leaves them as they are
+        (`so101.is_fit_canvas`), which the preprocessor's tiles are; the rule would not change them.
+        """
+        if self._rig != "so101":
+            return tuple(_frame_for_history(f, self._tile_hw) for f in frames)
+        images = [_uint8_chw(f) for f in frames]
+        if so101.is_fit_canvas([(int(im.shape[-2]), int(im.shape[-1])) for im in images]):
+            return tuple(images)
+        return tuple(im.permute(1, 2, 0).contiguous().cpu().numpy() for im in images)
+
+    def _view_widths(self, env: _EnvState) -> list[int]:
+        """The canvas width of each camera of the environment's current frames."""
+        sizes = [
+            (int(f.shape[-2]), int(f.shape[-1]))
+            if isinstance(f, Tensor)
+            else (int(f.shape[0]), int(f.shape[1]))
+            for f in env.history[-1][0]
+        ]
+        if self._rig == "so101":
+            return [w for _h, w in so101.fit_tile_sizes(sizes)]
+        return [self._tile_hw[1]] * len(sizes)
+
     def _observation_dict(self, env: _EnvState) -> dict[str, Any]:
         """Build the praxis observation of one environment from its frame history."""
         n_views = len(self._camera_keys)
@@ -1162,7 +1254,11 @@ class PraxisPolicy(PreTrainedPolicy):
             stacks.append(torch.stack(frames) if isinstance(frames[0], Tensor) else np.stack(frames))
         poses = np.stack([row[1] for row in env.history]).astype(np.float32)
         obs: dict[str, Any] = {}
-        if self._n_arms == 1:
+        if self._rig == "so101":
+            for view, stack in zip(so101.VIEWS, stacks, strict=False):  # one or two views
+                obs[so101.VIEW_KEYS[view]] = stack
+            obs[so101.STATE_KEY] = poses
+        elif self._n_arms == 1:
             obs["image.exterior"], obs["image.wrist"] = stacks
             obs["robot_state.ee_pose"] = poses[:, :7]
             obs["grip"] = poses[:, 7:8]
@@ -1202,16 +1298,16 @@ class PraxisPolicy(PreTrainedPolicy):
                 proprio_all=inputs.proprio_all,
                 seed=env.seed + inputs.chunk_index,
                 settings=self.sampler_settings,
+                # Only `return_prediction` reads the video: without it the last Euler step skips the
+                # video decoder (the commands keep their bits).
+                skip_last_video=not self.config.return_prediction,
             )
-            rows_norm, arms = _finish_chunk(state, inputs, actions)  # one (poses, grips) per arm
-            commands = [
-                np.concatenate([np.concatenate([poses[t], [grips[t]]]) for poses, grips in arms]).astype(
-                    np.float32
-                )
-                for t in range(len(arms[0][0]))
-            ]
+            rows_norm, commands = _finish_chunk(state, inputs, actions)
+            env.view_widths = self._view_widths(env)
             predicted: list[np.ndarray] | None = None
             if self.config.return_prediction:
+                if video is None:
+                    raise RuntimeError("the sampler skipped the predicted video that return_prediction needs")
                 latent = video
                 if inputs.cleans:
                     latent = torch.cat(
