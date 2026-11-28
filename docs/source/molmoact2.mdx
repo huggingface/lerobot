@@ -27,6 +27,13 @@ expert blocks while leaving the VLM, vision tower, connector, and policy wrapper
 eager. This boundary passed same-start output, gradient, and optimizer-update
 parity checks; compiling the bf16 VLM path did not.
 
+Inference has also been reported to work on Apple Silicon
+(`policy.device=mps`) with `policy.dtype=float32`, where the output matches CPU
+fp32. Do not use `bfloat16` on MPS. It runs without an error but returns actions
+that differ substantially from the CPU reference
+([#5375](https://github.com/huggingface/lerobot/issues/5375)), and the policy
+logs a warning when it is used.
+
 Multi-GPU training through `accelerate` increases throughput and global batch
 size. This path has been exercised on two-node, eight-GPU GB200 runs, but this
 LeRobot port does not expose the original MolmoAct2 `fsdp_devices`
@@ -404,7 +411,8 @@ checkpoint's `norm_stats.json`.
   `norm_stats.json`. It is required for direct original-HF checkpoint
   evaluation.
 - `policy.dtype`: model storage/autocast profile. Use `bfloat16` for normal GPU
-  evaluation. Use `float32` only when you explicitly want full-fp32 inference.
+  evaluation. Use `float32` only when you explicitly want full-fp32 inference,
+  and always on MPS.
 - `policy.enable_inference_cuda_graph`: enables the MolmoAct2 inference CUDA
   graph path for faster repeated continuous-action rollout.
 - `policy.per_episode_seed` and `policy.eval_seed`: make stochastic continuous

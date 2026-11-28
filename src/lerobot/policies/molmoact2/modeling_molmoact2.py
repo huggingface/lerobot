@@ -661,6 +661,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.action_tokenizer: Any | None = None
         self._compile_applied = False
         self._compiled_module_names: tuple[str, ...] = ()
+        self._warned_mps_bfloat16 = False
         self._load_hf_model()
         _validate_inference_action_mode(self.config, self._checkpoint_action_mode)
         if self.config.train_mode_vlm == "lora":
@@ -957,6 +958,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 raise RuntimeError(
                     f"MolmoAct2 dtype='bfloat16' requires autocast support on device type {device_type!r}."
                 )
+            if device_type == "mps" and not self._warned_mps_bfloat16:
+                logger.warning(
+                    "MolmoAct2 with dtype='bfloat16' on MPS can return wrong actions without raising an error "
+                    "(https://github.com/huggingface/lerobot/issues/5375). Use policy.dtype=float32 on MPS."
+                )
+                self._warned_mps_bfloat16 = True
             return torch.autocast(device_type=device_type, dtype=compute_dtype)
         if autocast_available:
             # A surrounding eval/use_amp context must not override the single
