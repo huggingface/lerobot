@@ -45,6 +45,12 @@ ENV UV_OVERRIDE=${ROCM_OVERRIDES} \
     PIP_CONSTRAINT=${ROCM_OVERRIDES} \
     ROCPROFILER_LOG_LEVEL=fatal
 
+# Some HIP runtimes (ROCm/rocm-systems#6134, reverted in #6712) narrow the CPU affinity of every
+# process that initialises HIP to the CPUs nearest GPU 0. `accelerate launch` initialises HIP to count
+# GPUs, so all ranks and their DataLoader workers would share those CPUs. 0 is the runtime's default
+# again upstream; setting it keeps images built on the affected runtimes at full speed.
+ENV AMD_CPU_AFFINITY=0
+
 WORKDIR /lerobot
 COPY . .
 
