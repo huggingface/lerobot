@@ -1892,3 +1892,14 @@ def test_remove_camera_then_split_dataset(sample_dataset, tmp_path):
             assert not any(column.startswith(f"stats/{camera}/") for column in pq.read_schema(path).names)
     assert camera in sample_dataset.meta.features
     assert camera in sample_dataset.meta.stats
+
+
+def test_dataset_tools_reject_projected_dataset(sample_dataset, tmp_path):
+    """Editing or publishing a dataset loaded with features= fails before anything is written."""
+    projected = LeRobotDataset(DUMMY_REPO_ID, root=sample_dataset.root, features=["action"])
+
+    with pytest.raises(ValueError, match="features="):
+        delete_episodes(projected, [0], output_dir=tmp_path / "out")
+    with patch("lerobot.datasets.lerobot_dataset.HfApi"), pytest.raises(ValueError, match="features="):
+        projected.push_to_hub()
+    assert not (tmp_path / "out").exists()

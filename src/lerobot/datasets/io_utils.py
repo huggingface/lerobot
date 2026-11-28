@@ -62,7 +62,10 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
 
 
 def load_nested_dataset(
-    pq_dir: Path, features: datasets.Features | None = None, episodes: list[int] | None = None
+    pq_dir: Path,
+    features: datasets.Features | None = None,
+    episodes: list[int] | None = None,
+    columns: list[str] | None = None,
 ) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
@@ -72,6 +75,10 @@ def load_nested_dataset(
         pq_dir: Directory containing parquet files
         features: Optional features schema to ensure consistent loading of complex types like images
         episodes: Optional list of episode indices to filter. Uses PyArrow predicate pushdown for efficiency.
+        columns: Optional parquet columns to read; must name the same columns as ``features``.
+            Required when ``features`` covers only part of the stored columns, since ``features``
+            alone casts the whole table. ``None`` reads every column (and keeps the cache key of
+            earlier versions).
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
@@ -80,7 +87,9 @@ def load_nested_dataset(
     with SuppressProgressBars():
         # We use .from_parquet() memory-mapped loading for efficiency
         filters = pa_ds.field("episode_index").isin(episodes) if episodes is not None else None
-        return Dataset.from_parquet([str(path) for path in paths], filters=filters, features=features)
+        return Dataset.from_parquet(
+            [str(path) for path in paths], filters=filters, features=features, columns=columns
+        )
 
 
 def get_parquet_num_frames(parquet_path: str | Path) -> int:
