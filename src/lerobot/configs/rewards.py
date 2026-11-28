@@ -27,6 +27,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
+from lerobot.configs.parser import parse_pretrained_config
 from lerobot.optim.optimizers import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
@@ -166,8 +167,7 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             config_file = f.name
 
         cli_overrides = reward_kwargs.pop("cli_overrides", [])
-        with draccus.config_type("json"):
-            config = draccus.parse(config_cls, config_file, args=cli_overrides)
+        config = parse_pretrained_config(config_cls, config_file, cli_overrides)
 
         # Same backfill as PreTrainedConfig.from_pretrained: config.json does not
         # carry the source path, and direct callers (PreTrainedRewardModel,
