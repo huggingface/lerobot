@@ -633,6 +633,86 @@ def test_getitem_after_finalize_with_delta_timestamps(tmp_path):
     assert "state_is_pad" in item
 
 
+@pytest.mark.parametrize("appended_lengths", [[], [2], [2, 4]])
+def test_resumed_getitem_after_finalize_with_delta_timestamps(
+    tmp_path: Path, appended_lengths: list[int]
+) -> None:
+    """Finalized resumed readers use the boundaries of every appended episode."""
+    root = tmp_path / "resume_ds"
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=10, features=SIMPLE_FEATURES, root=root)
+    for frame in range(3):
+        dataset.add_frame({"state": torch.full((2,), float(frame)), "task": "episode 0"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    for episode, length in enumerate(appended_lengths, start=1):
+        for frame in range(length):
+            resumed.add_frame(
+                {"state": torch.full((2,), float(10 * episode + frame)), "task": f"episode {episode}"}
+            )
+        resumed.save_episode()
+    resumed.finalize()
+    resumed.delta_timestamps = {"state": [-0.1, 0.0, 0.1]}
+    reopened = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root, delta_timestamps=resumed.delta_timestamps)
+
+    for _ in range(2):
+        start = 0
+        for episode, length in enumerate([3, *appended_lengths]):
+            for frame in range(length):
+                expected = (
+                    torch.tensor(
+                        [10 * episode + min(max(frame + delta, 0), length - 1) for delta in (-1, 0, 1)],
+                        dtype=torch.float32,
+                    )
+                    .unsqueeze(1)
+                    .expand(-1, 2)
+                )
+                padding = [frame == 0, False, frame == length - 1]
+                for reader in (resumed, reopened):
+                    item = reader[start + frame]
+                    torch.testing.assert_close(item["state"], expected)
+                    assert item["state_is_pad"].tolist() == padding
+                    assert item["task"] == f"episode {episode}"
+            start += length
+        resumed.finalize()
+    assert len(resumed.meta.episodes) == len(appended_lengths) + 1
+
+
+@pytest.mark.parametrize("appended_episodes", [1, 10, 11])
+def test_resumed_metadata_filter_during_recording(tmp_path: Path, appended_episodes: int) -> None:
+    """Keep the loaded episode view until buffered and flushed appends are finalized."""
+    root = tmp_path / "resumed_filter"
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=root, use_videos=False
+    )
+    for _ in range(2):
+        dataset.add_frame(_make_frame())
+    dataset.save_episode()
+    dataset.finalize()
+
+    resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+    snapshot = resumed.meta.episodes
+    try:
+        for _ in range(appended_episodes):
+            for _ in range(2):
+                resumed.add_frame(_make_frame())
+            resumed.save_episode()
+
+        assert resumed.meta.filter_episodes(lambda row: True, candidates=[0]) == [0]
+        assert resumed.meta.episodes is snapshot
+    finally:
+        resumed.finalize()
+
+    expected_episodes = list(range(appended_episodes + 1))
+    assert resumed.meta.filter_episodes(lambda row: row["length"] == 2) == expected_episodes
+    assert resumed.meta.filter_episodes(lambda row: True, candidates=[appended_episodes]) == [
+        appended_episodes
+    ]
+    assert len(resumed.meta.episodes) == resumed.meta.total_episodes == appended_episodes + 1
+    assert resumed.meta.total_frames == 2 * (appended_episodes + 1)
+
+
 # ── Property delegation ──────────────────────────────────────────────
 
 
