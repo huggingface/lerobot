@@ -253,7 +253,8 @@ def test_factory_rabc_requires_progress_path_or_dataset_info():
         make_sample_weighter(config, policy, device)
 
 
-def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
+@pytest.mark.parametrize("in_subfolder", [False, True])
+def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet, in_subfolder):
     """Test that RABC weighter auto-detects progress_path from dataset_root."""
     config = SampleWeightingConfig(
         type="rabc",
@@ -266,11 +267,14 @@ def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
 
     # The parquet file is at sample_progress_parquet, get its parent directory
     dataset_root = sample_progress_parquet.parent
+    # A dataset in a repository subfolder keeps its progress file inside that subfolder.
+    subfolder = dataset_root.name if in_subfolder else None
     weighter = make_sample_weighter(
         config,
         policy,
         device,
-        dataset_root=str(dataset_root),
+        dataset_root=str(dataset_root.parent if in_subfolder else dataset_root),
+        dataset_subfolder=subfolder,
     )
 
     assert weighter is not None
@@ -279,7 +283,14 @@ def test_factory_rabc_auto_detects_from_dataset_root(sample_progress_parquet):
     assert isinstance(weighter, RABCWeights)
 
 
-def test_factory_rabc_auto_detects_from_repo_id():
+@pytest.mark.parametrize(
+    ("subfolder", "expected"),
+    [
+        (None, "hf://datasets/test-user/test-dataset/sarm_progress.parquet"),
+        ("dataset-a", "hf://datasets/test-user/test-dataset/dataset-a/sarm_progress.parquet"),
+    ],
+)
+def test_factory_rabc_auto_detects_from_repo_id(monkeypatch, subfolder, expected):
     """Test that RABC weighter constructs HF path from repo_id."""
     config = SampleWeightingConfig(
         type="rabc",
@@ -289,20 +300,18 @@ def test_factory_rabc_auto_detects_from_repo_id():
     policy.config = Mock()
     policy.config.chunk_size = 50
     device = torch.device("cpu")
+    rabc_weights = Mock()
+    monkeypatch.setattr("lerobot.rewards.sarm.rabc.RABCWeights", rabc_weights)
 
-    # This will construct the path but fail when trying to load (file doesn't exist)
-    # We just verify it doesn't raise the "progress_path required" error
-    with pytest.raises(Exception) as exc_info:
-        make_sample_weighter(
-            config,
-            policy,
-            device,
-            dataset_repo_id="test-user/test-dataset",
-        )
-    # Should NOT be the "progress_path required" error - it should try to load the file
-    assert (
-        "progress_path" not in str(exc_info.value).lower() or "auto-detection" in str(exc_info.value).lower()
+    make_sample_weighter(
+        config,
+        policy,
+        device,
+        dataset_repo_id="test-user/test-dataset",
+        dataset_subfolder=subfolder,
     )
+
+    assert rabc_weights.call_args.kwargs["progress_path"] == expected
 
 
 # =============================================================================

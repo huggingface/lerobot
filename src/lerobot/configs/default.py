@@ -40,7 +40,11 @@ class DatasetConfig:
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     # With streaming=true, an 'hf://buckets/OWNER/BUCKET' URI is also accepted and implies repo_type="bucket".
+    # With a subfolder, this is the local copy of the repository and the dataset lives in root/subfolder.
     root: str | None = None
+    # Path of the dataset inside its Hub repository, for repositories that hold several datasets.
+    # Only this folder of the repository is downloaded.
+    subfolder: str | None = None
     episodes: list[int] | None = None
     # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
     exclude_episodes: list[int] | None = None

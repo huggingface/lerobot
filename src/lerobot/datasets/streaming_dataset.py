@@ -242,6 +242,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         native_http_subranges: int = 1,
         sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
+        subfolder: str | None = None,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
 
@@ -320,6 +321,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
+            subfolder (`str | None`, *optional*):
+                Path of the dataset inside its Hub repository, for repositories that hold several
+                datasets. ``root`` is then the local copy of the repository and the dataset lives in
+                ``root/subfolder``. A ``data_root`` override points at the dataset itself.
         """
         super().__init__()
         if is_bucket_root(repo_id, root):
@@ -395,6 +400,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             force_cache_sync=force_cache_sync,
             repo_type=repo_type,
             token=token,
+            subfolder=subfolder,
         )
         self.root = self.meta.root
         self.revision = self.meta.revision

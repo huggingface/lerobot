@@ -28,7 +28,14 @@ Example usage:
         kappa: 0.01
 
     # In training script
-    sample_weighter = make_sample_weighter(cfg.sample_weighting, policy, device, dataset_root=cfg.dataset.root, dataset_repo_id=cfg.dataset.repo_id)
+    sample_weighter = make_sample_weighter(
+        cfg.sample_weighting,
+        policy,
+        device,
+        dataset_root=cfg.dataset.root,
+        dataset_repo_id=cfg.dataset.repo_id,
+        dataset_subfolder=cfg.dataset.subfolder,
+    )
     ...
     weights, stats = sample_weighter.compute_batch_weights(batch)
 """
@@ -106,6 +113,7 @@ def make_sample_weighter(
     device: torch.device,
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
+    dataset_subfolder: str | None = None,
 ) -> SampleWeighter | None:
     """
     Factory function to create a SampleWeighter from config.
@@ -118,12 +126,13 @@ def make_sample_weighter(
         device: Device to place weight tensors on.
         dataset_root: Local path to dataset root (for auto-detecting progress_path).
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        dataset_subfolder: Path of the dataset inside its repository (for auto-detecting progress_path).
     """
     if config is None:
         return None
 
     if config.type == "rabc":
-        return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id)
+        return _make_rabc_weighter(config, policy, device, dataset_root, dataset_repo_id, dataset_subfolder)
 
     if config.type == "uniform":
         # No-op weighter that returns uniform weights
@@ -138,6 +147,7 @@ def _make_rabc_weighter(
     device: torch.device,
     dataset_root: str | None = None,
     dataset_repo_id: str | None = None,
+    dataset_subfolder: str | None = None,
 ) -> SampleWeighter:
     """Create RABC weighter with policy-specific initialization.
 
@@ -147,6 +157,7 @@ def _make_rabc_weighter(
         device: Device to place weight tensors on.
         dataset_root: Local path to dataset root (for auto-detecting progress_path).
         dataset_repo_id: HuggingFace repo ID (for auto-detecting progress_path).
+        dataset_subfolder: Path of the dataset inside its repository (for auto-detecting progress_path).
     """
     # Import here to avoid circular imports and keep RABC code in SARM module
     from lerobot.rewards.sarm.rabc import RABCWeights
@@ -163,9 +174,10 @@ def _make_rabc_weighter(
     progress_path = config.progress_path
     if progress_path is None:
         if dataset_root:
-            progress_path = str(Path(dataset_root) / "sarm_progress.parquet")
+            progress_path = str(Path(dataset_root, dataset_subfolder or "", "sarm_progress.parquet"))
         elif dataset_repo_id:
-            progress_path = f"hf://datasets/{dataset_repo_id}/sarm_progress.parquet"
+            in_repo = f"{dataset_subfolder}/" if dataset_subfolder else ""
+            progress_path = f"hf://datasets/{dataset_repo_id}/{in_repo}sarm_progress.parquet"
         else:
             raise ValueError(
                 "RABC sample weighting requires 'progress_path' to be set, "
