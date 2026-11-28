@@ -266,10 +266,11 @@ lerobot-train \
 ## Step 4: Evaluate
 
 ```bash
-lerobot-eval \
+lerobot-rollout \
+  --strategy.type=episodic \
   --robot.type=reachy2 \
   --robot.ip_address=192.168.0.200 \
-  --dataset.repo_id=pollen_robotics/eval_record_test \
+  --dataset.repo_id=pollen_robotics/rollout_record_test \
   --dataset.single_task="Evaluate reachy2 policy" \
   --dataset.num_episodes=10 \
   --policy.path=outputs/train/reachy2_test/checkpoints/last/pretrained_model

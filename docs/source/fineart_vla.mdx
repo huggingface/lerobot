@@ -81,13 +81,16 @@ recipe plus a memory-aware runtime controller. Keep `memory_scratchpad=false`
 for ordinary subtask generation; older scratchpad checkpoints retain their
 explicit guard against passing combined responses directly to action control.
 
-Use `lerobot-annotate` to generate these columns. The repository includes a
-Hugging Face Jobs launcher that you can edit for your source and destination
-datasets. For a local annotation run, first install
-`pip install -e ".[annotations]"`:
+Use `lerobot-annotate` to generate these columns. For a local annotation run,
+first install `pip install -e ".[annotations]"`. `--job.target` runs the same
+command on Hugging Face Jobs instead:
 
 ```bash
-HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+lerobot-annotate \
+  --repo_id=user/dataset \
+  --new_repo_id=user/dataset_annotated \
+  --push_to_hub=true \
+  --job.target=h200
 ```
 
 Before a long training run, inspect several episodes and verify that subtasks

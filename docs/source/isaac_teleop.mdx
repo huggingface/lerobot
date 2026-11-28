@@ -286,7 +286,7 @@ registry, distinct from `lerobot-teleoperate`'s serial `so101_leader`.) When a `
 set, the plugin's tick→radian calibration is inferred from `--teleop.id` and passed to the plugin
 as its third positional arg — the LeRobot-format JSON at
 `HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json`, the same file the serial SO-101 leader
-uses (`lerobot-calibrate --teleop.type=so101_leader --teleop.id=<id>`). If it is missing the script
+uses (`lerobot-calibrate --teleop.type=so101_leader --teleop.port=<port> --teleop.id=<id>`). If it is missing the script
 warns and the plugin uses built-in defaults. Run `python -m examples.isaac_teleop_to_so101.teleoperate --help` for all flags. Its
 startup safety contract: by default the follower is
 slewed to the leader's first reading over `--align_duration` seconds (`--align=false` to skip) so
