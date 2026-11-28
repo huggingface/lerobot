@@ -319,6 +319,17 @@ def _default_max_cache_size() -> int | None:
     return value
 
 
+@dataclass
+class _DecoderEntry:
+    """Cached decoder plus the bookkeeping that keeps its backing file alive."""
+
+    decoder: Any
+    handle: Any
+    lock: Lock
+    users: int = 0
+    closing: bool = False
+
+
 class VideoDecoderCache:
     """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
 
@@ -345,18 +356,8 @@ class VideoDecoderCache:
         if max_size is not None and max_size <= 0:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
         self.max_size: int | None = max_size
-        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
+        self._cache: OrderedDict[str, _DecoderEntry] = OrderedDict()
         self._lock = RLock()
-        # Number of active ``use_decoder`` contexts per path. An entry with a
-        # non-zero count must not have its file handle closed on eviction.
-        self._in_use: dict[str, int] = {}
-        # One lock per path so concurrent reads of the same decoder serialize
-        # while different videos decode in parallel.
-        self._entry_locks: dict[str, Lock] = {}
-        # Handles evicted (or cleared) while still in use; closed by the last
-        # reader that releases them. At most one per concurrently decoded path,
-        # so this stays bounded by concurrency, not by cache size.
-        self._pending_close: dict[str, Any] = {}
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
@@ -369,9 +370,9 @@ class VideoDecoderCache:
         at any time. Use ``use_decoder`` when the decoder is about to be read.
         """
         with self._lock:
-            return self._get_or_create_locked(str(video_path))
+            return self._get_or_create_locked(str(video_path)).decoder
 
-    def _open_decoder(self, video_path: str) -> Any:
+    def _open_decoder(self, video_path: str) -> tuple[Any, Any]:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -388,33 +389,34 @@ class VideoDecoderCache:
             raise
         return decoder, file_handle
 
-    def _get_or_create_locked(self, video_path: str) -> Any:
-        """Return a decoder for ``video_path``; caller must hold ``self._lock``."""
+    def _get_or_create_locked(self, video_path: str) -> _DecoderEntry:
+        """Return the entry for ``video_path``; caller must hold ``self._lock``."""
         entry = self._cache.get(video_path)
         if entry is not None:
             self._cache.move_to_end(video_path)
-            return entry[0]
+            return entry
 
         decoder, file_handle = self._open_decoder(video_path)
-        self._cache[video_path] = (decoder, file_handle)
+        entry = _DecoderEntry(decoder=decoder, handle=file_handle, lock=Lock())
+        self._cache[video_path] = entry
         self._evict_locked()
-        return decoder
+        return entry
 
     def _evict_locked(self) -> None:
         """Drop LRU entries over capacity; caller must hold ``self._lock``.
 
-        A handle that is still being read is queued for closure instead of being
-        closed under the reader's feet; the last reader releases it.
+        An entry with active readers is marked for deferred close instead of being
+        closed under their feet: its handle stays with the entry object, which the
+        readers keep alive, and the last one to release closes it.
         """
         if self.max_size is None:
             return
         while len(self._cache) > self.max_size:
-            evicted_path, (_, evicted_handle) = self._cache.popitem(last=False)
-            if self._in_use.get(evicted_path):
-                self._pending_close[evicted_path] = evicted_handle
+            _, entry = self._cache.popitem(last=False)
+            if entry.users:
+                entry.closing = True
             else:
-                self._close_handle(evicted_handle)
-                self._entry_locks.pop(evicted_path, None)
+                self._close_handle(entry.handle)
 
     @staticmethod
     def _close_handle(handle: Any) -> None:
@@ -432,37 +434,29 @@ class VideoDecoderCache:
         """
         key = str(video_path)
         with self._lock:
-            decoder = self._get_or_create_locked(key)
-            self._in_use[key] = self._in_use.get(key, 0) + 1
-            entry_lock = self._entry_locks.setdefault(key, Lock())
-            self._cache.move_to_end(key)
+            entry = self._get_or_create_locked(key)
+            entry.users += 1
 
         try:
-            with entry_lock:
-                yield decoder
+            with entry.lock:
+                yield entry.decoder
         finally:
             with self._lock:
-                remaining = self._in_use.get(key, 1) - 1
-                if remaining > 0:
-                    self._in_use[key] = remaining
-                else:
-                    self._in_use.pop(key, None)
-                    pending = self._pending_close.pop(key, None)
-                    if pending is not None:
-                        self._close_handle(pending)
-                    if key not in self._cache:
-                        self._entry_locks.pop(key, None)
+                entry.users -= 1
+                close_now = entry.users == 0 and entry.closing
+            if close_now:
+                self._close_handle(entry.handle)
 
     def clear(self):
         """Clear the cache, closing handles that are not being read."""
         with self._lock:
-            for path, (_, file_handle) in self._cache.items():
-                if self._in_use.get(path):
-                    self._pending_close[path] = file_handle
-                else:
-                    self._close_handle(file_handle)
-                    self._entry_locks.pop(path, None)
+            entries = list(self._cache.values())
             self._cache.clear()
+        for entry in entries:
+            if entry.users:
+                entry.closing = True
+            else:
+                self._close_handle(entry.handle)
 
     def size(self) -> int:
         """Return the number of cached decoders."""
