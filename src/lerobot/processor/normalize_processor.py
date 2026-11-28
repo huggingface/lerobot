@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 from lerobot.utils.constants import ACTION
 
-from .converters import from_tensor_to_numpy, to_tensor
+from .converters import to_tensor
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 
@@ -99,6 +99,7 @@ class _NormalizationMixin:
     normalize_observation_keys: set[str] | None = None
 
     _tensor_stats: dict[str, dict[str, Tensor]] = field(default_factory=dict, init=False, repr=False)
+    _checkpoint_dtype: torch.dtype = field(init=False, repr=False)
     _stats_explicitly_provided: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
@@ -134,6 +135,7 @@ class _NormalizationMixin:
         self.stats = self.stats or {}
         if self.dtype is None:
             self.dtype = torch.float32
+        self._checkpoint_dtype = self.dtype
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
         self._reshape_visual_stats()
 
@@ -166,13 +168,18 @@ class _NormalizationMixin:
         Returns:
             The instance of the class, allowing for method chaining.
         """
+        if dtype is not None:
+            self._checkpoint_dtype = dtype
+        self._move_working_stats(device, dtype)
+        return self
+
+    def _move_working_stats(self, device: torch.device | str | None, dtype: torch.dtype | None) -> None:
         if device is not None:
             self.device = device
         if dtype is not None:
             self.dtype = dtype
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
         self._reshape_visual_stats()
-        return self
 
     def state_dict(self) -> dict[str, Tensor]:
         """
@@ -185,10 +192,13 @@ class _NormalizationMixin:
             A flat dictionary mapping from `'feature_name.stat_name'` to the
             corresponding statistics tensor on the CPU.
         """
+        # Read original values: an inference call may have rounded the working tensors.
+        assert self.stats is not None
         flat: dict[str, Tensor] = {}
         for key, sub in self._tensor_stats.items():
             for stat_name, tensor in sub.items():
-                flat[f"{key}.{stat_name}"] = tensor.cpu()  # Always save to CPU
+                value = to_tensor(self.stats[key][stat_name], device="cpu", dtype=self._checkpoint_dtype)
+                flat[f"{key}.{stat_name}"] = value.reshape(tensor.shape)
         return flat
 
     def load_state_dict(self, state: dict[str, Tensor]) -> None:
@@ -241,7 +251,7 @@ class _NormalizationMixin:
             self.stats[key] = {}
             for stat_name, tensor in tensor_dict.items():
                 # Convert tensor back to python/numpy format
-                self.stats[key][stat_name] = from_tensor_to_numpy(tensor)
+                self.stats[key][stat_name] = tensor.detach().cpu().numpy()
 
     def get_config(self) -> dict[str, Any]:
         """
@@ -345,7 +355,7 @@ class _NormalizationMixin:
         if self._tensor_stats and key in self._tensor_stats:
             first_stat = next(iter(self._tensor_stats[key].values()))
             if first_stat.device != tensor.device or first_stat.dtype != tensor.dtype:
-                self.to(device=tensor.device, dtype=tensor.dtype)
+                self._move_working_stats(device=tensor.device, dtype=tensor.dtype)
 
         stats = self._tensor_stats[key]
 
