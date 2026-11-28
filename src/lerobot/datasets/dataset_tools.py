@@ -1817,17 +1817,21 @@ def recompute_stats(
     """
     features = dataset.meta.features
     meta_keys = {"index", "episode_index", "task_index", "frame_index", "timestamp"}
+    # Language features are excluded like string features: they hold variable-length
+    # event payloads with no meaningful statistics (compute_episode_stats skips them).
     numeric_features = {
         k: v
         for k, v in features.items()
-        if v["dtype"] not in ["image", "video", "string"] and k not in meta_keys
+        if v["dtype"] not in ["image", "video", "string", "language"] and k not in meta_keys
     }
 
     if skip_image_video:
         features_to_compute = numeric_features
     else:
         features_to_compute = {
-            k: v for k, v in features.items() if v["dtype"] != "string" and k not in meta_keys
+            k: v
+            for k, v in features.items()
+            if v["dtype"] not in ["string", "language"] and k not in meta_keys
         }
 
     # When relative_action is enabled, compute action stats via chunk-based sampling
