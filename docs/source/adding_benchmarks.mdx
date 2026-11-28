@@ -136,7 +136,7 @@ Keep its defaults and the server YAML's in agreement: a served evaluation refuse
 4. Run `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<checkpoint>` locally, and with `--env.server.endpoint` against the server. Inspect task descriptions and rendered camera views.
 5. Run the generated benchmark job on the GPU runner. Preserve the LIBERO training smoke when changing shared evaluation/training integration.
 
-`benchmarks/benchmarks.yaml` generates the matrix through `scripts/ci/benchmark_matrix.py`; `.github/workflows/benchmark_run.yml` runs each entry. Add entries to the manifest rather than copying CI jobs. CI caps episodes to check the pipeline end to end; its `metrics.json` records the checkpoint revision, simulator image tag, commit and cap, and marks these runs `smoke`: their success rates are not policy scores. Simulator images have separate pins and content tags; BuildKit caches only persist on persistent runners.
+`benchmarks/benchmarks.yaml` generates the matrix through `scripts/ci/benchmark_matrix.py`; `.github/workflows/benchmark_run.yml` runs each entry. Add entries to the manifest rather than copying CI jobs. CI caps episodes to check the pipeline end to end; its `metrics.json` records the checkpoint revision, simulator image tag, commit and cap, and marks these runs `smoke`: their success rates are not policy scores. Simulator images have separate pins and content tags.
 
 ## Changing a benchmark
 

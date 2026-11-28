@@ -61,9 +61,57 @@ jobs:
       - run: python3 -m pip install 'PyYAML>=6,<7'
       - id: matrix
         run: echo "benchmarks=$(python3 scripts/ci/benchmark_matrix.py)" >> "$GITHUB_OUTPUT"
+  # Every benchmark evaluates with the same policy image: build it once, on a CPU runner, and hand it over as an artifact.
+  policy:
+    name: policy image
+    permissions:
+      contents: read
+    if: >-
+      github.repository == 'huggingface/lerobot' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+    runs-on:
+      group: aws-general-8-plus
+    env:
+      POLICY_IMAGE: lerobot-policy:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          lfs: true
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+      # Build in the daemon's (containerd) image store and compress with zstd: gzip-compressing the layers was most of
+      # the time it took to get an image into Docker.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker
+          cache-binary: false
+      - name: Build policy from tested checkout
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile.policy
+          tags: ${{ env.POLICY_IMAGE }}
+          outputs: type=docker,compression=zstd,compression-level=3,force-compression=true,oci-mediatypes=true
+      # The layers are already zstd-compressed, so the archive is not compressed again.
+      - name: Save policy image
+        run: docker save "$POLICY_IMAGE" -o "$RUNNER_TEMP/policy-image.tar"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: policy-image
+          path: ${{ runner.temp }}/policy-image.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
   benchmark:
     name: ${{ matrix.name }}
-    needs: matrix
+    needs: [matrix, policy]
     permissions:
       contents: read
     strategy:
@@ -75,7 +123,6 @@ jobs:
       dockerfile: ${{ matrix.dockerfile }}
       sim_tag: ${{ matrix.sim_tag }}
       build_args: ${{ toJSON(matrix.build_args) }}
-      policy_extras: ${{ join(matrix.policy_extras, ' ') }}
       entry: ${{ toJSON(matrix) }}
     secrets:
       LEROBOT_HF_USER: ${{ secrets.LEROBOT_HF_USER }}
