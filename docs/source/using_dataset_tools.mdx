@@ -210,11 +210,13 @@ lerobot-edit-dataset \
 
 - `new_task`: A single task string used as the default for episodes not otherwise covered.
 - `episode_tasks`: Mapping from episode index to task string.
-- `task_replacements`: Mapping from existing task strings to their replacements, applied to episodes whose current task matches a key. Every key must be an existing task in the dataset.
+- `task_replacements`: Mapping from existing task strings to their replacements, applied to each matching frame label. Every key must be an existing task in the dataset.
 
 The modes can be combined in a single run. Per episode, the task is resolved with the following precedence:
 
 `episode_tasks` > `task_replacements` > `new_task` > original task
+
+In mixed-task episodes, replacements preserve unmatched frame labels. If any task in an episode matches a replacement key, `new_task` does not apply to that episode. For example, replacing `place` with `drop` in `[pick, place, pick]` produces `[pick, drop, pick]`, even with a default task. An explicit `episode_tasks` override replaces every frame label in that episode.
 
 At least one of `new_task`, `episode_tasks`, or `task_replacements` must be specified. An episode that ends up with no task raises an error.
 
