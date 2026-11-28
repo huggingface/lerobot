@@ -325,6 +325,42 @@ def test_training_filter_keeps_messages_observations_and_actions_aligned():
     assert transition[TransitionKey.ACTION].shape[0] == 2
 
 
+def test_training_filter_keeps_reward_done_and_truncated_aligned() -> None:
+    recipe = TrainingRecipe(
+        messages=[
+            MessageTurn(
+                role="assistant", content="${subtask}", stream="high_level", target=True, if_present="subtask"
+            )
+        ]
+    )
+    transition = create_transition(
+        observation={"observation.state": torch.tensor([[10.0], [20.0]])},
+        action=torch.tensor([[1.0], [2.0]]),
+        reward=torch.tensor([10.0, 20.0]),
+        done=torch.tensor([False, True]),
+        truncated=torch.tensor([False, False]),
+        complementary_data={
+            "language_persistent": [
+                [],
+                [{"role": "assistant", "content": "keep me", "style": "subtask", "timestamp": 0.0}],
+            ],
+            "timestamp": torch.tensor([0.0, 0.0]),
+            "task": [None, None],
+        },
+    )
+
+    output = RenderTrainingMessagesStep(recipe)(transition)
+
+    torch.testing.assert_close(output[TransitionKey.OBSERVATION]["observation.state"], torch.tensor([[20.0]]))
+    torch.testing.assert_close(output[TransitionKey.ACTION], torch.tensor([[2.0]]))
+    torch.testing.assert_close(output[TransitionKey.REWARD], torch.tensor([20.0]))
+    torch.testing.assert_close(output[TransitionKey.DONE], torch.tensor([True]))
+    torch.testing.assert_close(output[TransitionKey.TRUNCATED], torch.tensor([False]))
+    assert output[TransitionKey.COMPLEMENTARY_DATA]["messages_rendered"] == [
+        [{"role": "assistant", "content": "keep me"}]
+    ]
+
+
 def test_training_filter_keeps_boolean_padding_masks_aligned() -> None:
     recipe = TrainingRecipe(
         messages=[

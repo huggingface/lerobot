@@ -296,9 +296,15 @@ def _select_batch_indices(transition: EnvTransition, indices: list[int], batch_s
                 name: _select_value(value, indices, batch_size, f"{key}.{name}")
                 for name, value in data.items()
             }
-    action = selected.get(TransitionKey.ACTION)
-    if action is not None:
-        selected[TransitionKey.ACTION] = _select_value(action, indices, batch_size, TransitionKey.ACTION)
+    for field_key in (
+        TransitionKey.ACTION,
+        TransitionKey.REWARD,
+        TransitionKey.DONE,
+        TransitionKey.TRUNCATED,
+    ):
+        value = selected.get(field_key)
+        if value is not None:
+            selected[field_key] = _select_value(value, indices, batch_size, field_key)
     return selected
 
 
