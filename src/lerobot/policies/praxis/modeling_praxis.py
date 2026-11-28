@@ -1202,6 +1202,9 @@ class PraxisPolicy(PreTrainedPolicy):
                 proprio_all=inputs.proprio_all,
                 seed=env.seed + inputs.chunk_index,
                 settings=self.sampler_settings,
+                # Only `return_prediction` reads the video: without it the last Euler step skips the
+                # video decoder (the commands keep their bits).
+                skip_last_video=not self.config.return_prediction,
             )
             rows_norm, arms = _finish_chunk(state, inputs, actions)  # one (poses, grips) per arm
             commands = [
@@ -1212,6 +1215,8 @@ class PraxisPolicy(PreTrainedPolicy):
             ]
             predicted: list[np.ndarray] | None = None
             if self.config.return_prediction:
+                if video is None:
+                    raise RuntimeError("the sampler skipped the predicted video that return_prediction needs")
                 latent = video
                 if inputs.cleans:
                     latent = torch.cat(

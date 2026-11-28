@@ -1,4 +1,5 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4, original path praxis/backbone.py.
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus a8eb983 (no host synchronize in the sampler),
+# original path praxis/backbone.py.
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is renamed PraxisModel here. Keep this file in sync with the upstream file.
 """Two-tower video backbone of the chunk-causal window.
@@ -37,7 +38,12 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.attention.flex_attention import BlockMask
 
-from lerobot.policies.praxis.praxis_core.layers import Attention, Transformer, modulate as layer_modulate
+from lerobot.policies.praxis.praxis_core.layers import (
+    Attention,
+    Transformer,
+    modulate as layer_modulate,
+    to_device_async,
+)
 
 ROW_STRIDE = 360
 FRAME_STRIDE = 129_600
@@ -634,7 +640,7 @@ class EncoderTower(nn.Module):
             n_clean_frames,
             rope_shifts,
         )
-        positions = positions.unsqueeze(0).to(x.device)
+        positions = to_device_async(positions.unsqueeze(0), x.device)
         slots = [
             ("global", 1, n_reg),
             ("global", 1, n_anchor),
@@ -747,7 +753,7 @@ class DecoderTower(nn.Module):
             torch.zeros(n_reg, dtype=torch.int64),
             video_positions(frames, height, width, rope_shift),
         ]
-        positions = torch.cat(pos).unsqueeze(0).to(x.device)
+        positions = to_device_async(torch.cat(pos).unsqueeze(0), x.device)
         slots = [("global", 1, n_reg), ("noised", frames, tpf)]
         mask = self._tf_masks.get(slots, chunk, False, x.device, _full_blocks(self.core))
 

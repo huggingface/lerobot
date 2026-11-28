@@ -1,4 +1,5 @@
-# Vendored from runwayml/praxis-1-oss at commit 8dad1a4, original path praxis/action_expert.py.
+# Vendored from runwayml/praxis-1-oss at commit 8dad1a4 plus a8eb983 (no host synchronize in the sampler),
+# original path praxis/action_expert.py.
 # Import paths are rewritten to the LeRobot package; the class PraxisPolicy of praxis.model
 # is renamed PraxisModel here. Keep this file in sync with the upstream file.
 """Action expert: a small transformer that predicts the action velocity.
@@ -63,6 +64,7 @@ from lerobot.policies.praxis.praxis_core.layers import (
     RotaryEmbedding,
     _compiled_flex_attention_dynamic,
     apply_rope,
+    to_device_async,
 )
 
 __all__ = [
@@ -951,8 +953,8 @@ def run_expert_on_taps_k(
 
     g_pos = [p for kind in expert.global_order for p in positions(global_spans[kind])]
     s_pos = positions(clean_span) + positions(noised_span)
-    g_idx = torch.tensor(g_pos, dtype=torch.long).to(device)
-    s_idx = torch.tensor(s_pos, dtype=torch.long).to(device)
+    g_idx = to_device_async(torch.tensor(g_pos, dtype=torch.long), device)
+    s_idx = to_device_async(torch.tensor(s_pos, dtype=torch.long), device)
     ids = rope_ids.to(device)
     kv_rope_ids = torch.cat([ids.index_select(1, g_idx), ids.index_select(1, s_idx)], 1)
     dtype = embeddings.dtype
