@@ -262,6 +262,8 @@ def vector_env_fns(task: str, n_envs: int, **make_env_kwargs):
 
 Each vector env must have `num_envs == n_envs` and must not autoreset (`metadata["autoreset_mode"] = gym.vector.AutoresetMode.DISABLED`). It returns batched observations in the format above, takes one seed per environment in `reset(seed=[...])`, and reports `info["is_success"]` per environment. `--env.make_env_kwargs` are passed to it. Since it already steps the whole batch, evaluate with `--eval.use_async_envs=false`: a worker process would only copy every batch between processes, and a server would build the simulator a second time, in the worker.
 
+In-process evaluation also accepts Torch observations, preserving their device while preparing images and state. A vector env that accepts batched Torch actions on the policy's device can opt in with `metadata["tensor_actions"] = True`; evaluation then passes tensors directly to `step()` and keeps action history on that device until returning the rollout. NumPy actions remain the default. Dataset recording takes independent CPU snapshots when requested. This path uses ordinary Torch operations and does not require a particular accelerator vendor.
+
 `vector_env_fns` also suits a benchmark with many tasks: `make_env` builds the environments of every task when it is called, while only the factories of the tasks that run are called.
 
 ## Test before publishing

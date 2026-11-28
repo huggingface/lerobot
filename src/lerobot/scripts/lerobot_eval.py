@@ -127,6 +127,19 @@ def _env_features_to_dataset_features(env_features: dict[str, PolicyFeature]) ->
     return features
 
 
+def _recording_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    """Snapshot device observations into host arrays for dataset recording."""
+    result: dict[str, Any] = {}
+    for key, value in observation.items():
+        if isinstance(value, dict):
+            result[key] = _recording_observation(value)
+        elif isinstance(value, Tensor):
+            result[key] = value.detach().cpu().numpy().copy()
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
 def _build_raw_frame(
     raw_obs: dict,
     env_idx: int,
@@ -256,7 +269,7 @@ def rollout(
                     use_videos=True,
                 )
             )
-        raw_observation = deepcopy(observation)
+        raw_observation = _recording_observation(observation)
         try:
             task_desc = list(env.call("task_description"))[0]
         except (AttributeError, NotImplementedError):
@@ -334,12 +347,18 @@ def rollout(
             action_transition = env_postprocessor(action_transition)
             action = action_transition[ACTION]
 
-            # Convert to CPU / numpy.
-            action_numpy: np.ndarray = action.to("cpu").numpy()
-            assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
+            assert action.ndim == 2, "Action dimensions should be (batch, action_dim)"
+            env_action: Tensor | np.ndarray
+            if env.metadata.get("tensor_actions", False):
+                # Snapshot history before stepping: policies and simulators may reuse buffers.
+                logged_action = action.detach().clone()
+                env_action = action
+            else:
+                env_action = action.detach().cpu().numpy()
+                logged_action = torch.from_numpy(env_action)
 
             # Apply the next action.
-            observation, reward, terminated, truncated, info = env.step(action_numpy)
+            observation, reward, terminated, truncated, info = env.step(env_action)
             if render_callback is not None:
                 render_callback(env)
 
@@ -380,6 +399,7 @@ def rollout(
                 episode_ends = np.ones_like(episode_ends, dtype=bool)
 
             if recording_datasets is not None and raw_observation is not None:
+                action_numpy = logged_action.cpu().numpy()
                 for env_idx in range(env.num_envs):
                     if done[env_idx]:
                         continue
@@ -396,11 +416,11 @@ def rollout(
                     recording_datasets[env_idx].add_frame(frame)
                     if episode_ends[env_idx]:
                         recording_datasets[env_idx].save_episode()
-                raw_observation = deepcopy(observation)
+                raw_observation = _recording_observation(observation)
 
             done = episode_ends | done
 
-            all_actions.append(torch.from_numpy(action_numpy))
+            all_actions.append(logged_action)
             all_rewards.append(torch.from_numpy(reward))
             all_dones.append(torch.from_numpy(done))
             all_successes.append(torch.tensor(successes))
@@ -436,7 +456,7 @@ def rollout(
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
-        ACTION: torch.stack(all_actions, dim=1),
+        ACTION: torch.stack(all_actions, dim=1).cpu(),
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
@@ -880,6 +900,13 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         pretrained_path=cfg.policy.pretrained_path,
         pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=(
+            {"device_processor": {"device": str(policy.config.device)}}
+            if any(
+                env.metadata.get("tensor_actions", False) for tasks in envs.values() for env in tasks.values()
+            )
+            else None
+        ),
     )
 
     recording_dir = Path(cfg.output_dir) / "recordings" if cfg.eval.recording else None

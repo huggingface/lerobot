@@ -55,6 +55,8 @@ Each `step()` advances every unfinished environment in the batch once. An enviro
 
 `--env.server.encoding=jpeg` (or `--robot.env.server.encoding=jpeg`, with `--env.server.jpeg_quality`, 90 by default) sends served camera frames as JPEG: smaller replies for a remote server and larger batches, at the cost of encoding time and lossy frames. On localhost, raw frames are faster.
 
+The shared transport codec packs contiguous NumPy buffers directly into its owned MessagePack output, avoiding intermediate per-array Python bytes without changing the wire format. `decode_message(payload)` still returns writable arrays. Custom clients that only read their results can use `decode_message(payload, copy_arrays=False)` to avoid array ownership copies; the views retain the decoder's immutable backing bytes. Endian conversion and JPEG decoding may still allocate. This option does not change the default env client's behavior and does not require shared memory or a GPU.
+
 A reply carries the frames of every environment in the batch and must fit `max_payload_bytes` (32 MiB by default) at both ends, or the server refuses the batch when it opens. For large batches or high resolution cameras, raise it on the server (`max_payload_bytes` in the YAML's `zenoh` section, next to `listen_endpoints`) and on the client (`--env.server.max_payload_bytes`, or `--robot.env.server.max_payload_bytes`).
 
 ## Run a sim robot
