@@ -331,7 +331,13 @@ are reset together.
 
 ## Relative Actions
 
-By default, π₀.₅ predicts absolute actions. You can enable **relative actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
+With `use_relative_actions=false`, π₀.₅ learns the actions stored in the dataset without subtracting the current state. Those actions can be absolute joint targets or per-step controller deltas, depending on the dataset. The flag does not select the environment's controller mode.
+
+For example, `lerobot/pi05_libero` and `lerobot/pi05_libero_finetuned_v044` use LIBERO controller deltas. Keep `use_relative_actions=false` and the LIBERO environment's default `control_mode="relative"` when evaluating these checkpoints. After unnormalization, each predicted action is already a delta for the controller. No addition of the robot state is needed.
+
+Enabling **relative actions** applies a separate encoding: it subtracts the state at the start of the chunk from every selected action in that chunk. Postprocessing adds the same state back. This is intended for datasets whose selected action dimensions and state dimensions describe matching absolute coordinates. It is different from a sequence of per-step controller deltas.
+
+Match the checkpoint's training configuration, normalization statistics, and saved processor pipelines at inference. Do not enable `use_relative_actions` on a checkpoint trained without it, or add relative/absolute processor steps because they are absent from an older checkpoint. Doing so changes the meaning of its predictions. To use this encoding with a new dataset, compute matching statistics and train with it enabled as shown below.
 
 To use relative actions, first recompute your dataset stats in relative space via the CLI:
 
