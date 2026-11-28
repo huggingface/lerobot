@@ -97,7 +97,7 @@ class ParallelDims:
         contiguous global ranks, so the dp coordinate is the integer quotient by cp_size —
         the same arithmetic accelerate's mesh-aware dataloader applies.
         """
-        global_rank = dist.get_rank() if dist.is_initialized() else 0
+        global_rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
         return global_rank // self.cp_size
 
     def cp_mesh(self) -> None:

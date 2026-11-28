@@ -214,7 +214,7 @@ class MetricsTracker:
 
         All ranks must call this collective. Outside distributed runs it is a no-op.
         """
-        if not dist.is_initialized() or dist.get_world_size() <= 1:
+        if not dist.is_available() or not dist.is_initialized() or dist.get_world_size() <= 1:
             return
 
         # A mixed-supervision batch can produce different sub-losses on each rank.

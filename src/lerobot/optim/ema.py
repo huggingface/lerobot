@@ -175,11 +175,14 @@ class EMA:
     @contextmanager
     def average_parameters(self, model: nn.Module) -> Iterator[None]:
         """Load the averages into `model`, restoring its trainable parameters on exit."""
-        from torch.distributed.fsdp import FSDPModule
+        if torch.distributed.is_available():
+            # The import fails on a torch built without distributed support (NVIDIA JetPack
+            # wheels), where no module can be sharded.
+            from torch.distributed.fsdp import FSDPModule
 
-        for module in model.modules():
-            if isinstance(module, FSDPModule):
-                module.reshard()
+            for module in model.modules():
+                if isinstance(module, FSDPModule):
+                    module.reshard()
         parameters = dict(model.named_parameters())
         live = {name: parameters[name].detach().clone() for name in self.averages}
         for name, average in self.averages.items():
