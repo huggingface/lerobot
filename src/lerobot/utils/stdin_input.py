@@ -31,7 +31,7 @@ import os
 import select
 import sys
 from collections.abc import Callable
-from threading import Thread
+from threading import Thread, current_thread
 from typing import IO
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class StdinCommandListener:
         self._running = False
         thread = self._thread
         self._thread = None
-        if thread is not None and thread.is_alive() and self._use_select:
+        if thread is not None and thread is not current_thread() and thread.is_alive() and self._use_select:
             thread.join(timeout=1.0)
 
     def _run(self) -> None:
@@ -136,10 +136,11 @@ class StdinCommandListener:
             if chunk == b"":  # EOF: Ctrl-D or the piped input ended
                 # A final command without trailing newline still counts.
                 self._emit_line(buffer.decode(errors="replace"))
-                self._emit_eof()
+                if self._running:
+                    self._emit_eof()
                 return
             buffer += chunk
-            while b"\n" in buffer:
+            while self._running and b"\n" in buffer:
                 raw, buffer = buffer.split(b"\n", 1)
                 self._emit_line(raw.decode(errors="replace"))
 
