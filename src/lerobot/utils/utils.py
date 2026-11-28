@@ -284,9 +284,12 @@ def unflatten_dict(d: dict[str, Any], sep: str = "/") -> dict[str, Any]:
 def cycle(iterable: Any) -> Iterator[Any]:
     """Create a dataloader-safe cyclical iterator.
 
-    This is an equivalent of `itertools.cycle` but is safe for use with
-    PyTorch DataLoaders with multiple workers.
+    Each pass requests a fresh iterator, which supports PyTorch DataLoaders
+    with multiple workers.
     See https://github.com/pytorch/pytorch/issues/23900 for details.
+
+    Each pass reads fresh items from the iterable. Iteration stops when a pass
+    is empty, including after a one-shot iterator has been exhausted.
 
     Args:
         iterable: The iterable to cycle over.
@@ -295,11 +298,14 @@ def cycle(iterable: Any) -> Iterator[Any]:
         Items from the iterable, restarting from the beginning when exhausted.
     """
     iterator = iter(iterable)
+    sentinel = object()
     while True:
-        try:
-            yield next(iterator)
-        except StopIteration:
-            iterator = iter(iterable)
+        first = next(iterator, sentinel)
+        if first is sentinel:
+            return
+        yield first
+        yield from iterator
+        iterator = iter(iterable)
 
 
 class SuppressProgressBars:
