@@ -43,7 +43,7 @@ def test_score_config_loads_reward_model_from_path(monkeypatch):
     monkeypatch.setattr(lerobot_score.parser, "get_cli_overrides", lambda field: ["--device=cpu"])
     monkeypatch.setattr(lerobot_score.RewardModelConfig, "from_pretrained", fake_from_pretrained)
 
-    cfg = ScoreConfig(dataset_repo_id="user/dataset", dataset_root=Path("dataset"))
+    cfg = ScoreConfig(repo_id="user/dataset", root=Path("dataset"))
 
     assert cfg.reward_model is loaded_config
     assert captured["load"] == (
@@ -62,8 +62,8 @@ def test_score_config_applies_yaml_overrides(monkeypatch: pytest.MonkeyPatch, tm
     config_path.write_text(
         yaml.safe_dump(
             {
-                "dataset_repo_id": "user/dataset",
-                "dataset_root": str(tmp_path / "dataset"),
+                "repo_id": "user/dataset",
+                "root": str(tmp_path / "dataset"),
                 "reward_model": {
                     "path": str(checkpoint),
                     "image_key": "observation.images.front",
@@ -128,21 +128,26 @@ def test_run_score_uses_reward_scoring_api(
     monkeypatch.setattr(
         lerobot_score,
         "push_scores_to_hub",
-        lambda dataset, name, *, overwrite: captured.update(push_scores_to_hub=(dataset, name, overwrite)),
-    )
-    monkeypatch.setattr(
-        lerobot_score, "HfApi", lambda: SimpleNamespace(file_exists=lambda *args, **kwargs: False)
+        lambda dataset, name, **kwargs: captured.update(push_scores_to_hub=(dataset, name, kwargs)),
     )
 
+    def file_exists(repo_id, filename, *, repo_type, revision):
+        captured["hub_check"] = (repo_id, filename, repo_type, revision)
+        return False
+
+    monkeypatch.setattr(lerobot_score, "HfApi", lambda: SimpleNamespace(file_exists=file_exists))
+
     cfg = ScoreConfig(
-        dataset_repo_id="user/dataset",
+        repo_id="user/dataset",
         reward_model=reward_config,
-        dataset_root=tmp_path / "dataset",
-        dataset_revision="dataset-revision",
-        name=name,
+        root=tmp_path / "dataset",
+        revision="dataset-revision",
+        score_name=name,
         episodes=[1],
         batch_size=8,
         push_to_hub=True,
+        branch="scores",
+        tag_version=False,
     )
 
     assert lerobot_score.run_score(cfg) is None
@@ -162,7 +167,12 @@ def test_run_score_uses_reward_scoring_api(
         fake_scorer,
         {"name": expected_name, "episodes": [1], "resume": True, "overwrite": False},
     )
-    assert captured["push_scores_to_hub"] == (fake_dataset, expected_name, False)
+    assert captured["hub_check"] == ("user/dataset", f"scores/{expected_name}.parquet", "dataset", "scores")
+    assert captured["push_scores_to_hub"] == (
+        fake_dataset,
+        expected_name,
+        {"branch": "scores", "tag_version": False, "overwrite": False},
+    )
 
 
 def test_run_score_requires_a_reward_model(tmp_path: Path):
@@ -170,7 +180,7 @@ def test_run_score_requires_a_reward_model(tmp_path: Path):
     pytest.importorskip("av")
 
     with pytest.raises(ValueError, match="needs a reward model"):
-        lerobot_score.run_score(ScoreConfig(dataset_repo_id="user/dataset", dataset_root=tmp_path))
+        lerobot_score.run_score(ScoreConfig(repo_id="user/dataset", root=tmp_path))
 
 
 @pytest.mark.parametrize("name", [None, "robometer-4b"])
@@ -184,10 +194,10 @@ def test_run_score_rejects_existing_scores_before_loading_the_model(
     (tmp_path / "scores" / f"{name or 'robometer'}.parquet").touch()
     monkeypatch.setattr(lerobot_score, "make_reward_model", pytest.fail)
     cfg = ScoreConfig(
-        dataset_repo_id="user/dataset",
-        dataset_root=tmp_path,
+        repo_id="user/dataset",
+        root=tmp_path,
         reward_model=SimpleNamespace(type="robometer"),
-        name=name,
+        score_name=name,
     )
 
     with pytest.raises(FileExistsError, match="--overwrite=true"):
@@ -202,22 +212,22 @@ def test_run_score_rejects_scores_on_the_hub_before_loading_the_model(
 
     checked = []
 
-    def file_exists(repo_id, filename, *, repo_type):
-        checked.append((repo_id, filename, repo_type))
+    def file_exists(repo_id, filename, *, repo_type, revision):
+        checked.append((repo_id, filename, repo_type, revision))
         return True
 
     monkeypatch.setattr(lerobot_score, "HfApi", lambda: SimpleNamespace(file_exists=file_exists))
     monkeypatch.setattr(lerobot_score, "make_reward_model", pytest.fail)
     cfg = ScoreConfig(
-        dataset_repo_id="user/dataset",
-        dataset_root=tmp_path,
+        repo_id="user/dataset",
+        root=tmp_path,
         reward_model=SimpleNamespace(type="robometer"),
         push_to_hub=True,
     )
 
     with pytest.raises(FileExistsError, match="hf://datasets/user/dataset"):
         lerobot_score.run_score(cfg)
-    assert checked == [("user/dataset", "scores/robometer.parquet", "dataset")]
+    assert checked == [("user/dataset", "scores/robometer.parquet", "dataset", None)]
 
 
 def test_run_score_defaults_the_dataset_root_to_the_lerobot_home(
@@ -236,7 +246,7 @@ def test_run_score_defaults_the_dataset_root_to_the_lerobot_home(
         lerobot_score, "LeRobotDataset", lambda repo_id, **kwargs: captured.update(root=kwargs["root"])
     )
     monkeypatch.setattr(lerobot_score, "score_dataset", lambda dataset, scorer, **kwargs: None)
-    cfg = ScoreConfig(dataset_repo_id="user/dataset", reward_model=SimpleNamespace(type="robometer"))
+    cfg = ScoreConfig(repo_id="user/dataset", reward_model=SimpleNamespace(type="robometer"))
 
     lerobot_score.run_score(cfg)
 
@@ -251,4 +261,4 @@ def test_run_score_defaults_the_dataset_root_to_the_lerobot_home(
 
 def test_score_config_rejects_invalid_batch_size(tmp_path: Path):
     with pytest.raises(ValueError, match="batch_size"):
-        ScoreConfig(dataset_repo_id="user/dataset", dataset_root=tmp_path, batch_size=0)
+        ScoreConfig(repo_id="user/dataset", root=tmp_path, batch_size=0)

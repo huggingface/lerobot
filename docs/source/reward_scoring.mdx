@@ -60,7 +60,7 @@ Scores are stored separately from the frame data. Language annotations instead l
 
 ## Score a Dataset
 
-Scores are written into the dataset folder, which defaults to `$HF_LEROBOT_HOME/<dataset_repo_id>`, like `lerobot-record` and `lerobot-edit-dataset`. Missing dataset files are downloaded there. Pass `--dataset_root=/path/to/local/dataset` to use another folder. Scores cannot be written into LeRobot's Hub snapshot cache.
+Scores are written into the dataset folder, which defaults to `$HF_LEROBOT_HOME/<repo_id>`, like `lerobot-record` and `lerobot-edit-dataset`. Missing dataset files are downloaded there. Pass `--root=/path/to/local/dataset` to use another folder. Scores cannot be written into LeRobot's Hub snapshot cache.
 
 Load a checkpoint with `--reward_model.path`, or build a zero-shot model with `--reward_model.type`. Other `--reward_model.<field>` flags override its config. Set `--reward_model.image_key` to a camera in your dataset.
 
@@ -70,8 +70,8 @@ Score Libero with the published RoboMeter checkpoint:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.path=lerobot/Robometer-4B \
     --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
@@ -83,8 +83,8 @@ TOPReward uses a pretrained VLM directly:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.type=topreward \
     --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
@@ -96,8 +96,8 @@ Use a trained SARM checkpoint with its matching dataset:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=user/my_dataset \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=user/my_dataset \
+    --root=/path/to/local/dataset \
     --reward_model.path=/path/to/sarm-checkpoint \
     --reward_model.device=cuda \
     --reward_model.head_mode=sparse \
@@ -112,18 +112,20 @@ Run `uv run lerobot-score --help` for the full configuration.
 
 ### Dataset and Output
 
-| Flag                 | Default                              | Description                                                                                                           |
-| -------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `--dataset_repo_id`  | Required                             | Dataset repository ID.                                                                                                |
-| `--dataset_root`     | `$HF_LEROBOT_HOME/<dataset_repo_id>` | Local dataset directory. Scores are written under its `scores/` folder; missing dataset files are downloaded into it. |
-| `--dataset_revision` | LeRobot version tag                  | Dataset branch, tag, or commit hash.                                                                                  |
-| `--name`             | Model type                           | Name of the score file, without `.parquet`.                                                                           |
-| `--episodes`         | All episodes                         | Episode indices to score, for example `'[0,1]'`. Downloads the files containing these episodes.                       |
-| `--resume`           | `true`                               | Reuse completed episodes from an interrupted matching run.                                                            |
-| `--overwrite`        | `false`                              | Replace existing scores once the new run completes.                                                                   |
-| `--push_to_hub`      | `false`                              | Upload the completed score file to the dataset repository.                                                            |
+| Flag            | Default                      | Description                                                                                                           |
+| --------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--repo_id`     | Required                     | Dataset repository ID.                                                                                                |
+| `--root`        | `$HF_LEROBOT_HOME/<repo_id>` | Local dataset directory. Scores are written under its `scores/` folder; missing dataset files are downloaded into it. |
+| `--revision`    | LeRobot version tag          | Dataset branch, tag, or commit hash.                                                                                  |
+| `--score_name`  | Model type                   | Name of the score file, without `.parquet`.                                                                           |
+| `--episodes`    | All episodes                 | Episode indices to score, for example `'[0,1]'`. Downloads the files containing these episodes.                       |
+| `--resume`      | `true`                       | Reuse completed episodes from an interrupted matching run.                                                            |
+| `--overwrite`   | `false`                      | Replace existing scores once the new run completes, locally and on the Hub.                                           |
+| `--push_to_hub` | `false`                      | Upload the completed score file to the dataset repository.                                                            |
+| `--branch`      | Main branch                  | Branch to upload the scores to, created from the dataset's revision if needed.                                        |
+| `--tag_version` | `true`                       | Move the dataset's codebase version tag to the upload commit.                                                         |
 
-Use `--name=robometer-4b` to keep results from a specific model or configuration.
+Use `--score_name=robometer-4b` to keep results from a specific model or configuration.
 
 ### Reward Model
 
@@ -135,7 +137,7 @@ Use `--name=robometer-4b` to keep results from a specific model or configuration
 | `--reward_model.image_key`           | Camera feature to read; defaults to the model's configured key.     |
 | `--reward_model.pretrained_revision` | Checkpoint branch, tag, or commit hash.                             |
 
-For checkpoint-based runs, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision` to pin the dataset and checkpoint versions. The requested revisions are stored with the scores and must match when resuming.
+For checkpoint-based runs, pass commit hashes through `--revision` and `--reward_model.pretrained_revision` to pin the dataset and checkpoint versions. The requested revisions are stored with the scores and must match when resuming.
 
 ### Scoring Options
 

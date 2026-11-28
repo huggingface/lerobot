@@ -120,8 +120,8 @@ Score every frame of a dataset with the shared [offline scoring workflow](./rewa
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.type=topreward \
     --reward_model.device=cuda \
     --reward_model.num_samples=15

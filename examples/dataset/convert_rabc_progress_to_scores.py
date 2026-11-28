@@ -94,7 +94,7 @@ def main() -> None:
         default=None,
         help="Progress file name. Defaults to the <model>_progress.parquet the dataset has.",
     )
-    parser.add_argument("--name", default=None, help="Score name. Defaults to the model, such as sarm.")
+    parser.add_argument("--score-name", default=None, help="Score name. Defaults to the model, such as sarm.")
     parser.add_argument("--overwrite", action="store_true", help="Replace scores with the same name.")
     parser.add_argument("--push-to-hub", action="store_true", help="Upload the scores to the repository.")
     args = parser.parse_args()
@@ -155,7 +155,7 @@ def main() -> None:
         },
         "signals": {signal: dataclasses.asdict(descriptor) for signal, descriptor in descriptors.items()},
     }
-    name = args.name or model
+    name = args.score_name or model
     add_scores(dataset, name, episode_scores, info=info, episodes=sorted(rows), overwrite=args.overwrite)
     print(f"Saved {len(episodes)} frames of {path.name} as scores {name!r} with signals {sorted(values)}")
     if args.push_to_hub:
