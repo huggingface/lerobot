@@ -84,7 +84,11 @@ from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
 from lerobot.processor import ImageAugmentationProcessorStep
-from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
+from lerobot.processor.rename_processor import (
+    RenameObservationsProcessorStep,
+    rename_batch_keys,
+    rename_stats,
+)
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
@@ -170,12 +174,40 @@ def _preprocess_dataset_batch(
     rename_map: dict[str, str],
     preprocessor: Any,
 ) -> Any:
-    """Prepare a raw dataset batch identically for training and held-out evaluation."""
+    """Prepare a raw dataset batch the same way for training and held-out eval.
+
+    The rename map is applied to the raw batch here. The processor keeps that map for a
+    robot that still uses the original key names. Applying it again would rename keys
+    this call just created.
+    """
     for cam_key in camera_keys:
         if cam_key in batch and batch[cam_key].dtype == torch.uint8:
             batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
     batch = rename_batch_keys(batch, rename_map)
-    return preprocessor(batch)
+    return _call_preprocessor_without_repeating_rename(preprocessor, batch, rename_map)
+
+
+def _call_preprocessor_without_repeating_rename(
+    preprocessor: Any,
+    batch: dict[str, Any],
+    rename_map: dict[str, str],
+) -> Any:
+    """Run the preprocessor without applying `rename_map` again."""
+    if not rename_map:
+        return preprocessor(batch)
+    steps = getattr(preprocessor, "steps", None)
+    if not steps:
+        return preprocessor(batch)
+    saved: list[tuple[RenameObservationsProcessorStep, dict[str, str]]] = []
+    for step in steps:
+        if isinstance(step, RenameObservationsProcessorStep) and step.rename_map:
+            saved.append((step, step.rename_map))
+            step.rename_map = {}
+    try:
+        return preprocessor(batch)
+    finally:
+        for step, previous in saved:
+            step.rename_map = previous
 
 
 def update_policy(

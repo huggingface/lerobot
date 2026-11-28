@@ -46,3 +46,45 @@ def test_preprocess_dataset_batch_normalizes_and_renames_before_processor():
     assert set(processed) == {f"{OBS_IMAGES}.camera1", ACTION}
     assert processed[f"{OBS_IMAGES}.camera1"].dtype == torch.float32
     torch.testing.assert_close(processed[f"{OBS_IMAGES}.camera1"], torch.ones(1, 3, 2, 2))
+
+
+def test_preprocess_dataset_batch_does_not_apply_rename_map_twice():
+    from lerobot.processor.pipeline import DataProcessorPipeline
+    from lerobot.processor.rename_processor import RenameObservationsProcessorStep
+
+    rename_map = {
+        "observation.state": "observation.state.original",
+        "observation.state.cartesian": "observation.state",
+        "action": "action.original",
+        "action.cartesian": ACTION,
+        "observation.images.exterior_1_left": f"{OBS_IMAGES}.exterior",
+        "observation.images.wrist_left": f"{OBS_IMAGES}.wrist",
+    }
+    step = RenameObservationsProcessorStep(rename_map=rename_map)
+    pipeline = DataProcessorPipeline(steps=[step])
+    batch = {
+        "observation.state": torch.tensor([1.0]),
+        "observation.state.cartesian": torch.tensor([2.0]),
+        "observation.state_is_pad": torch.tensor([False]),
+        "observation.state.cartesian_is_pad": torch.tensor([True]),
+        "action": torch.tensor([3.0]),
+        "action.cartesian": torch.tensor([4.0]),
+        "observation.images.exterior_1_left": torch.zeros(1, 3, 2, 2),
+        "observation.images.wrist_left": torch.ones(1, 3, 2, 2),
+    }
+
+    processed = _preprocess_dataset_batch(
+        batch,
+        camera_keys=[],
+        rename_map=rename_map,
+        preprocessor=pipeline,
+    )
+
+    torch.testing.assert_close(processed["observation.state"], torch.tensor([2.0]))
+    torch.testing.assert_close(processed["observation.state.original"], torch.tensor([1.0]))
+    torch.testing.assert_close(processed["observation.state_is_pad"], torch.tensor([True]))
+    torch.testing.assert_close(processed["observation.state.original_is_pad"], torch.tensor([False]))
+    torch.testing.assert_close(processed[ACTION], torch.tensor([4.0]))
+    assert f"{OBS_IMAGES}.exterior" in processed
+    assert f"{OBS_IMAGES}.wrist" in processed
+    assert step.rename_map is rename_map
