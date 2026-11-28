@@ -1791,6 +1791,31 @@ def test_periodic_logs_use_interval_metrics_and_omit_unavailable_measurements(pr
     assert timer.snapshot().starved_ticks == 1
 
 
+def test_integrated_gpu_memory_is_labelled_as_shared_system_memory(probes, clock, caplog, monkeypatch):
+    """On a Jetson ``mem_get_info`` is the system RAM shared with the CPU, not memory of the GPU."""
+    monkeypatch.setattr(status, "_gpu_is_integrated", lambda device: True, raising=False)
+    engine = _FakeEngine()
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy.setup(_loop_ctx(engine, interactive=False, status_interval_s=1, device="cuda:0"))
+    timer = CycleTimer(4)
+    with caplog.at_level(logging.INFO, logger=status.logger.name):
+        for _ in range(5):
+            strategy._tick(timer)
+            timer.wait()
+    lines = [r.message for r in caplog.records if r.name == status.logger.name]
+    assert lines[0].endswith("· process 2.00 GiB · system (shared with GPU) 5.00/80.0 GiB")
+
+
+def test_gpu_is_integrated_is_false_without_a_cuda_device(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "get_device_properties", Mock(side_effect=RuntimeError("no CUDA")))
+    assert status._gpu_is_integrated("cuda:0") is False
+
+
+def test_gpu_is_integrated_reads_the_device_property(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda d: SimpleNamespace(is_integrated=1))
+    assert status._gpu_is_integrated("cuda:0") is True
+
+
 @pytest.mark.parametrize("interactive, interval", [(False, 0), (True, 5)])
 def test_disabled_and_interactive_skip_measurements(probes, clock, caplog, interactive, interval):
     engine = _FakeEngine()
