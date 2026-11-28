@@ -1,0 +1,61 @@
+{
+  "name": "policy_preprocessor",
+  "steps": [
+    {
+      "config": {
+        "rename_map": {}
+      },
+      "registry_name": "rename_observations_processor"
+    },
+    {
+      "config": {},
+      "registry_name": "to_batch_processor"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    },
+    {
+      "config": {
+        "absolute_dims": [],
+        "action_dim": 6,
+        "action_representation": "delta",
+        "camera_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "chunk_size": 32,
+        "condition_on_past_actions": false,
+        "n_obs_steps": 1,
+        "normalization_clip": 6.0
+      },
+      "registry_name": "flux3_observation_history_normalizer",
+      "state_file": "policy_preprocessor_step_3_flux3_observation_history_normalizer.safetensors"
+    },
+    {
+      "config": {
+        "absolute_dims": [],
+        "action_dim": 6,
+        "action_representation": "delta",
+        "chunk_size": 32,
+        "n_obs_steps": 1,
+        "normalization_clip": 6.0
+      },
+      "registry_name": "flux3_action_target_normalizer",
+      "state_file": "policy_preprocessor_step_4_flux3_action_target_normalizer.safetensors"
+    },
+    {
+      "config": {
+        "camera_keys": [
+          "observation.image.cam",
+          "observation.images.cam"
+        ],
+        "camera_layout": "side_by_side"
+      },
+      "registry_name": "flux3_camera_resize"
+    }
+  ]
+}

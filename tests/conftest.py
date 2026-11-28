@@ -74,9 +74,10 @@ def restore_torch_backend_flags() -> Iterator[None]:
 
 
 # Marks selecting the tests of each Fast Tests tier (`-m dataset`, see .github/workflows/fast_tests.yml);
-# every other test is marked `base`. Marks only select tests: skipping when an extra is missing is still
-# done by `pytest.importorskip` and friends.
+# every other test is marked `base`, except `all_extras` tests, which only Full Tests runs. Marks only select
+# tests: skipping when an extra is missing is still done by `pytest.importorskip` and friends.
 TIER_MARKS = ("dataset", "hardware", "viz")
+ALL_EXTRAS_MARK = "all_extras"
 
 
 # The GPU Tests job (`-m gpu`, see .github/workflows/full_tests.yml) only runs tests marked `gpu`. The mark is added
@@ -120,6 +121,10 @@ def pytest_configure(config):
     for mark in TIER_MARKS:
         config.addinivalue_line("markers", f"{mark}: Fast Tests tier that installs the `{mark}` extra")
     config.addinivalue_line(
+        "markers",
+        f"{ALL_EXTRAS_MARK}: needs `--extra all` and network access; run by Full Tests only, never `base`",
+    )
+    config.addinivalue_line(
         "markers", "gpu: run by the GPU Tests job (added to policy tests and `require_cuda` tests)"
     )
     _write_libero_config(config)
@@ -128,7 +133,7 @@ def pytest_configure(config):
 @pytest.hookimpl(tryfirst=True)  # before `-m` deselects by mark
 def pytest_collection_modifyitems(config, items):
     for item in items:
-        if not any(mark.name in TIER_MARKS for mark in item.iter_markers()):
+        if not any(mark.name in (*TIER_MARKS, ALL_EXTRAS_MARK) for mark in item.iter_markers()):
             item.add_marker(pytest.mark.base)
         if _needs_gpu(item):
             item.add_marker(pytest.mark.gpu)
