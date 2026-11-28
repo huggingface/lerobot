@@ -129,3 +129,33 @@ jobs:
 
       - name: "Tier 4 — Test: viz"
         run: uv run pytest tests -vv --maxfail=10 -m viz
+
+  # No tier above installs transformers and diffusers, so the Multi-Task DiT tests would only be
+  # skipped there. These replace CLIP with tiny random models and run offline on CPU;
+  # test_multi_task_dit.py loads the real CLIP weights and skips itself in CI.
+  multi-task-dit-tests:
+    permissions:
+      contents: read
+    name: Multi-Task DiT Tests
+    runs-on: ubuntu-latest
+    env:
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install
+        run: uv sync --locked --extra test --extra multi_task_dit
+
+      - name: Test
+        run: uv run pytest tests/policies/multi_task_dit -vv --maxfail=10
