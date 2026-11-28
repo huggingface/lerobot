@@ -45,6 +45,9 @@ ensuring consistency with the current codebase.
 The script extracts normalization statistics from the old model's state_dict, creates clean
 processor pipelines using the factory functions, and saves a migrated model that is compatible
 with the new PolicyProcessorPipeline architecture.
+
+For checkpoints that predate ``config.json.type``, keep the original ``config.yaml``
+with the checkpoint. Migration reads its ``policy.name`` when the JSON type is absent.
 """
 
 import argparse
@@ -55,12 +58,14 @@ from typing import Any, get_type_hints
 
 import draccus
 import torch
+import yaml
 from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 from safetensors.torch import load_file as load_safetensors
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE
 
 
 def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str, dict[str, torch.Tensor]]:
@@ -161,6 +166,8 @@ def detect_features_and_norm_modes(
                     feature_type = FeatureType.STATE
                 elif feature_type_str == "ACTION":
                     feature_type = FeatureType.ACTION
+                elif feature_type_str == "ENV":
+                    feature_type = FeatureType.ENV
                 else:
                     print(f"Warning: Unknown feature type '{feature_type_str}', skipping")
                     continue
@@ -363,6 +370,18 @@ def load_state_dict_with_missing_key_handling(
     return problematic_missing_keys
 
 
+def _infer_feature_type(key: str) -> FeatureType:
+    if key == OBS_ENV_STATE:
+        return FeatureType.ENV
+    if "image" in key or "visual" in key:
+        return FeatureType.VISUAL
+    if "state" in key:
+        return FeatureType.STATE
+    if ACTION in key:
+        return FeatureType.ACTION
+    return FeatureType.STATE
+
+
 def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[str, PolicyFeature]:
     """
     Converts a feature dictionary from the old config format to the new `PolicyFeature` format.
@@ -377,15 +396,7 @@ def convert_features_to_policy_features(features_dict: dict[str, dict]) -> dict[
     converted_features = {}
 
     for key, feature_dict in features_dict.items():
-        # Determine feature type based on key
-        if "image" in key or "visual" in key:
-            feature_type = FeatureType.VISUAL
-        elif "state" in key:
-            feature_type = FeatureType.STATE
-        elif ACTION in key:
-            feature_type = FeatureType.ACTION
-        else:
-            feature_type = FeatureType.STATE
+        feature_type = _infer_feature_type(key)
 
         # Get shape from feature dict
         shape = feature_dict.get("shape", feature_dict.get("dim"))
@@ -432,6 +443,51 @@ def display_migration_summary_with_warnings(problematic_missing_keys: list[str])
     print("=" * 60)
 
 
+def _read_legacy_policy_type(path: str | Path) -> str | None:
+    with open(path, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    policy = config.get("policy") if isinstance(config, dict) else None
+    name = policy.get("name") if isinstance(policy, dict) else None
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _upgrade_legacy_feature_config(config: dict[str, Any], stats: dict[str, dict[str, torch.Tensor]]) -> None:
+    """Upgrade shape-only declarations and restore their names on extracted buffers."""
+    legacy_shapes: set[str] = set()
+    modes: dict[str, str] = {}
+    for direction in ("input", "output"):
+        shapes = config.pop(f"{direction}_shapes", None)
+        features_key = f"{direction}_features"
+        if shapes is not None and features_key not in config:
+            config[features_key] = {name: {"shape": shape} for name, shape in shapes.items()}
+            legacy_shapes.update(shapes)
+
+        per_feature_modes = config.pop(f"{direction}_normalization_modes", None)
+        if per_feature_modes and "normalization_mapping" not in config:
+            for name, mode in per_feature_modes.items():
+                kind = _infer_feature_type(name).value
+                parsed_mode = NormalizationMode(mode.upper()).value
+                if kind in modes and parsed_mode != modes[kind]:
+                    raise ValueError(f"Conflicting legacy normalization modes for feature type {kind}")
+                modes[kind] = parsed_mode
+    if modes:
+        config["normalization_mapping"] = modes
+
+    if legacy_shapes:
+        names = set(config.get("input_features") or {}) | set(config.get("output_features") or {})
+        names_by_buffer: dict[str, list[str]] = {}
+        for name in sorted(names):
+            names_by_buffer.setdefault(name.replace("_", "."), []).append(name)
+        for buffer_name, candidates in names_by_buffer.items():
+            if buffer_name not in stats or not legacy_shapes.intersection(candidates):
+                continue
+            if len(candidates) > 1:
+                raise ValueError(f"Ambiguous legacy normalization buffer {buffer_name!r}: {candidates}")
+            name = candidates[0]
+            if name != buffer_name:
+                stats[name] = stats.pop(buffer_name)
+
+
 def load_model_from_hub(
     repo_id: str, revision: str | None = None
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any] | None]:
@@ -458,13 +514,20 @@ def load_model_from_hub(
     with open(config_path) as f:
         config = json.load(f)
 
+    if not config.get("type"):
+        try:
+            legacy_config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision)
+            config["type"] = _read_legacy_policy_type(legacy_config_path)
+        except (EntryNotFoundError, FileNotFoundError):
+            pass
+
     # Try to load train_config (optional)
     train_config = None
     try:
         train_config_path = hf_hub_download(repo_id=repo_id, filename="train_config.json", revision=revision)
         with open(train_config_path) as f:
             train_config = json.load(f)
-    except FileNotFoundError:
+    except (EntryNotFoundError, FileNotFoundError):
         print("train_config.json not found - continuing without training configuration")
 
     return state_dict, config, train_config
@@ -512,6 +575,10 @@ def main():
         with open(os.path.join(args.pretrained_path, "config.json")) as f:
             config = json.load(f)
 
+        legacy_config_path = Path(args.pretrained_path) / "config.yaml"
+        if not config.get("type") and legacy_config_path.is_file():
+            config["type"] = _read_legacy_policy_type(legacy_config_path)
+
         # Try to load train_config (optional)
         train_config = None
         train_config_path = os.path.join(args.pretrained_path, "train_config.json")
@@ -524,9 +591,16 @@ def main():
         # Hub repository
         state_dict, config, train_config = load_model_from_hub(args.pretrained_path, args.revision)
 
+    policy_type = config.get("type")
+    if not policy_type:
+        raise ValueError(
+            "Policy type not found. Supply config.json with 'type' or config.yaml with 'policy.name'."
+        )
+
     # Extract normalization statistics
     print("Extracting normalization statistics...")
     stats = extract_normalization_stats(state_dict)
+    _upgrade_legacy_feature_config(config, stats)
 
     print(f"Found normalization statistics for: {list(stats.keys())}")
 
@@ -557,11 +631,6 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract policy type from config
-    if "type" not in config:
-        raise ValueError("Policy type not found in config.json. The config must contain a 'type' field.")
-
-    policy_type = config["type"]
     print(f"Detected policy type: {policy_type}")
 
     # Clean up config - remove fields that shouldn't be passed to config constructor
