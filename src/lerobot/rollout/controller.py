@@ -99,6 +99,10 @@ class RolloutEvent(Enum):
     SEGMENT_ENDED = "segment_ended"
     """The segment returned on its own (e.g. ``--duration`` elapsed); the robot is holding."""
 
+    SEGMENT_PAUSED = "segment_paused"
+    """:meth:`RolloutController.pause` ended the segment; the robot stays where it is, the task is
+    kept, and :meth:`RolloutController.resume` continues it."""
+
     RESET_STARTED = "reset_started"
     """A reset is being executed: inference paused, robot about to move home."""
 
@@ -128,7 +132,7 @@ class RolloutEvent(Enum):
 
 
 class RolloutController:
-    """Drive a rollout strategy through thread-safe start/reset/stop/set_task calls.
+    """Drive a rollout strategy through thread-safe start/pause/resume/reset/stop/set_task calls.
 
     The robot is idle until :meth:`start`; each run *segment* executes ``strategy.run(ctx)`` on the
     thread that called :meth:`serve`, while ``strategy.setup``/``teardown`` stay with the caller.
@@ -178,10 +182,13 @@ class RolloutController:
 
         # Written by control methods (any thread), consumed by the serve loop.
         self._start_requested = Event()
+        self._pause_requested = Event()
         self._reset_requested = Event()
         self._stop_requested = Event()
         self._wake = Event()
         self._running = Event()
+        # Set once pause() has ended the segment, until start(), resume(), reset() or stop().
+        self._paused = Event()
         # Latched (never cleared) when serve() exits; the control methods then refuse.
         self._stopped = Event()
         self._strategy_failure_traceback: str | None = None
@@ -210,6 +217,11 @@ class RolloutController:
         return self._running.is_set()
 
     @property
+    def paused(self) -> bool:
+        """True after :meth:`pause` ended a segment, until the next start, reset or stop."""
+        return self._paused.is_set()
+
+    @property
     def stopped(self) -> bool:
         """True once :meth:`serve` has returned; the controller is terminal (one-shot)."""
         return self._stopped.is_set()
@@ -235,13 +247,44 @@ class RolloutController:
         failure, or once the controller is stopping or stopped (an accepted start would never run).
         """
         with self._control_lock:
-            if self._stopped.is_set() or self._stop_requested.is_set() or self.failed:
+            return self._request_start()
+
+    def pause(self) -> bool:
+        """Stop the running segment and leave the robot where it is, keeping the current task.
+
+        Unlike :meth:`reset`, the robot doesn't move home, so :meth:`resume` continues the task from
+        wherever the robot is then.  Returns ``True`` when a running segment was asked to stop,
+        ``False`` when none is running or the controller is stopping or stopped.
+        """
+        with self._control_lock:
+            if self._stopped.is_set() or self._stop_requested.is_set() or not self._running.is_set():
                 return False
-            if self._running.is_set():
-                return False
-            self._start_requested.set()
+            # Flag first, segment-stop second (see the ordering note in _run_segment).
+            self._pause_requested.set()
+            self._ctx.policy.inference.pause()
+            self._segment_stop.set()
             self._wake.set()
             return True
+
+    def resume(self) -> bool:
+        """Continue the task after :meth:`pause`, from wherever the robot is now.
+
+        Returns ``True`` when a new segment was scheduled, ``False`` when the rollout isn't paused or
+        :meth:`start` would refuse.
+        """
+        with self._control_lock:
+            return self._paused.is_set() and self._request_start()
+
+    def _request_start(self) -> bool:
+        """Schedule a segment; the caller holds the control lock."""
+        if self._stopped.is_set() or self._stop_requested.is_set() or self.failed:
+            return False
+        if self._running.is_set():
+            return False
+        self._paused.clear()
+        self._start_requested.set()
+        self._wake.set()
+        return True
 
     def reset(self) -> bool:
         """Stop movement, return the robot to its initial position, restore the launch task.
@@ -256,6 +299,7 @@ class RolloutController:
             # Last command wins: cancel a pending start().  Flag first, segment-stop second
             # (see the ordering note in _run_segment).
             self._start_requested.clear()
+            self._paused.clear()
             # Back to square one, so the sequencer stops too: it would overwrite the restored task.
             self._ctx.policy.inference.stop_autosteer()
             # Restore here, not later on the serve thread, so a following set_task() survives.
@@ -272,6 +316,7 @@ class RolloutController:
             if self._stopped.is_set():
                 return
             self._start_requested.clear()  # last command wins, see reset()
+            self._paused.clear()
             self._ctx.policy.inference.stop_autosteer()
             self._stop_requested.set()
             self._ctx.policy.inference.pause()
@@ -420,6 +465,9 @@ class RolloutController:
                 or engine.failed
             ):
                 return
+            if self._pause_requested.is_set():
+                self._emit(RolloutEvent.SEGMENT_PAUSED)
+                return
             self._strategy.reset_control_state()
             self._emit(RolloutEvent.SEGMENT_STARTED)
             try:
@@ -444,6 +492,13 @@ class RolloutController:
             # lock, so a question either lands before this and is dropped, or is rejected outright.
             with self._control_lock:
                 self._running.clear()
+                # A reset or stop that followed the pause overrides it.
+                paused = self._pause_requested.is_set() and not (
+                    self._reset_requested.is_set() or self._stop_requested.is_set()
+                )
+                self._pause_requested.clear()
+                if paused:
+                    self._paused.set()
                 # The sequencer cannot outlive the segment: its plan progress lives in the policy.
                 engine.stop_autosteer()
                 engine.drop_pending_query()
@@ -458,7 +513,7 @@ class RolloutController:
         if not (
             self._stop_requested.is_set() or self._reset_requested.is_set() or self._global_shutdown.is_set()
         ):
-            self._emit(RolloutEvent.SEGMENT_ENDED)
+            self._emit(RolloutEvent.SEGMENT_PAUSED if paused else RolloutEvent.SEGMENT_ENDED)
 
     def _reset_robot(self) -> None:
         """Pause inference and return the robot home (the task was restored by :meth:`reset`)."""
