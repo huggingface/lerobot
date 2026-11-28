@@ -26,27 +26,16 @@ from numpy.typing import NDArray
 from lerobot.processor import PolicyProcessorPipeline
 
 from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from .configuration_robometer import (
+    ROBOMETER_PROGRESS_SIGNAL,
+    ROBOMETER_SIGNAL_DESCRIPTORS,
+    ROBOMETER_SUCCESS_PROBABILITY_SIGNAL,
+)
 from .modeling_robometer import RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
-
-PROGRESS_SIGNAL = "reward.robometer.progress"
-SUCCESS_PROBABILITY_SIGNAL = "reward.robometer.success_probability"
-
-ROBOMETER_SIGNAL_DESCRIPTORS = {
-    PROGRESS_SIGNAL: SignalDescriptor(
-        description="RoboMeter task progress for the trajectory prefix ending at this frame.",
-        greater_is_better=True,
-        bounds=(0.0, 1.0),
-    ),
-    SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
-        description="RoboMeter success probability for the trajectory prefix ending at this frame.",
-        greater_is_better=True,
-        bounds=(0.0, 1.0),
-    ),
-}
 
 
 def _build_subsample_indices(num_frames: int, num_subsampled_frames: int) -> list[np.ndarray]:
@@ -135,8 +124,8 @@ class RobometerFrameScorer:
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),
             signals={
-                PROGRESS_SIGNAL: progress,
-                SUCCESS_PROBABILITY_SIGNAL: success_probability,
+                ROBOMETER_PROGRESS_SIGNAL: progress,
+                ROBOMETER_SUCCESS_PROBABILITY_SIGNAL: success_probability,
             },
         )
 

@@ -20,10 +20,25 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
+from ..scoring import SignalDescriptor
+
 # Default prompt scaffolding from the upstream TOPReward paper / reference
 # implementation (``QwenClient.compute_instruction_reward``). The prompt
 # scores the terminal ``True`` token in ``f"{instruction} ... True"``
 # given the video.
+# Signal TOPReward writes to dataset scores.
+TOPREWARD_PROGRESS_SIGNAL = "topreward.progress"
+TOPREWARD_SIGNAL_DESCRIPTORS = {
+    TOPREWARD_PROGRESS_SIGNAL: SignalDescriptor(
+        description=(
+            "TOPReward log-probability of the task for the trajectory prefix ending at this frame, "
+            "min-max normalized per episode."
+        ),
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+}
+
 DEFAULT_PROMPT_PREFIX = (
     "The above video shows a robot manipulation trajectory that completes the following task: "
 )

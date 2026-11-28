@@ -25,6 +25,24 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
+from ..scoring import SignalDescriptor
+
+# Signals SARM writes to dataset scores: each head's progress and, for heads with several
+# subtasks, its most likely subtask.
+SARM_SPARSE_PROGRESS_SIGNAL = "sarm.sparse_progress"
+SARM_DENSE_PROGRESS_SIGNAL = "sarm.dense_progress"
+SARM_SPARSE_STAGE_SIGNAL = "sarm.sparse_stage"
+SARM_DENSE_STAGE_SIGNAL = "sarm.dense_stage"
+SARM_SIGNAL_DESCRIPTORS = {
+    signal: SignalDescriptor(
+        description=f"SARM task progress from its {head} head, predicted from the window of frames around this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+        allow_nan=True,
+    )
+    for head, signal in (("sparse", SARM_SPARSE_PROGRESS_SIGNAL), ("dense", SARM_DENSE_PROGRESS_SIGNAL))
+}
+
 
 @RewardModelConfig.register_subclass("sarm")
 @dataclass

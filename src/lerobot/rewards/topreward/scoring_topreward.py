@@ -25,25 +25,13 @@ from numpy.typing import NDArray
 
 from lerobot.processor import PolicyProcessorPipeline
 
-from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from ..scoring import FrameSignals, SignalDescriptor, interpolate_progress, scoring_options
+from .configuration_topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
-
-PROGRESS_SIGNAL = "reward.topreward.progress"
-
-TOPREWARD_SIGNAL_DESCRIPTORS = {
-    PROGRESS_SIGNAL: SignalDescriptor(
-        description=(
-            "TOPReward log-probability of the task for the trajectory prefix ending at this frame, "
-            "min-max normalized per episode."
-        ),
-        greater_is_better=True,
-        bounds=(0.0, 1.0),
-    ),
-}
 
 
 def _build_prefix_lengths(num_frames: int, num_samples: int | None) -> NDArray[np.int64]:
@@ -124,12 +112,12 @@ class TOPRewardFrameScorer:
                 log_probabilities[i] = self.model.compute_log_probability(encoded).item()
 
         # Frame t ends the prefix of length t + 1; frames between scored prefixes are interpolated.
-        progress = np.interp(
-            np.arange(1, num_frames + 1), prefix_lengths, _normalize_rewards(log_probabilities)
+        progress = interpolate_progress(
+            prefix_lengths, _normalize_rewards(log_probabilities), np.arange(1, num_frames + 1)
         )
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),
-            signals={PROGRESS_SIGNAL: progress.astype(np.float32)},
+            signals={TOPREWARD_PROGRESS_SIGNAL: progress},
         )
 
 

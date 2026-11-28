@@ -23,33 +23,25 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.datasets.utils import delta_window
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
+from lerobot.utils.import_utils import _av_available, _datasets_available
 
-from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from ..scoring import FrameSignals, SignalDescriptor, interpolate_progress, scoring_options
+from .configuration_sarm import (
+    SARM_DENSE_PROGRESS_SIGNAL,
+    SARM_DENSE_STAGE_SIGNAL,
+    SARM_SIGNAL_DESCRIPTORS,
+    SARM_SPARSE_PROGRESS_SIGNAL,
+    SARM_SPARSE_STAGE_SIGNAL,
+)
 from .modeling_sarm import SARMRewardModel
-from .sarm_utils import interpolate_progress
 
-if TYPE_CHECKING:
-    from lerobot.datasets import LeRobotDataset
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset, delta_window
 
-SPARSE_PROGRESS_SIGNAL = "reward.sarm.sparse_progress"
-DENSE_PROGRESS_SIGNAL = "reward.sarm.dense_progress"
-SPARSE_STAGE_SIGNAL = "reward.sarm.sparse_stage"
-DENSE_STAGE_SIGNAL = "reward.sarm.dense_stage"
-_HEAD_SIGNALS = {"sparse": SPARSE_PROGRESS_SIGNAL, "dense": DENSE_PROGRESS_SIGNAL}
-_STAGE_SIGNALS = {"sparse": SPARSE_STAGE_SIGNAL, "dense": DENSE_STAGE_SIGNAL}
-
-SARM_SIGNAL_DESCRIPTORS = {
-    signal: SignalDescriptor(
-        description=f"SARM task progress from its {head} head, predicted from the window of frames around this frame.",
-        greater_is_better=True,
-        bounds=(0.0, 1.0),
-        allow_nan=True,
-    )
-    for head, signal in _HEAD_SIGNALS.items()
-}
+_HEAD_SIGNALS = {"sparse": SARM_SPARSE_PROGRESS_SIGNAL, "dense": SARM_DENSE_PROGRESS_SIGNAL}
+_STAGE_SIGNALS = {"sparse": SARM_SPARSE_STAGE_SIGNAL, "dense": SARM_DENSE_STAGE_SIGNAL}
 
 logger = logging.getLogger(__name__)
 

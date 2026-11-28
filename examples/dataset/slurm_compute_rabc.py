@@ -19,7 +19,7 @@ SLURM-distributed SARM scoring for RA-BC.
 
 Scores every frame of a dataset with SARM across SLURM workers, then merges the
 workers' scores into the dataset score `sarm`, which RA-BC reads with
-sample_weighting.score_name=sarm and sample_weighting.signal_name=reward.sarm.sparse_progress.
+sample_weighting.score_name=sarm and sample_weighting.signal_name=sarm.sparse_progress.
 
 Two subcommands, each a separate SLURM submission:
 
@@ -66,7 +66,7 @@ class ComputeWorkerScores(PipelineStep):
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
 
-        from lerobot.configs.rewards import RewardModelConfig
+        from lerobot.configs import RewardModelConfig
         from lerobot.datasets import LeRobotDataset
         from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
         from lerobot.utils.utils import init_logging
@@ -105,8 +105,8 @@ class MergeWorkerScores(PipelineStep):
     def run(self, data=None, rank: int = 0, world_size: int = 1):
         import logging
 
-        from lerobot.datasets import LeRobotDataset
-        from lerobot.datasets.scores import (
+        from lerobot.datasets import (
+            LeRobotDataset,
             list_scores,
             load_scores,
             merge_scores,

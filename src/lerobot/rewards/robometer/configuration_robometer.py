@@ -24,12 +24,30 @@ from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..scoring import SignalDescriptor
+
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoConfig, AutoTokenizer
 else:
     AutoConfig = None  # type: ignore[assignment]
     AutoTokenizer = None  # type: ignore[assignment]
 
+
+# Signals RoboMeter writes to dataset scores.
+ROBOMETER_PROGRESS_SIGNAL = "robometer.progress"
+ROBOMETER_SUCCESS_PROBABILITY_SIGNAL = "robometer.success_probability"
+ROBOMETER_SIGNAL_DESCRIPTORS = {
+    ROBOMETER_PROGRESS_SIGNAL: SignalDescriptor(
+        description="RoboMeter task progress for the trajectory prefix ending at this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+    ROBOMETER_SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
+        description="RoboMeter success probability for the trajectory prefix ending at this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+}
 
 # Special tokens Robometer adds to the Qwen-VL tokenizer at construction time.
 # The order is part of the data contract: upstream resized ``embed_tokens``

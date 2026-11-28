@@ -157,14 +157,17 @@ The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` name
 
 ### Score a LeRobot Dataset
 
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](./reward_scoring#convert-old-ra-bc-progress-files)).
+
 Install both dataset and ROBOMETER dependencies, then run:
 
 ```bash
 uv sync --extra dataset --extra robometer
 
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.path=lerobot/Robometer-4B \
     --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
@@ -172,8 +175,8 @@ uv run lerobot-score \
 
 The default dataset score, named `robometer`, contains:
 
-- `reward.robometer.progress`
-- `reward.robometer.success_probability`
+- `robometer.progress`
+- `robometer.success_probability`
 
 Both are dense float32 frame signals in `[0, 1]`. Like ROBOMETER's own frame-step evaluation, the frame scorer predicts each frame from 4 frames spread over the prefix ending at it. The shared scoring workflow handles validation, atomic episode writes, resume, and deterministic merging.
 
@@ -183,7 +186,7 @@ For RA-BC weighting, select the namespaced progress signal explicitly:
 sample_weighting:
   type: rabc
   score_name: robometer
-  signal_name: reward.robometer.progress
+  signal_name: robometer.progress
 ```
 
 ## Configuration Notes

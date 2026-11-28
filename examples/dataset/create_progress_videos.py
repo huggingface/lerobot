@@ -36,7 +36,7 @@ Usage:
         --repo-id lerobot/libero_10 \
         --dataset-root /path/to/local/dataset \
         --episodes 0 \
-        --scores topreward robometer:reward.robometer.progress \
+        --scores topreward robometer:robometer.progress \
         --webp
 """
 
@@ -55,8 +55,8 @@ import numpy as np
 from huggingface_hub import hf_hub_download, snapshot_download
 from PIL import Image, ImageDraw, ImageFont
 
+from lerobot.rewards import SignalDescriptor, load_signal_descriptors
 from lerobot.rewards.sarm.sarm_utils import find_stage_and_tau, normalize_stage_tau
-from lerobot.rewards.scoring import SignalDescriptor, load_signal_descriptors
 from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import (
     _av_available,
@@ -69,8 +69,7 @@ if TYPE_CHECKING or (_datasets_available and _av_available):
     import av
     from av.video.reformatter import ColorRange, Colorspace
 
-    from lerobot.datasets import LeRobotDataset
-    from lerobot.datasets.scores import load_scores, load_scores_info
+    from lerobot.datasets import LeRobotDataset, load_scores, load_scores_info
     from lerobot.datasets.utils import task_name
     from lerobot.datasets.video_utils import decode_video_frames
 
@@ -830,7 +829,7 @@ def main() -> None:
         "--scores",
         nargs="+",
         required=True,
-        help="Scores to draw, such as 'robometer' or 'robometer:reward.robometer.progress'.",
+        help="Scores to draw, such as 'robometer' or 'robometer:robometer.progress'.",
     )
     parser.add_argument(
         "--camera-key",

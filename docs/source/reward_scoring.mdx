@@ -2,6 +2,9 @@
 
 `lerobot-score` runs a reward model over dataset episodes and writes frame-aligned signals to a named Parquet file, `scores/<name>.parquet`. Each file joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
 
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](#convert-old-ra-bc-progress-files)).
+
 ## How It Fits Together
 
 ```text
@@ -46,13 +49,13 @@ Replace `--extra robometer` with `--extra topreward` or `--extra sarm` for the o
 
 Each model writes its signals to one named score file:
 
-| Model     | Default score name | Signal                                 | Meaning                                                                                        |
-| --------- | ------------------ | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| RoboMeter | `robometer`        | `reward.robometer.progress`            | Task progress for the prefix ending at this frame.                                             |
-| RoboMeter | `robometer`        | `reward.robometer.success_probability` | Success probability for the prefix ending at this frame.                                       |
-| TOPReward | `topreward`        | `reward.topreward.progress`            | Task log-probability, min-max normalized per episode and interpolated between scored prefixes. |
-| SARM      | `sarm`             | `reward.sarm.sparse_progress`          | Progress from the sparse head, using a window around this frame.                               |
-| SARM      | `sarm`             | `reward.sarm.dense_progress`           | Progress from the dense head, available for dual-head models.                                  |
+| Model     | Default score name | Signal                          | Meaning                                                                                        |
+| --------- | ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| RoboMeter | `robometer`        | `robometer.progress`            | Task progress for the prefix ending at this frame.                                             |
+| RoboMeter | `robometer`        | `robometer.success_probability` | Success probability for the prefix ending at this frame.                                       |
+| TOPReward | `topreward`        | `topreward.progress`            | Task log-probability, min-max normalized per episode and interpolated between scored prefixes. |
+| SARM      | `sarm`             | `sarm.sparse_progress`          | Progress from the sparse head, using a window around this frame.                               |
+| SARM      | `sarm`             | `sarm.dense_progress`           | Progress from the dense head, available for dual-head models.                                  |
 
 These are dense float32 signals with a semantic range of `[0, 1]`. SARM writes the heads selected by `--reward_model.head_mode`; failed predictions can produce NaN values.
 
@@ -60,7 +63,7 @@ Scores are stored separately from the frame data. Language annotations instead l
 
 ## Score a Dataset
 
-Scores are written into the dataset folder, which defaults to `$HF_LEROBOT_HOME/<dataset_repo_id>`, like `lerobot-record` and `lerobot-edit-dataset`. Missing dataset files are downloaded there. Pass `--dataset_root=/path/to/local/dataset` to use another folder. Scores cannot be written into LeRobot's Hub snapshot cache.
+Scores are written into the dataset folder, which defaults to `$HF_LEROBOT_HOME/<repo_id>`, like `lerobot-record` and `lerobot-edit-dataset`. Missing dataset files are downloaded there. Pass `--root=/path/to/local/dataset` to use another folder. Scores cannot be written into LeRobot's Hub snapshot cache.
 
 Load a checkpoint with `--reward_model.path`, or build a zero-shot model with `--reward_model.type`. Other `--reward_model.<field>` flags override its config. Set `--reward_model.image_key` to a camera in your dataset.
 
@@ -70,8 +73,8 @@ Score Libero with the published RoboMeter checkpoint:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.path=lerobot/Robometer-4B \
     --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
@@ -83,8 +86,8 @@ TOPReward uses a pretrained VLM directly:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=lerobot/libero_10_image \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=lerobot/libero_10_image \
+    --root=/path/to/local/dataset \
     --reward_model.type=topreward \
     --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda
@@ -96,8 +99,8 @@ Use a trained SARM checkpoint with its matching dataset:
 
 ```bash
 uv run lerobot-score \
-    --dataset_repo_id=user/my_dataset \
-    --dataset_root=/path/to/local/dataset \
+    --repo_id=user/my_dataset \
+    --root=/path/to/local/dataset \
     --reward_model.path=/path/to/sarm-checkpoint \
     --reward_model.device=cuda \
     --reward_model.head_mode=sparse \
@@ -112,18 +115,20 @@ Run `uv run lerobot-score --help` for the full configuration.
 
 ### Dataset and Output
 
-| Flag                 | Default                              | Description                                                                                                           |
-| -------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `--dataset_repo_id`  | Required                             | Dataset repository ID.                                                                                                |
-| `--dataset_root`     | `$HF_LEROBOT_HOME/<dataset_repo_id>` | Local dataset directory. Scores are written under its `scores/` folder; missing dataset files are downloaded into it. |
-| `--dataset_revision` | LeRobot version tag                  | Dataset branch, tag, or commit hash.                                                                                  |
-| `--name`             | Model type                           | Name of the score file, without `.parquet`.                                                                           |
-| `--episodes`         | All episodes                         | Episode indices to score, for example `'[0,1]'`. Downloads the files containing these episodes.                       |
-| `--resume`           | `true`                               | Reuse completed episodes from an interrupted matching run.                                                            |
-| `--overwrite`        | `false`                              | Replace existing scores once the new run completes.                                                                   |
-| `--push_to_hub`      | `false`                              | Upload the completed score file to the dataset repository.                                                            |
+| Flag            | Default                      | Description                                                                                                           |
+| --------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `--repo_id`     | Required                     | Dataset repository ID.                                                                                                |
+| `--root`        | `$HF_LEROBOT_HOME/<repo_id>` | Local dataset directory. Scores are written under its `scores/` folder; missing dataset files are downloaded into it. |
+| `--revision`    | LeRobot version tag          | Dataset branch, tag, or commit hash.                                                                                  |
+| `--score_name`  | Model type                   | Name of the score file, without `.parquet`.                                                                           |
+| `--episodes`    | All episodes                 | Episode indices to score, for example `'[0,1]'`. Downloads the files containing these episodes.                       |
+| `--resume`      | `true`                       | Reuse completed episodes from an interrupted matching run.                                                            |
+| `--overwrite`   | `false`                      | Replace existing scores once the new run completes, locally and on the Hub.                                           |
+| `--push_to_hub` | `false`                      | Upload the completed score file to the dataset repository.                                                            |
+| `--branch`      | Main branch                  | Branch to upload the scores to, created from the dataset's revision if needed.                                        |
+| `--tag_version` | `true`                       | Move the dataset's codebase version tag to the upload commit.                                                         |
 
-Use `--name=robometer-4b` to keep results from a specific model or configuration.
+Use `--score_name=robometer-4b` to keep results from a specific model or configuration.
 
 ### Reward Model
 
@@ -135,7 +140,7 @@ Use `--name=robometer-4b` to keep results from a specific model or configuration
 | `--reward_model.image_key`           | Camera feature to read; defaults to the model's configured key.     |
 | `--reward_model.pretrained_revision` | Checkpoint branch, tag, or commit hash.                             |
 
-For checkpoint-based runs, pass commit hashes through `--dataset_revision` and `--reward_model.pretrained_revision` to pin the dataset and checkpoint versions. The requested revisions are stored with the scores and must match when resuming.
+For checkpoint-based runs, pass commit hashes through `--revision` and `--reward_model.pretrained_revision` to pin the dataset and checkpoint versions. The requested revisions are stored with the scores and must match when resuming.
 
 ### Scoring Options
 
@@ -223,7 +228,7 @@ from lerobot.rewards import load_signal_descriptors
 
 scores = load_scores(dataset, "robometer-4b")
 print(scores.column_names)
-print(scores[0]["reward.robometer.progress"])
+print(scores[0]["robometer.progress"])
 
 descriptors = load_signal_descriptors(dataset, "robometer-4b")
 provenance = load_scores_info(dataset, "robometer-4b")["provenance"]
@@ -231,7 +236,7 @@ available = list_scores(dataset)
 
 # Read just the columns a consumer needs.
 progress = load_scores(
-    dataset, "robometer-4b", columns=["index", "episode_index", "reward.robometer.progress"]
+    dataset, "robometer-4b", columns=["index", "episode_index", "robometer.progress"]
 )
 ```
 
@@ -253,7 +258,7 @@ uv run examples/dataset/create_progress_videos.py \
     --scores robometer-4b
 ```
 
-`--scores` takes score names, each optionally followed by `:<signal>` to draw one signal, such as `robometer-4b:reward.robometer.progress`. Several scores share one plot when their signals have the same unit. The video shows the camera the first score was computed on; pass `--camera-key` for another one. The y-axis follows the signal descriptors: the bounds when the signals have them, otherwise the episode's values in the signal's unit. Categorical signals, such as SARM's predicted subtask, are shown as text under the task and as a colored strip under the plot instead of curves, next to the episode's annotated subtasks when the dataset has subtask annotations. For SARM, the annotations also give the ground-truth progress line.
+`--scores` takes score names, each optionally followed by `:<signal>` to draw one signal, such as `robometer-4b:robometer.progress`. Several scores share one plot when their signals have the same unit. The video shows the camera the first score was computed on; pass `--camera-key` for another one. The y-axis follows the signal descriptors: the bounds when the signals have them, otherwise the episode's values in the signal's unit. Categorical signals, such as SARM's predicted subtask, are shown as text under the task and as a colored strip under the plot instead of curves, next to the episode's annotated subtasks when the dataset has subtask annotations. For SARM, the annotations also give the ground-truth progress line.
 
 ### Train with RA-BC
 
@@ -263,10 +268,10 @@ Select the score file and a progress signal in your training configuration:
 sample_weighting:
   type: rabc
   score_name: robometer-4b
-  signal_name: reward.robometer.progress
+  signal_name: robometer.progress
 ```
 
-The equivalent CLI flags are `--sample_weighting.type=rabc`, `--sample_weighting.score_name=robometer-4b`, and `--sample_weighting.signal_name=reward.robometer.progress`. RA-BC requires `greater_is_better=True`. Train with the same dataset root containing the scores; see the [SARM RA-BC example](./sarm#step-5b-train-policy-with-ra-bc) for a full training command.
+The equivalent CLI flags are `--sample_weighting.type=rabc`, `--sample_weighting.score_name=robometer-4b`, and `--sample_weighting.signal_name=robometer.progress`. RA-BC requires `greater_is_better=True`. Train with the same dataset root containing the scores; see the [SARM RA-BC example](./sarm#step-5b-train-policy-with-ra-bc) for a full training command.
 
 ### Convert Old RA-BC Progress Files
 
@@ -276,14 +281,14 @@ The equivalent CLI flags are `--sample_weighting.type=rabc`, `--sample_weighting
 uv run examples/dataset/convert_rabc_progress_to_scores.py --repo-id user/my_dataset
 ```
 
-The script infers the model from the file name, downloads the file and the dataset's data files (not its videos) if needed, and saves `progress_sparse` as `reward.sarm.sparse_progress` (`progress_dense` as `reward.sarm.dense_progress`), or as RoboMeter's or TOPReward's `progress` signal, under the score name `sarm`, `robometer` or `topreward`. Add `--push-to-hub` to upload them. Training configs that still set the removed progress-file fields load, without those fields; set `score_name` and `signal_name` instead.
+The script infers the model from the file name, downloads the file and the dataset's data files (not its videos) if needed, and saves `progress_sparse` as `sarm.sparse_progress` (`progress_dense` as `sarm.dense_progress`), or as RoboMeter's or TOPReward's `progress` signal, under the score name `sarm`, `robometer` or `topreward`. Add `--push-to-hub` to upload them. Training configs that still set the removed progress-file fields load, without those fields; set `score_name` and `signal_name` instead.
 
 ## Output Contract
 
 Every Parquet file of scores contains:
 
 - `index`, `episode_index`, and `frame_index` identity columns;
-- namespaced signal columns such as `reward.robometer.progress`;
+- namespaced signal columns such as `robometer.progress`;
 - semantic descriptors: a description, `greater_is_better` (`True`, `False`, or `None`), optional unit and bounds, whether NaN is allowed, and, for a categorical signal such as a predicted subtask, the `labels` its values index;
 - provenance for the dataset, model, scorer options, and LeRobot version.
 

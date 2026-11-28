@@ -157,12 +157,12 @@ score_dataset(dataset, make_robometer_frame_scorer(model), name="robometer")
 This writes `scores/robometer.parquet` with one row per scored frame. The values below are
 illustrative:
 
-| index | episode_index | frame_index | reward.robometer.progress | reward.robometer.success_probability |
-| ----- | ------------- | ----------- | ------------------------- | ------------------------------------ |
-| 0     | 0             | 0           | 0.02                      | 0.01                                 |
-| 1     | 0             | 1           | 0.05                      | 0.01                                 |
-| ...   | ...           | ...         | ...                       | ...                                  |
-| 300   | 1             | 0           | 0.03                      | 0.02                                 |
+| index | episode_index | frame_index | robometer.progress | robometer.success_probability |
+| ----- | ------------- | ----------- | ------------------ | ----------------------------- |
+| 0     | 0             | 0           | 0.02               | 0.01                          |
+| 1     | 0             | 1           | 0.05               | 0.01                          |
+| ...   | ...           | ...         | ...                | ...                           |
+| 300   | 1             | 0           | 0.03               | 0.02                          |
 
 `episode_index` and `frame_index` identify the frame. `index` is the frame's position in the whole
 dataset when it was scored. Read scores back with `load_scores`:
@@ -175,7 +175,7 @@ scores = load_scores(dataset, "robometer")  # a datasets.Dataset
 
 # Load only the columns you need.
 progress = load_scores(
-    dataset, "robometer", columns=["episode_index", "frame_index", "reward.robometer.progress"]
+    dataset, "robometer", columns=["episode_index", "frame_index", "robometer.progress"]
 )
 ```
 

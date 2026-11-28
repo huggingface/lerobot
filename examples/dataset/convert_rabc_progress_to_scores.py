@@ -23,6 +23,14 @@ progress file at the dataset root: ``sarm_progress.parquet``, ``robometer_progre
 downloaded from the dataset repository when the local dataset folder does not have it. Videos are
 not downloaded.
 
+The old files hold one ``progress_sparse`` column, plus ``progress_dense`` for dual-head SARM models:
+
+- SARM: ``progress_sparse`` becomes ``sarm.sparse_progress`` and ``progress_dense`` becomes
+  ``sarm.dense_progress``.
+- RoboMeter: ``progress_sparse`` becomes ``robometer.progress``. Old RoboMeter files have no success
+  probability, so the converted scores have no ``robometer.success_probability``.
+- TOPReward: ``progress_sparse`` becomes ``topreward.progress``.
+
 Example:
 
     uv run examples/dataset/convert_rabc_progress_to_scores.py \\
@@ -30,7 +38,7 @@ Example:
         --push-to-hub
 
 Then train with ``--sample_weighting.type=rabc --sample_weighting.score_name=sarm
---sample_weighting.signal_name=reward.sarm.sparse_progress``.
+--sample_weighting.signal_name=sarm.sparse_progress``.
 """
 
 import argparse
@@ -40,19 +48,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.rewards.robometer.scoring_robometer import (
-    PROGRESS_SIGNAL as ROBOMETER_PROGRESS_SIGNAL,
-    ROBOMETER_SIGNAL_DESCRIPTORS,
-)
-from lerobot.rewards.sarm.scoring_sarm import (
-    DENSE_PROGRESS_SIGNAL,
+from lerobot.rewards.robometer import ROBOMETER_PROGRESS_SIGNAL, ROBOMETER_SIGNAL_DESCRIPTORS
+from lerobot.rewards.sarm import (
+    SARM_DENSE_PROGRESS_SIGNAL,
     SARM_SIGNAL_DESCRIPTORS,
-    SPARSE_PROGRESS_SIGNAL,
+    SARM_SPARSE_PROGRESS_SIGNAL,
 )
-from lerobot.rewards.topreward.scoring_topreward import (
-    PROGRESS_SIGNAL as TOPREWARD_PROGRESS_SIGNAL,
-    TOPREWARD_SIGNAL_DESCRIPTORS,
-)
+from lerobot.rewards.topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
@@ -60,12 +62,11 @@ if TYPE_CHECKING or (_datasets_available and _av_available):
     import pyarrow.parquet as pq
     from huggingface_hub import HfApi, hf_hub_download
 
-    from lerobot.datasets import LeRobotDataset
-    from lerobot.datasets.scores import add_scores, push_scores_to_hub
+    from lerobot.datasets import LeRobotDataset, add_scores, push_scores_to_hub
 
 # The signal each model's progress columns become.
 _SIGNALS = {
-    "sarm": {"progress_sparse": SPARSE_PROGRESS_SIGNAL, "progress_dense": DENSE_PROGRESS_SIGNAL},
+    "sarm": {"progress_sparse": SARM_SPARSE_PROGRESS_SIGNAL, "progress_dense": SARM_DENSE_PROGRESS_SIGNAL},
     "robometer": {"progress_sparse": ROBOMETER_PROGRESS_SIGNAL},
     "topreward": {"progress_sparse": TOPREWARD_PROGRESS_SIGNAL},
 }
@@ -101,7 +102,7 @@ def main() -> None:
         default=None,
         help="Progress file name. Defaults to the <model>_progress.parquet the dataset has.",
     )
-    parser.add_argument("--name", default=None, help="Score name. Defaults to the model, such as sarm.")
+    parser.add_argument("--score-name", default=None, help="Score name. Defaults to the model, such as sarm.")
     parser.add_argument("--overwrite", action="store_true", help="Replace scores with the same name.")
     parser.add_argument("--push-to-hub", action="store_true", help="Upload the scores to the repository.")
     args = parser.parse_args()
@@ -162,7 +163,7 @@ def main() -> None:
         },
         "signals": {signal: dataclasses.asdict(descriptor) for signal, descriptor in descriptors.items()},
     }
-    name = args.name or model
+    name = args.score_name or model
     add_scores(dataset, name, episode_scores, info=info, episodes=sorted(rows), overwrite=args.overwrite)
     print(f"Saved {len(episodes)} frames of {path.name} as scores {name!r} with signals {sorted(values)}")
     if args.push_to_hub:

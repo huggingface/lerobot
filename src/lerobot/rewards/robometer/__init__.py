@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_robometer import RobometerConfig
+from .configuration_robometer import (
+    ROBOMETER_PROGRESS_SIGNAL,
+    ROBOMETER_SIGNAL_DESCRIPTORS,
+    ROBOMETER_SUCCESS_PROBABILITY_SIGNAL,
+    RobometerConfig,
+)
 from .modeling_robometer import RobometerOutput, RobometerRewardModel
 from .processor_robometer import make_robometer_pre_post_processors
 
 __all__ = [
+    "ROBOMETER_PROGRESS_SIGNAL",
+    "ROBOMETER_SIGNAL_DESCRIPTORS",
+    "ROBOMETER_SUCCESS_PROBABILITY_SIGNAL",
     "RobometerConfig",
     "RobometerOutput",
     "RobometerRewardModel",

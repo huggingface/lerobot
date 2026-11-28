@@ -26,10 +26,9 @@ from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards import score_dataset
+from lerobot.rewards.robometer import ROBOMETER_PROGRESS_SIGNAL, ROBOMETER_SUCCESS_PROBABILITY_SIGNAL
 from lerobot.rewards.robometer.modeling_robometer import RobometerOutput
 from lerobot.rewards.robometer.scoring_robometer import (
-    PROGRESS_SIGNAL,
-    SUCCESS_PROBABILITY_SIGNAL,
     RobometerFrameScorer,
     _build_subsample_indices,
     make_robometer_frame_scorer,
@@ -170,11 +169,13 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     assert grad_modes == [False, False]
 
     np.testing.assert_array_equal(result.frame_indices, np.asarray([0, 1, 2]))
-    np.testing.assert_array_equal(result.signals[PROGRESS_SIGNAL], np.asarray([0.0, 0.5, 1.0]))
-    np.testing.assert_array_equal(result.signals[SUCCESS_PROBABILITY_SIGNAL], np.asarray([0.0, 0.25, 0.5]))
-    assert set(scorer.descriptors) == {PROGRESS_SIGNAL, SUCCESS_PROBABILITY_SIGNAL}
-    assert scorer.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
-    assert scorer.descriptors[PROGRESS_SIGNAL].greater_is_better is True
+    np.testing.assert_array_equal(result.signals[ROBOMETER_PROGRESS_SIGNAL], np.asarray([0.0, 0.5, 1.0]))
+    np.testing.assert_array_equal(
+        result.signals[ROBOMETER_SUCCESS_PROBABILITY_SIGNAL], np.asarray([0.0, 0.25, 0.5])
+    )
+    assert set(scorer.descriptors) == {ROBOMETER_PROGRESS_SIGNAL, ROBOMETER_SUCCESS_PROBABILITY_SIGNAL}
+    assert scorer.descriptors[ROBOMETER_PROGRESS_SIGNAL].bounds == (0.0, 1.0)
+    assert scorer.descriptors[ROBOMETER_PROGRESS_SIGNAL].greater_is_better is True
     task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert preprocessor.steps[0].tasks == [task, task]
     assert scorer.name == "robometer"
@@ -183,11 +184,11 @@ def test_robometer_frame_scorer_returns_dense_namespaced_signals(task_key: str):
     prefix_batch = torch.stack([episode_frames[indices] for indices in _build_subsample_indices(3, 2)])
     direct = model.predict_progress(preprocessor({image_key: prefix_batch, task_key: task}))
     np.testing.assert_allclose(
-        result.signals[PROGRESS_SIGNAL],
+        result.signals[ROBOMETER_PROGRESS_SIGNAL],
         direct.progress[:, -1].numpy(),
     )
     np.testing.assert_allclose(
-        result.signals[SUCCESS_PROBABILITY_SIGNAL],
+        result.signals[ROBOMETER_SUCCESS_PROBABILITY_SIGNAL],
         direct.success_probability[:, -1].numpy(),
     )
 
@@ -252,7 +253,7 @@ def test_robometer_frame_scorer_supports_episode_filtered_dataset_views(filtered
 
     result = scorer.score_episode(dataset, episode_index=1)
 
-    np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.5, 0.6])
+    np.testing.assert_allclose(result.signals[ROBOMETER_PROGRESS_SIGNAL], [0.5, 0.6])
     assert sorted(set(dataset.row_requests)) == ([0, 1] if filtered else [5, 6])
     assert preprocessor.steps[0].tasks == ["selected task"]
 
@@ -307,14 +308,14 @@ def test_robometer_frame_scorer_publishes_a_dataset_score(tmp_path):
     score_dataset(dataset, scorer)
 
     scores = load_scores(dataset, "robometer")
-    assert list(scores[PROGRESS_SIGNAL]) == [0.0, 0.5, 1.0]
-    assert list(scores[SUCCESS_PROBABILITY_SIGNAL]) == [0.0, 0.25, 0.5]
-    assert scores.features[PROGRESS_SIGNAL].dtype == "float32"
-    assert scores.features[SUCCESS_PROBABILITY_SIGNAL].dtype == "float32"
+    assert list(scores[ROBOMETER_PROGRESS_SIGNAL]) == [0.0, 0.5, 1.0]
+    assert list(scores[ROBOMETER_SUCCESS_PROBABILITY_SIGNAL]) == [0.0, 0.25, 0.5]
+    assert scores.features[ROBOMETER_PROGRESS_SIGNAL].dtype == "float32"
+    assert scores.features[ROBOMETER_SUCCESS_PROBABILITY_SIGNAL].dtype == "float32"
     assert scores.column_names == [
         "index",
         "episode_index",
         "frame_index",
-        PROGRESS_SIGNAL,
-        SUCCESS_PROBABILITY_SIGNAL,
+        ROBOMETER_PROGRESS_SIGNAL,
+        ROBOMETER_SUCCESS_PROBABILITY_SIGNAL,
     ]

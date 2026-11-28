@@ -830,7 +830,7 @@ def test_load_scores_downloads_only_named_file_at_dataset_revision(
     monkeypatch.setattr(scores, "HF_LEROBOT_HUB_CACHE", cache)
     monkeypatch.setattr(scores, "snapshot_download", download_snapshot)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(FileNotFoundError, match="Scores 'test' not found in .*lerobot-score"):
         load_scores(dataset, "test", download=False)
     download_snapshot.assert_not_called()
 
@@ -850,6 +850,23 @@ def test_load_scores_downloads_only_named_file_at_dataset_revision(
     assert list_scores(dataset) == ["test"]
     assert len(load_scores(dataset, "test")) == 2
     assert download_snapshot.call_count == 1
+
+
+@pytest.mark.parametrize("reader", [load_scores, load_scores_info])
+def test_scores_missing_on_the_hub_point_to_scoring_and_conversion(tmp_path, monkeypatch, reader):
+    import lerobot.datasets.scores as scores
+
+    dataset = FakeDataset(tmp_path / "dataset", [2])
+    # The repository has no such scores: the download matches no file.
+    monkeypatch.setattr(scores, "snapshot_download", lambda *args, **kwargs: str(dataset.root))
+
+    with pytest.raises(FileNotFoundError) as error:
+        reader(dataset, "sarm")
+
+    message = str(error.value)
+    assert "hf://datasets/test/dataset at revision dataset-revision" in message
+    assert "lerobot-score" in message
+    assert "convert_rabc_progress_to_scores.py" in message
 
 
 def test_load_scores_memory_maps_selected_episodes_and_columns(tmp_path):

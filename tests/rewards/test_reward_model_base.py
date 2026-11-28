@@ -542,7 +542,7 @@ def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_p
     payload["sample_weighting"] = {
         "type": weighting_type,
         "score_name": "sarm",
-        "signal_name": "reward.sarm.sparse_progress",
+        "signal_name": "sarm.sparse_progress",
         "progress_path": None,
         "head_mode": "sparse",
         "kappa": 0.02,
@@ -558,7 +558,7 @@ def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_p
     assert loaded.sample_weighting.type == weighting_type
     assert loaded.sample_weighting.kappa == 0.02
     assert loaded.sample_weighting.score_name == "sarm"
-    assert loaded.sample_weighting.signal_name == "reward.sarm.sparse_progress"
+    assert loaded.sample_weighting.signal_name == "sarm.sparse_progress"
     assert "whose RA-BC read a progress file" not in caplog.text
 
 

@@ -363,12 +363,12 @@ Score a few episodes with [`lerobot-score`](./reward_scoring), under their own s
 
 ```bash
 uv run lerobot-score \
-  --dataset_repo_id=your-username/your-dataset \
+  --repo_id=your-username/your-dataset \
   --reward_model.path=your-username/sarm-model \
   --reward_model.device=cuda \
   --reward_model.head_mode=sparse \
   --episodes='[0,1,2,3,4]' \
-  --name=sarm-preview
+  --score_name=sarm-preview
 
 uv run examples/dataset/create_progress_videos.py \
   --repo-id your-username/your-dataset \
@@ -383,6 +383,9 @@ Use `--reward_model.head_mode=dense` for the dense head, or `both` to draw both 
 ---
 
 ## Step 5 (Optional): Train Policy with RA-BC
+
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](./reward_scoring#convert-old-ra-bc-progress-files)).
 
 Reward-Aligned Behavior Cloning (RA-BC) uses the trained SARM model to weight training samples based on predicted progress improvement. This requires two steps:
 
@@ -410,8 +413,8 @@ Use [`lerobot-score`](./reward_scoring) to compute progress for each frame:
 
 ```bash
 uv run lerobot-score \
-  --dataset_repo_id=your-username/your-dataset \
-  --dataset_root=/path/to/local/dataset \
+  --repo_id=your-username/your-dataset \
+  --root=/path/to/local/dataset \
   --reward_model.path=your-username/sarm-model \
   --reward_model.device=cuda \
   --reward_model.head_mode=sparse \
@@ -430,17 +433,14 @@ SARM predicts progress from a window around each frame. The scorer saves the cen
 
 The score contains the signals selected by `--reward_model.head_mode`:
 
-| Signal                        | Description                                                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `reward.sarm.sparse_progress` | Sparse head progress value [0, 1]                                                                           |
-| `reward.sarm.dense_progress`  | Dense head progress value [0, 1] (dual-head models)                                                         |
-| `reward.sarm.sparse_stage`    | Sparse head's most likely subtask, as an index into its descriptor's `labels` (heads with several subtasks) |
-| `reward.sarm.dense_stage`     | Dense head's most likely subtask, as an index into its descriptor's `labels` (heads with several subtasks)  |
+| Signal                 | Description                                                                                                 |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `sarm.sparse_progress` | Sparse head progress value [0, 1]                                                                           |
+| `sarm.dense_progress`  | Dense head progress value [0, 1] (dual-head models)                                                         |
+| `sarm.sparse_stage`    | Sparse head's most likely subtask, as an index into its descriptor's `labels` (heads with several subtasks) |
+| `sarm.dense_stage`     | Dense head's most likely subtask, as an index into its descriptor's `labels` (heads with several subtasks)  |
 
 SARM normalizes the state with the statistics saved with the checkpoint (`policy_preprocessor.json`), not with the scored dataset's statistics, so appending episodes does not change the scores of existing ones. Failed predictions are marked as NaN. With `--reward_model.stride` above 1, interpolation fills gaps when valid predictions are available.
-
-> [!NOTE]
-> RA-BC reads dataset scores. It cannot read the `sarm_progress.parquet` files written by the removed `compute_rabc_weights.py` script. Recompute progress with `lerobot-score`, or convert an existing file with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](./reward_scoring#convert-old-ra-bc-progress-files)).
 
 ### Step 5b: Train Policy with RA-BC
 
@@ -453,7 +453,7 @@ lerobot-train \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
   --sample_weighting.score_name=sarm \
-  --sample_weighting.signal_name=reward.sarm.sparse_progress \
+  --sample_weighting.signal_name=sarm.sparse_progress \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \
@@ -469,13 +469,13 @@ The training script automatically:
 
 **RA-BC Arguments:**
 
-| Argument                         | Description                                            | Default |
-| -------------------------------- | ------------------------------------------------------ | ------- |
-| `--sample_weighting.type`        | Weighting strategy type (`rabc` or `uniform`)          | `rabc`  |
-| `--sample_weighting.score_name`  | Score name, such as `sarm`                             | —       |
-| `--sample_weighting.signal_name` | Progress signal, such as `reward.sarm.sparse_progress` | —       |
-| `--sample_weighting.kappa`       | Threshold κ for high-quality samples                   | `0.01`  |
-| `--sample_weighting.epsilon`     | Small constant for numerical stability                 | `1e-6`  |
+| Argument                         | Description                                     | Default |
+| -------------------------------- | ----------------------------------------------- | ------- |
+| `--sample_weighting.type`        | Weighting strategy type (`rabc` or `uniform`)   | `rabc`  |
+| `--sample_weighting.score_name`  | Score name, such as `sarm`                      | —       |
+| `--sample_weighting.signal_name` | Progress signal, such as `sarm.sparse_progress` | —       |
+| `--sample_weighting.kappa`       | Threshold κ for high-quality samples            | `0.01`  |
+| `--sample_weighting.epsilon`     | Small constant for numerical stability          | `1e-6`  |
 
 ### Tuning RA-BC Kappa
 
@@ -535,7 +535,7 @@ accelerate launch \
   --policy.type=pi0 \
   --sample_weighting.type=rabc \
   --sample_weighting.score_name=sarm \
-  --sample_weighting.signal_name=reward.sarm.sparse_progress \
+  --sample_weighting.signal_name=sarm.sparse_progress \
   --sample_weighting.kappa=0.01 \
   --output_dir=outputs/train/policy_rabc \
   --batch_size=32 \

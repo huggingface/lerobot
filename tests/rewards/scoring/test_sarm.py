@@ -23,12 +23,17 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
-from lerobot.rewards.sarm import SARMConfig, SARMOutput, processor_sarm, scoring_sarm
+from lerobot.rewards.sarm import (
+    SARM_DENSE_PROGRESS_SIGNAL,
+    SARM_DENSE_STAGE_SIGNAL,
+    SARM_SPARSE_PROGRESS_SIGNAL,
+    SARM_SPARSE_STAGE_SIGNAL,
+    SARMConfig,
+    SARMOutput,
+    processor_sarm,
+    scoring_sarm,
+)
 from lerobot.rewards.sarm.scoring_sarm import (
-    DENSE_PROGRESS_SIGNAL,
-    DENSE_STAGE_SIGNAL,
-    SPARSE_PROGRESS_SIGNAL,
-    SPARSE_STAGE_SIGNAL,
     SARMFrameScorer,
     make_sarm_frame_scorer,
 )
@@ -159,9 +164,9 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_s
     result = scorer.score_episode(dataset, 0)
 
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
-    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4])
-    assert set(result.signals) == {SPARSE_PROGRESS_SIGNAL}
-    assert result.signals[SPARSE_PROGRESS_SIGNAL].dtype == np.float32
+    np.testing.assert_allclose(result.signals[SARM_SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4])
+    assert set(result.signals) == {SARM_SPARSE_PROGRESS_SIGNAL}
+    assert result.signals[SARM_SPARSE_PROGRESS_SIGNAL].dtype == np.float32
     assert [call["index"] for call in encoder.calls] == [[0, 1], [2, 3], [4]]
     assert encoder.calls[0]["task"] == "pick up the cube"
     # The checkpoint's saved preprocessor, with its training normalization statistics, is used.
@@ -178,8 +183,8 @@ def test_sarm_frame_scorer_keeps_the_window_center_of_each_frame(encoder, with_s
     }
     # Each frame is read once, for both the image and the state.
     assert dataset.row_requests == list(range(5))
-    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
-    assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].greater_is_better is True
+    assert set(scorer.descriptors) == {SARM_SPARSE_PROGRESS_SIGNAL}
+    assert scorer.descriptors[SARM_SPARSE_PROGRESS_SIGNAL].greater_is_better is True
     assert scorer.name == "sarm"
 
 
@@ -202,7 +207,9 @@ def test_sarm_frame_scorer_interpolates_between_strided_frames(encoder):
     result = SARMFrameScorer(_FakeModel(stride=3)).score_episode(_FakeDataset(num_frames=5), 0)
 
     assert [call["index"] for call in encoder.calls] == [[0, 3, 4]]
-    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4], atol=1e-6)
+    np.testing.assert_allclose(
+        result.signals[SARM_SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, 0.2, 0.3, 0.4], atol=1e-6
+    )
 
 
 def test_sarm_frame_scorer_scores_both_heads_of_a_dual_head_model(encoder):
@@ -211,24 +218,24 @@ def test_sarm_frame_scorer_scores_both_heads_of_a_dual_head_model(encoder):
 
     result = scorer.score_episode(_FakeDataset(num_frames=2), 0)
 
-    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1])
-    np.testing.assert_allclose(result.signals[DENSE_PROGRESS_SIGNAL], [0.5, 0.6])
-    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL, DENSE_PROGRESS_SIGNAL}
+    np.testing.assert_allclose(result.signals[SARM_SPARSE_PROGRESS_SIGNAL], [0.0, 0.1])
+    np.testing.assert_allclose(result.signals[SARM_DENSE_PROGRESS_SIGNAL], [0.5, 0.6])
+    assert set(scorer.descriptors) == {SARM_SPARSE_PROGRESS_SIGNAL, SARM_DENSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_falls_back_to_the_sparse_head_without_dual_heads(encoder):
     scorer = SARMFrameScorer(_FakeModel(dual_heads=False, head_mode="dense"))
 
     assert scorer.heads == ["sparse"]
-    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
+    assert set(scorer.descriptors) == {SARM_SPARSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_stores_nan_for_frames_that_fail(encoder):
     scorer = SARMFrameScorer(_FakeModel(fail_on=2), batch_size=1)
     result = scorer.score_episode(_FakeDataset(num_frames=4), 0)
 
-    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
-    assert scorer.descriptors[SPARSE_PROGRESS_SIGNAL].allow_nan is True
+    np.testing.assert_allclose(result.signals[SARM_SPARSE_PROGRESS_SIGNAL], [0.0, 0.1, np.nan, 0.3])
+    assert scorer.descriptors[SARM_SPARSE_PROGRESS_SIGNAL].allow_nan is True
 
 
 class _StagedModel(_FakeModel):
@@ -251,9 +258,9 @@ def test_sarm_frame_scorer_records_the_predicted_subtask_of_each_frame(encoder):
 
     result = scorer.score_episode(_FakeDataset(num_frames=6), 0)
 
-    np.testing.assert_array_equal(result.signals[SPARSE_STAGE_SIGNAL], [0, 0, 1, 1, 2, 2])
-    assert result.signals[SPARSE_STAGE_SIGNAL].dtype == np.float32
-    descriptor = scorer.descriptors[SPARSE_STAGE_SIGNAL]
+    np.testing.assert_array_equal(result.signals[SARM_SPARSE_STAGE_SIGNAL], [0, 0, 1, 1, 2, 2])
+    assert result.signals[SARM_SPARSE_STAGE_SIGNAL].dtype == np.float32
+    descriptor = scorer.descriptors[SARM_SPARSE_STAGE_SIGNAL]
     assert descriptor.labels == ("grasp", "fold", "place")
     assert (descriptor.greater_is_better, descriptor.bounds) == (None, (0.0, 2.0))
 
@@ -264,29 +271,29 @@ def test_sarm_frame_scorer_keeps_the_last_scored_subtask_between_strided_frames(
     )
 
     # Frames 0, 3 and 5 are scored, as subtasks 0, 1 and 2.
-    np.testing.assert_array_equal(result.signals[SPARSE_STAGE_SIGNAL], [0, 0, 0, 1, 1, 2])
+    np.testing.assert_array_equal(result.signals[SARM_SPARSE_STAGE_SIGNAL], [0, 0, 0, 1, 1, 2])
 
 
 def test_sarm_frame_scorer_records_subtasks_of_both_heads(encoder):
     scorer = SARMFrameScorer(_StagedModel(["grasp", "place"], dual_heads=True, head_mode="both"))
 
     assert set(scorer.descriptors) == {
-        SPARSE_PROGRESS_SIGNAL,
-        SPARSE_STAGE_SIGNAL,
-        DENSE_PROGRESS_SIGNAL,
-        DENSE_STAGE_SIGNAL,
+        SARM_SPARSE_PROGRESS_SIGNAL,
+        SARM_SPARSE_STAGE_SIGNAL,
+        SARM_DENSE_PROGRESS_SIGNAL,
+        SARM_DENSE_STAGE_SIGNAL,
     }
     result = scorer.score_episode(_FakeDataset(num_frames=2), 0)
 
     assert set(result.signals) == set(scorer.descriptors)
-    np.testing.assert_array_equal(result.signals[DENSE_STAGE_SIGNAL], [0, 0])
+    np.testing.assert_array_equal(result.signals[SARM_DENSE_STAGE_SIGNAL], [0, 0])
 
 
 def test_sarm_frame_scorer_skips_the_subtask_of_a_single_stage_head(encoder):
     scorer = SARMFrameScorer(_StagedModel(["task"]))
 
-    assert set(scorer.descriptors) == {SPARSE_PROGRESS_SIGNAL}
-    assert set(scorer.score_episode(_FakeDataset(num_frames=2), 0).signals) == {SPARSE_PROGRESS_SIGNAL}
+    assert set(scorer.descriptors) == {SARM_SPARSE_PROGRESS_SIGNAL}
+    assert set(scorer.score_episode(_FakeDataset(num_frames=2), 0).signals) == {SARM_SPARSE_PROGRESS_SIGNAL}
 
 
 def test_sarm_frame_scorer_requires_a_trained_checkpoint(encoder):
@@ -372,7 +379,7 @@ def test_sarm_frame_scorer_normalizes_with_the_checkpoint_statistics(tmp_path, m
     result = SARMFrameScorer(_StateModel(config)).score_episode(dataset, 0)
 
     # The state of frame `f` is `f`, normalized with the training statistics to `(f - 1) / 2`.
-    np.testing.assert_allclose(result.signals[SPARSE_PROGRESS_SIGNAL], [-0.5, 0.0, 0.5])
+    np.testing.assert_allclose(result.signals[SARM_SPARSE_PROGRESS_SIGNAL], [-0.5, 0.0, 0.5])
 
 
 @pytest.mark.parametrize(

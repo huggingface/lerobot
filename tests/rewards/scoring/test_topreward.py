@@ -26,9 +26,9 @@ from lerobot.datasets.scores import load_scores
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.rewards import score_dataset
+from lerobot.rewards.topreward import TOPREWARD_PROGRESS_SIGNAL
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.scoring_topreward import (
-    PROGRESS_SIGNAL,
     TOPRewardFrameScorer,
     _build_prefix_lengths,
     make_topreward_frame_scorer,
@@ -148,10 +148,10 @@ def test_topreward_frame_scorer_scores_whole_prefixes_and_interpolates_progress(
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 3, 3, 2, 2), (1, 5, 3, 2, 2)]
     np.testing.assert_array_equal(result.frame_indices, np.arange(5))
-    np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 0.25, 0.5, 0.75, 1.0])
-    assert result.signals[PROGRESS_SIGNAL].dtype == np.float32
-    assert scorer.descriptors[PROGRESS_SIGNAL].bounds == (0.0, 1.0)
-    assert scorer.descriptors[PROGRESS_SIGNAL].greater_is_better is True
+    np.testing.assert_allclose(result.signals[TOPREWARD_PROGRESS_SIGNAL], [0.0, 0.25, 0.5, 0.75, 1.0])
+    assert result.signals[TOPREWARD_PROGRESS_SIGNAL].dtype == np.float32
+    assert scorer.descriptors[TOPREWARD_PROGRESS_SIGNAL].bounds == (0.0, 1.0)
+    assert scorer.descriptors[TOPREWARD_PROGRESS_SIGNAL].greater_is_better is True
     task = {"task": "pick up the cube", "instruction": "custom task at frame 0"}.get(task_key)
     assert encoder.steps[0].tasks == [task] * 3
     assert scorer.name == "topreward"
@@ -182,7 +182,7 @@ def test_topreward_scores_publish_to_the_dataset(tmp_path):
     dataset = FakeDataset()
     score_dataset(dataset, TOPRewardFrameScorer(_FakeModel(), _FakeEncoder()))
 
-    assert list(load_scores(dataset, "topreward")[PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert list(load_scores(dataset, "topreward")[TOPREWARD_PROGRESS_SIGNAL]) == [0.0, 0.25, 0.5, 0.75, 1.0]
 
 
 @pytest.mark.parametrize("filtered", [False, True])
@@ -197,7 +197,7 @@ def test_topreward_frame_scorer_supports_episode_filtered_dataset_views(monkeypa
     result = TOPRewardFrameScorer(_FakeModel(), encoder).score_episode(dataset, 1)
 
     assert encoder.prefix_shapes == [(1, 1, 3, 2, 2), (1, 2, 3, 2, 2)]
-    np.testing.assert_allclose(result.signals[PROGRESS_SIGNAL], [0.0, 1.0])
+    np.testing.assert_allclose(result.signals[TOPREWARD_PROGRESS_SIGNAL], [0.0, 1.0])
     assert sorted(set(dataset.row_requests)) == ([0, 1] if filtered else [5, 6])
     assert encoder.steps[0].tasks == ["pick up the cube", "pick up the cube"]
 

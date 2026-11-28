@@ -26,11 +26,10 @@ import numpy as np
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING:
-    from lerobot.configs.rewards import RewardModelConfig
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.configs import RewardModelConfig
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets.scores import add_scores, load_scores_info
+    from lerobot.datasets import LeRobotDataset, add_scores, load_scores_info
 
 
 @dataclass(frozen=True)
@@ -99,6 +98,36 @@ def scoring_options(config: RewardModelConfig) -> dict[str, Any]:
     for name in _RUN_FIELDS:
         options.pop(name, None)
     return options
+
+
+def interpolate_progress(
+    computed_indices: np.ndarray,
+    computed_values: np.ndarray,
+    all_indices: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate values scored at some frames onto every frame, skipping NaN values.
+
+    Args:
+        computed_indices: Frames that were scored, in increasing order.
+        computed_values: Value at each scored frame; NaN marks a frame that could not be scored.
+        all_indices: Frames to fill.
+
+    Returns:
+        One float32 value per frame in ``all_indices``: NaN everywhere when no value is finite, and
+        the single finite value everywhere when only one is.
+    """
+    computed_indices = np.asarray(computed_indices)
+    computed_values = np.asarray(computed_values)
+    all_indices = np.asarray(all_indices)
+
+    mask = np.isfinite(computed_values)
+    if mask.sum() == 0:
+        return np.full(all_indices.shape, np.nan, dtype=np.float32)
+    if mask.sum() == 1:
+        return np.full(all_indices.shape, float(computed_values[mask][0]), dtype=np.float32)
+
+    out = np.interp(all_indices, computed_indices[mask], computed_values[mask])
+    return out.astype(np.float32)
 
 
 def score_dataset(
