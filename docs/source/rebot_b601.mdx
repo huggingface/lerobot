@@ -346,6 +346,7 @@ Both builds expose the same joint names and public positions in degrees. LeRobot
 - `mit_kp`, `mit_kd`, and `pos_vel_velocity` accept either one scalar for every joint or a joint-keyed mapping.
 - `max_relative_target` caps the difference between a command and the latest measured position. For example, `--robot.max_relative_target=5.0` limits every commanded joint to a five-degree change.
 - `joint_limits` optionally overrides the family defaults in public joint degrees.
+- `--robot.use_velocity_and_torque=true` adds `.vel` (degrees per second) and `.torque` (N·m) to each motor's observation. It is off by default because enabling it changes `observation.state` from 7 to 21 dimensions per arm: record a new dataset and train a new policy instead of mixing it with a position-only dataset.
 
 Follower motor directions are selected internally from the motor family. The leader's `joint_directions` remain configurable if a teleoperation joint moves in the wrong direction.
 
