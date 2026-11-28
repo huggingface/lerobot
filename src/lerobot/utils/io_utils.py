@@ -16,7 +16,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +95,13 @@ def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
     Loads the JSON data from `fpath` and recursively fills `obj` with the
     corresponding values (strictly matching structure and types).
     Tuples in `obj` are expected to be lists in the JSON data, which will be
-    converted back into tuples.
+    converted back into tuples. The full structure is validated before any
+    values in `obj` are overwritten.
     """
     with open(fpath, encoding="utf-8") as f:
         data = json.load(f)
 
-    def _deserialize(target, source):
+    def _deserialize(target: JsonLike, source: JsonLike, *, update: bool) -> JsonLike:
         """
         Recursively overwrite the structure in `target` with data from `source`,
         performing strict checks on structure and type.
@@ -120,7 +121,9 @@ def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
 
             # Recursively update each key.
             for k in target:
-                target[k] = _deserialize(target[k], source[k])
+                value = _deserialize(target[k], source[k], update=update)
+                if update:
+                    target[k] = value
 
             return target
 
@@ -135,7 +138,9 @@ def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
 
             # Recursively update each element.
             for i in range(len(target)):
-                target[i] = _deserialize(target[i], source[i])
+                value = _deserialize(target[i], source[i], update=update)
+                if update:
+                    target[i] = value
 
             return target
 
@@ -151,7 +156,7 @@ def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
             # Convert each element, forming a new tuple.
             converted_items = []
             for t_item, s_item in zip(target, source, strict=False):
-                converted_items.append(_deserialize(t_item, s_item))
+                converted_items.append(_deserialize(t_item, s_item, update=update))
 
             # Return a brand new tuple (tuples are immutable in Python).
             return tuple(converted_items)
@@ -163,6 +168,7 @@ def deserialize_json_into_object[T: JsonLike](fpath: Path, obj: T) -> T:
                 raise TypeError(f"Type mismatch: expected {type(target)}, got {type(source)}")
             return source
 
-    # Perform the in-place/recursive deserialization
-    updated_obj = _deserialize(obj, data)
-    return updated_obj
+    # Validate the entire payload before mutating containers shared with the caller.
+    _deserialize(obj, data, update=False)
+    updated_obj = _deserialize(obj, data, update=True)
+    return cast(T, updated_obj)
