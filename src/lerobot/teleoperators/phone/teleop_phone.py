@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.hardware_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _hebi_available, _teleop_available, require_package

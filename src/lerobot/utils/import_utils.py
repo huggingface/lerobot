@@ -17,6 +17,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+from collections.abc import Sequence
 from typing import Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
@@ -283,3 +284,63 @@ def register_third_party_plugins() -> None:
             attempt_import(dist_name)
 
     logging.debug("Third-party plugin import summary: imported=%s failed=%s", imported, failed)
+
+
+PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
+
+
+def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
+    """Parse plugin-related arguments from command-line arguments.
+
+    This function extracts arguments from command-line arguments that match a specified suffix pattern.
+    It accepts arguments in the formats '--key=value' and '--key value' and returns them as a dictionary.
+
+    Args:
+        plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
+        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
+
+    Returns:
+        dict: A dictionary containing the parsed plugin arguments where:
+            - Keys are the argument names (with '--' prefix removed if present)
+            - Values are the corresponding argument values
+
+    Example:
+        >>> args = ["--env.discover_packages_path=my_package", "--other_arg=value"]
+        >>> parse_plugin_args("discover_packages_path", args)
+        {'env.discover_packages_path': 'my_package'}
+    """
+    plugin_args = {}
+    for index, arg in enumerate(args):
+        if not arg.startswith("--"):
+            continue
+
+        key, separator, value = arg[2:].partition("=")
+        if plugin_arg_suffix not in key:
+            continue
+        if not separator:
+            if index + 1 >= len(args) or args[index + 1].startswith("--"):
+                continue
+            value = args[index + 1]
+        plugin_args[key] = value
+    return plugin_args
+
+
+def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
+    if args is None:
+        return []
+    option = f"--{field_to_filter}"
+    filtered_args = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == option:
+            index += 1
+            if index < len(args) and not args[index].startswith("--"):
+                index += 1
+            continue
+        if arg.startswith(f"{option}="):
+            index += 1
+            continue
+        filtered_args.append(arg)
+        index += 1
+    return filtered_args

@@ -38,12 +38,12 @@ from draccus.wrappers.wrapper import AggregateWrapper, Wrapper
 
 from lerobot.utils.constants import TRAIN_CONFIG_NAME
 from lerobot.utils.hub import sanitize_checkpoint_consent
+from lerobot.utils.import_utils import PLUGIN_DISCOVERY_SUFFIX, filter_arg, parse_plugin_args
 from lerobot.utils.utils import has_method
 
 F = TypeVar("F", bound=Callable[..., object])
 
 PATH_KEY = "path"
-PLUGIN_DISCOVERY_SUFFIX = "discover_packages_path"
 
 # Storage for path args extracted from YAML/JSON config files, so that
 # get_path_arg() can find them even when they weren't passed via CLI.
@@ -131,42 +131,6 @@ def parse_arg(arg_name: str, args: Sequence[str] | None = None) -> str | None:
         if arg == option and index + 1 < len(args) and not args[index + 1].startswith("--"):
             return args[index + 1]
     return None
-
-
-def parse_plugin_args(plugin_arg_suffix: str, args: Sequence[str]) -> dict[str, str]:
-    """Parse plugin-related arguments from command-line arguments.
-
-    This function extracts arguments from command-line arguments that match a specified suffix pattern.
-    It accepts arguments in the formats '--key=value' and '--key value' and returns them as a dictionary.
-
-    Args:
-        plugin_arg_suffix (str): The suffix to identify plugin-related arguments.
-        cli_args (Sequence[str]): A sequence of command-line arguments to parse.
-
-    Returns:
-        dict: A dictionary containing the parsed plugin arguments where:
-            - Keys are the argument names (with '--' prefix removed if present)
-            - Values are the corresponding argument values
-
-    Example:
-        >>> args = ["--env.discover_packages_path=my_package", "--other_arg=value"]
-        >>> parse_plugin_args("discover_packages_path", args)
-        {'env.discover_packages_path': 'my_package'}
-    """
-    plugin_args = {}
-    for index, arg in enumerate(args):
-        if not arg.startswith("--"):
-            continue
-
-        key, separator, value = arg[2:].partition("=")
-        if plugin_arg_suffix not in key:
-            continue
-        if not separator:
-            if index + 1 >= len(args) or args[index + 1].startswith("--"):
-                continue
-            value = args[index + 1]
-        plugin_args[key] = value
-    return plugin_args
 
 
 class PluginLoadError(Exception):
@@ -295,27 +259,6 @@ def print_scoped_help(config_class: type, cli_args: Sequence[str]) -> None:
     )
     _register_scoped_actions(DataclassWrapper(config_class), parser, cli_args)
     parser.print_help()
-
-
-def filter_arg(field_to_filter: str, args: Sequence[str] | None = None) -> list[str]:
-    if args is None:
-        return []
-    option = f"--{field_to_filter}"
-    filtered_args = []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == option:
-            index += 1
-            if index < len(args) and not args[index].startswith("--"):
-                index += 1
-            continue
-        if arg.startswith(f"{option}="):
-            index += 1
-            continue
-        filtered_args.append(arg)
-        index += 1
-    return filtered_args
 
 
 def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | None = None) -> list[str]:

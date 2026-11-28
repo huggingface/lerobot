@@ -19,7 +19,6 @@ from __future__ import annotations
 import abc
 import contextlib
 import logging
-import math
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
@@ -35,10 +34,9 @@ from lerobot.utils import OBS_STR
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.robot_utils import return_to_position
+from lerobot.utils.rollout_status import RolloutStatusReporter
 from lerobot.utils.visualization_utils import log_visualization_data
-
-from ..status import RolloutStatusReporter
 
 if TYPE_CHECKING:
     from ..configs import RolloutConfig, RolloutStrategyConfig
@@ -106,7 +104,7 @@ class RolloutStrategy(abc.ABC):
         cfg = ctx.runtime.cfg
         interval = 0.0 if cfg.interactive else cfg.status_interval_s
         self._engine.latency.configure(interval)
-        self._status = RolloutStatusReporter(self._engine, interval, cfg.device)
+        self._status = RolloutStatusReporter(self._engine.latency, interval, cfg.device)
         logger.info("Starting inference engine...")
         self.reset_control_state()
         self._engine.start()
@@ -352,23 +350,7 @@ class RolloutStrategy(abc.ABC):
         if target is None:
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
-        try:
-            current_obs = robot.get_observation()
-            current_pos = {k: float(current_obs[k]) for k in target}
-            if not all(math.isfinite(current_pos[k]) and math.isfinite(target[k]) for k in target):
-                raise ValueError("Return movement requires finite current and initial positions")
-            steps = max(int(duration_s * fps), 1)
-            for step in range(1, steps + 1):
-                t = step / steps
-                interp = {}
-                for k in current_pos:
-                    interp[k] = current_pos[k] * (1 - t) + target[k] * t
-                robot.send_action(interp)
-                precise_sleep(1 / fps)
-        except Exception as e:
-            logger.warning("Could not return to initial position: %s", e)
-            return False
-        return True
+        return return_to_position(robot, target, duration_s, fps)
 
     @staticmethod
     def _log_telemetry(

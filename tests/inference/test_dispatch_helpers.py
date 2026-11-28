@@ -174,3 +174,11 @@ def test_a_starved_tick_is_counted_and_sends_nothing():
     assert dispatch_tick(engine, ActionInterpolator(), None, send=robot.send, timer=timer) is None
     assert len(engine.frames) == 1 and timer.starved == 1 and timer.sections == ["infer"]
     assert robot.sent == [] and engine.acknowledged == 0 and engine.dispatched == 0
+
+
+def test_only_the_action_of_a_policy_output_is_sent():
+    engine = GateEngine()
+    engine.actions = [{"action": torch.tensor([2.0]), "prediction": {"language": {"subtask": ["reach"]}}}]
+    robot = Robot()
+    assert dispatch_tick(engine, ActionInterpolator(), None, send=robot.send).item() == 2.0
+    assert robot.sent == [2.0] and engine.dispatched == 1

@@ -195,17 +195,17 @@ def _make_pipelines():
 
 def _build_features(*, align_state: bool, align_action: bool):
     """Reproduce ``build_rollout_context``'s feature reconciliation for one variant."""
-    from lerobot.rollout.context import _align_to_checkpoint_order
+    from lerobot.utils.robot_utils import align_to_checkpoint_order
 
     observation_features_hw = {**dict.fromkeys(HW_ORDER, float), **_CAMERAS}
     action_features_hw = dict.fromkeys(HW_ORDER, float)
 
     if align_state:
-        observation_features_hw = _align_to_checkpoint_order(
+        observation_features_hw = align_to_checkpoint_order(
             observation_features_hw, list(CKPT_ORDER), what="state"
         )
     if align_action:
-        action_features_hw = _align_to_checkpoint_order(action_features_hw, list(CKPT_ORDER), what="action")
+        action_features_hw = align_to_checkpoint_order(action_features_hw, list(CKPT_ORDER), what="action")
 
     dataset_features = combine_feature_dicts(
         hw_to_dataset_features(action_features_hw, "action"),
@@ -572,3 +572,16 @@ def test_sync_task_change_resets_the_postprocessor():
     engine.get_action(frame)
 
     assert len(resets) == before + 1, "a task change must rewind the postprocessor"
+
+
+def test_the_policy_reads_and_writes_the_motor_channels_in_checkpoint_order():
+    from lerobot.utils.robot_utils import policy_hw_features
+
+    motors = {**dict.fromkeys(HW_ORDER, float), "base_x.vel": float, "left_effort": float}
+    robot = SimpleNamespace(observation_features={**motors, **_CAMERAS}, action_features=motors)
+    checkpoint_order = [*CKPT_ORDER, "base_x.vel"]
+    observation, action = policy_hw_features(robot, checkpoint_order)
+    assert list(observation) == [*checkpoint_order, *_CAMERAS] and list(action) == checkpoint_order
+
+    observation, action = policy_hw_features(robot, CKPT_ORDER, keep_all=True)
+    assert "left_effort" in observation and "left_effort" in action

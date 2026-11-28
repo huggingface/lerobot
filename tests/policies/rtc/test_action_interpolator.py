@@ -14,6 +14,7 @@
 
 """Tests for ActionInterpolator and its interaction with ActionQueue (RTC)."""
 
+import numpy as np
 import pytest
 import torch
 
@@ -70,6 +71,28 @@ def test_interpolator_default_multiplier_is_1():
     interp = ActionInterpolator()
     assert interp.multiplier == 1
     assert not interp.enabled
+
+
+def test_numpy_actions_match_tensor_actions():
+    """NumPy actions stay NumPy, interpolate to exactly the values tensors give, and are copied on add."""
+    actions = [[0.1, -2.5, 3.0], [1.7, 0.3, -0.9], [-4.2, 5.5, 0.25]]
+
+    def run(convert, overwrite_after_add):
+        interp = ActionInterpolator(multiplier=2)
+        rows = []
+        for a in actions:
+            action = convert(a)
+            interp.add(action)
+            if overwrite_after_add:
+                action[0] = 100.0
+            while (out := interp.get()) is not None:
+                assert isinstance(out, type(action))
+                rows.append(out.tolist())
+        return rows
+
+    expected = run(torch.tensor, overwrite_after_add=False)
+    assert run(torch.tensor, overwrite_after_add=True) == expected
+    assert run(lambda a: np.array(a, dtype=np.float32), overwrite_after_add=True) == expected
 
 
 # ====================== needs_new_action Tests ======================
