@@ -105,7 +105,8 @@ class JointAffineProcessorStep(ProcessorStep):
 
         A normalizer placed after the step needs the stats in the step's output frame, while a dataset's stats are
         in the robot's. `mean`, `std`, `min`, `max` and the quantiles (`q01`, ...) are mapped; a negative factor
-        swaps the low and high ones (`min` and `max`, `q01` and `q99`). Other entries, such as `count`, are kept.
+        swaps the low and high ones (`min` and `max`, `q01` and `q99`). Provide both statistics in each pair
+        when a factor is negative. Other entries, such as `count`, are kept.
 
         Args:
             stats (`dict[str, dict[str, Any]]`):
@@ -119,6 +120,7 @@ class JointAffineProcessorStep(ProcessorStep):
         factors, offsets = self._coefficients()
         n = len(factors)
         flipped = factors < 0
+        needs_partner = flipped.any()
         mapped_stats = dict(stats)
         for key in (OBS_STATE, ACTION):
             if key not in stats:
@@ -137,6 +139,11 @@ class JointAffineProcessorStep(ProcessorStep):
                         if quantile
                         else {"min": "max", "max": "min"}.get(name, name)
                     )
+                    if needs_partner and partner not in stats[key]:
+                        raise ValueError(
+                            f"Cannot transform {key!r} statistic {name!r} without {partner!r} "
+                            "when a mapped joint has a negative scale."
+                        )
                     partner_values = _to_float64(stats[key].get(partner, value))
                     mapped[..., :n] = (
                         np.where(flipped, partner_values[..., :n], mapped[..., :n]) * factors + offsets

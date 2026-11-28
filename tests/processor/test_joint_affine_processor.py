@@ -92,6 +92,25 @@ def test_transform_stats_matches_the_mapped_values():
     assert ACTION not in step.transform_stats(stats)
 
 
+@pytest.mark.parametrize(
+    ("key", "stat", "partner"),
+    [(OBS_STATE, "q10", "q90"), (ACTION, "q90", "q10"), (OBS_STATE, "min", "max"), (ACTION, "max", "min")],
+)
+def test_transform_stats_requires_partner_for_flipped_joints(key: str, stat: str, partner: str) -> None:
+    step = JointAffineProcessorStep(scales=[2.0, -1.0])
+    stats = {key: {stat: np.array([2.0, 5.0])}}
+
+    with pytest.raises(ValueError, match=rf"{stat}.*{partner}"):
+        step.transform_stats(stats)
+
+
+def test_transform_stats_accepts_unpaired_stats_for_positive_scales() -> None:
+    step = JointAffineProcessorStep(scales=[2.0], offsets=[1.0])
+    stats = {OBS_STATE: {"q10": np.array([12.0, 7.0])}}
+
+    np.testing.assert_array_equal(step.transform_stats(stats)[OBS_STATE]["q10"], [25.0, 7.0])
+
+
 def test_save_and_load(tmp_path):
     step = JointAffineProcessorStep(scales=SCALES, offsets=OFFSETS, inverse=True)
     DataProcessorPipeline(steps=[step], name="post").save_pretrained(tmp_path)
