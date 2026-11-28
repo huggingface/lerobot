@@ -178,7 +178,7 @@ def test_rollout_reports_what_the_environment_measures():
     assert result["metrics"]["tick"].tolist() == [[1.0, 2.0]]
 
 
-def _eval_all(env_cls) -> dict:
+def _eval_all(*env_classes, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP) -> dict:
     """Run `eval_policy_all`, which is what `lerobot-eval` writes to eval_info.json."""
 
     class _Policy(_RecordingPolicy):
@@ -186,7 +186,7 @@ def _eval_all(env_cls) -> dict:
 
     PreTrainedPolicy.register(_Policy)  # eval_policy checks the type; no weights are needed here
     preprocessor, postprocessor = make_policy_processor_pipelines([], [])
-    env = gym.vector.SyncVectorEnv([env_cls])
+    env = gym.vector.SyncVectorEnv(env_classes, autoreset_mode=autoreset_mode)
     try:
         return eval_policy_all(
             {"move": {0: env}},
@@ -195,7 +195,7 @@ def _eval_all(env_cls) -> dict:
             env_postprocessor=PolicyProcessorPipeline(steps=[]),
             preprocessor=preprocessor,
             postprocessor=postprocessor,
-            n_episodes=1,
+            n_episodes=len(env_classes),
             start_seed=0,
         )
     finally:
@@ -221,6 +221,32 @@ def test_eval_info_keeps_each_episode_seed_when_the_environment_measures_nothing
     assert episode["seed"] == 0 and episode["success"] == metrics["successes"][0]
     assert "metrics" not in episode
     json.dumps(info)  # eval_info.json must stay serializable
+
+
+@pytest.mark.parametrize(
+    "autoreset_mode", [gym.vector.AutoresetMode.NEXT_STEP, gym.vector.AutoresetMode.SAME_STEP]
+)
+def test_eval_keeps_only_reported_terminal_metrics(autoreset_mode):
+    class _ReportsTerminalMetric(_TwoStepEnv):
+        def reset(self, *, seed=None, options=None):
+            observation, _ = super().reset(seed=0, options=options)
+            return observation, {"metrics": {"reset_only": 99.0}}
+
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            metrics = {"score": 0.0} if terminated else {"step_only": 5.0}
+            return observation, reward, terminated, truncated, {"metrics": metrics}
+
+    class _NoTerminalMetric(_ReportsTerminalMetric):
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            return observation, reward, terminated, truncated, {}
+
+    info = _eval_all(_ReportsTerminalMetric, _NoTerminalMetric, autoreset_mode=autoreset_mode)
+    first, second = info["per_task"][0]["metrics"]["per_episode"]
+    assert first["metrics"] == {"score": 0.0}
+    assert "metrics" not in second
+    json.dumps(info, allow_nan=False)
 
 
 def test_rollout_ends_at_the_step_cap_below_the_env_limit():

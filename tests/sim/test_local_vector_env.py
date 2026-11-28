@@ -135,6 +135,29 @@ def test_simulator_metrics_freeze_with_the_env_that_reported_them():
         env.close()
 
 
+def test_batched_metric_presence_keeps_last_measurement(monkeypatch):
+    step = ToyVectorEnv.step
+    reports = iter(([2.0, 3.0], [0.0, 0.0]))
+    masks = iter(([True, True], [False, True]))
+
+    def sparse_step(self, actions):
+        obs, reward, terminated, truncated, info = step(self, actions)
+        info["metrics"] = {"progress": np.array(next(reports)), "_progress": np.array(next(masks))}
+        return obs, reward, terminated, truncated, info
+
+    monkeypatch.setattr(ToyVectorEnv, "step", sparse_step)
+    config = replace(ToyEnvConfig().sim_config(), type="toy_vector")
+    env = LocalVectorEnv(config, num_envs=2)
+    try:
+        env.reset(seed=[4, 5])
+        for _ in range(2):
+            _, _, _, _, info = env.step(np.zeros((2, 2), np.float32))
+        np.testing.assert_array_equal(info["metrics"]["progress"], [2.0, 0.0])
+        assert set(info["metrics"]) == {"progress"}
+    finally:
+        env.close()
+
+
 def test_a_batched_simulator_that_autoresets_is_rejected():
     config = {
         **ToyEnvConfig().sim_settings(),
