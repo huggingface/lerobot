@@ -274,7 +274,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
-        self.meta.rescale_depth_stats(self._depth_output_unit)
+        # Detect write-mode params for backward compatibility
+        _has_write_params = streaming_encoding or batch_encoding_size != 1
+        if not (_has_write_params and self.meta.storage_format == DEFAULT_STORAGE_FORMAT):
+            # A writer opened through write-mode params records into these stats, so they stay in
+            # the recorded unit until its finalize() converts them, as for create()/resume().
+            self.meta.rescale_depth_stats(self._depth_output_unit)
 
         if episodes is not None and any(
             episode >= self.meta.total_episodes or episode < 0 for episode in episodes
@@ -358,8 +363,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self._download(download_videos, token=token)
             reader.load_and_activate()
 
-        # Detect write-mode params for backward compatibility
-        _has_write_params = streaming_encoding or batch_encoding_size != 1
         if _has_write_params:
             import warnings
 
@@ -582,6 +585,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             return
         if self.writer is not None:
             self.writer.finalize()
+            if self.meta.depth_keys:
+                # Read mode starts here: convert depth stats before anything (e.g. a normalizer)
+                # reads them. Load first, so a later metadata reload cannot undo the conversion.
+                self.meta.ensure_readable()
+                self.meta.rescale_depth_stats(self._depth_output_unit)
         self._is_finalized = True
 
     # ── Core Dataset methods ──────────────────────────────────────────
