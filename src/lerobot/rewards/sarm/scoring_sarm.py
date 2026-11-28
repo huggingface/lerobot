@@ -27,7 +27,7 @@ from lerobot.processor import PolicyProcessorPipeline
 from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.import_utils import _av_available, _datasets_available
 
-from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from ..scoring import FrameSignals, SignalDescriptor, interpolate_progress, scoring_options
 from .configuration_sarm import (
     SARM_DENSE_PROGRESS_SIGNAL,
     SARM_DENSE_STAGE_SIGNAL,
@@ -36,7 +36,6 @@ from .configuration_sarm import (
     SARM_SPARSE_STAGE_SIGNAL,
 )
 from .modeling_sarm import SARMRewardModel
-from .sarm_utils import interpolate_progress
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
     from lerobot.datasets import LeRobotDataset, delta_window

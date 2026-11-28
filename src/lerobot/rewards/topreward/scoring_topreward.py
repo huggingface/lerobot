@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 
 from lerobot.processor import PolicyProcessorPipeline
 
-from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from ..scoring import FrameSignals, SignalDescriptor, interpolate_progress, scoring_options
 from .configuration_topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
@@ -112,12 +112,12 @@ class TOPRewardFrameScorer:
                 log_probabilities[i] = self.model.compute_log_probability(encoded).item()
 
         # Frame t ends the prefix of length t + 1; frames between scored prefixes are interpolated.
-        progress = np.interp(
-            np.arange(1, num_frames + 1), prefix_lengths, _normalize_rewards(log_probabilities)
+        progress = interpolate_progress(
+            prefix_lengths, _normalize_rewards(log_probabilities), np.arange(1, num_frames + 1)
         )
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),
-            signals={TOPREWARD_PROGRESS_SIGNAL: progress.astype(np.float32)},
+            signals={TOPREWARD_PROGRESS_SIGNAL: progress},
         )
 
 
