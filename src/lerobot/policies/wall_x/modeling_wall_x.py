@@ -49,6 +49,7 @@ from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
+from lerobot.processor import decode_fast_actions
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import (
@@ -1321,10 +1322,17 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 "proprioception": proprioception,
             }
 
+            # A FAST token covers at least one DCT coefficient, so a whole action chunk fits in
+            # pred_horizon * action_dim tokens, plus the end-of-sequence token.
+            if predict_mode == "fast" and pred_horizon is not None and action_dim is not None:
+                max_new_tokens = pred_horizon * action_dim + 1
+            else:
+                max_new_tokens = 100
+
             # Generate output tokens
             predict_output_ids = self.generate(
                 **batch,
-                max_new_tokens=100,
+                max_new_tokens=max_new_tokens,
                 eos_token_id=[self.processor.tokenizer.eos_token_id],
                 use_cache=True,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
@@ -1348,16 +1356,18 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
 
         # Convert tokens to actions for fast prediction mode
         if predict_mode == "fast":
-            action_id = []
-            # Extract action tokens from generated sequence
-            for token_id_i in predict_output_ids[0]:
-                if token_id_i.item() >= self.processor.tokenizer.init_kwargs["action_token_start_index"]:
-                    action_id.append(
-                        token_id_i.item() - self.processor.tokenizer.init_kwargs["action_token_start_index"]
-                    )
+            if pred_horizon is None or action_dim is None:
+                raise ValueError("Fast action prediction requires pred_horizon and action_dim.")
+            # Keep only generated <|action_token_i|> tokens, mapped back to their FAST ID i.
+            fast_ids = {
+                token_id: i for i, token_id in enumerate(self.action_token_id_set["fast_action_token_list"])
+            }
+            action_id = [
+                fast_ids[token_id] for token_id in predict_output_ids[0].tolist() if token_id in fast_ids
+            ]
 
-            predict_action = self.processor.action_processor.decode(
-                [action_id], time_horizon=pred_horizon, action_dim=action_dim
+            predict_action = decode_fast_actions(
+                self.processor.action_processor, [action_id], action_dim, time_horizon=pred_horizon
             )
             # Handle action decoding errors
             if np.sum(predict_action) == 0:
@@ -1369,8 +1379,8 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 # Convert discrete tokens to continuous actions
                 predict_action = torch.tensor(predict_action, device=self.device)
                 dof_mask = dof_mask.to(self.device).to(pixel_values.dtype)
-                # removed unnormalization step for now
-                predict_action = predict_action[:, :, dof_mask[0, 0, :].bool()]
+                # Decoding already returns action_dim columns. Apply the padded DOF mask
+                # only to ground-truth actions, which still include padded columns.
                 output["predict_action"] = predict_action
 
             # Process ground truth actions if available

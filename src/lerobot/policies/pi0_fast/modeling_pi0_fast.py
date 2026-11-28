@@ -21,19 +21,13 @@ from copy import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
-import numpy as np
 import torch
 from torch import Tensor, nn
 
 from lerobot.utils.hub import split_hub_reference
-from lerobot.utils.import_utils import _scipy_available, _transformers_available, require_package
+from lerobot.utils.import_utils import _transformers_available, require_package
 
 # Conditional import for type checking and lazy loading
-if TYPE_CHECKING or _scipy_available:
-    from scipy.fftpack import idct
-else:
-    idct = None
-
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoProcessor, AutoTokenizer
     from transformers.models.auto import CONFIG_MAPPING
@@ -50,6 +44,7 @@ else:
     PaliGemmaForConditionalGenerationWithPiGemma = None
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.processor import decode_fast_actions, paligemma_ids_to_fast_ids
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -62,6 +57,7 @@ from ..common.vla_utils import pad_vector, prepare_attention_masks_4d, resize_wi
 from ..pretrained import PreTrainedPolicy, T
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_pi0_fast import PI0FastConfig
+from .processor_pi0_fast import find_saved_action_tokenizer
 
 
 class ActionSelectKwargs(TypedDict, total=False):
@@ -769,8 +765,14 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Load tokenizers first
         try:
-            # Load FAST tokenizer
-            repo_id, revision = split_hub_reference(config.action_tokenizer_name)
+            # Decode with the FAST tokenizer the processor encodes with: the copy saved in the
+            # checkpoint, or the configured one.
+            action_tokenizer_path = None
+            if config.pretrained_path is not None:
+                action_tokenizer_path = find_saved_action_tokenizer(
+                    config.pretrained_path, config.action_tokenizer_name, revision=config.pretrained_revision
+                )
+            repo_id, revision = split_hub_reference(action_tokenizer_path or config.action_tokenizer_name)
             self.action_tokenizer = AutoProcessor.from_pretrained(
                 repo_id, trust_remote_code=config.trust_remote_code, revision=revision, code_revision=revision
             )
@@ -1061,74 +1063,6 @@ class PI0FastPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _paligemma_tokens_to_act_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Converts PaliGemma tokens back to action tokens (inverse of _act_tokens_to_paligemma_tokens).
-
-        Args:
-            tokens: PaliGemma token IDs
-
-        Returns:
-            Action token IDs
-        """
-        return self._paligemma_tokenizer.vocab_size - 1 - self.config.fast_skip_tokens - tokens
-
-    def decode_actions_with_fast(
-        self, token_ids: list[int], time_horizon: int, action_dim: int, relaxed_decoding: bool = True
-    ) -> np.ndarray:
-        """
-        Decodes action token IDs back to continuous action values using the FAST tokenizer.
-
-        Args:
-            token_ids: List of token IDs to decode.
-            time_horizon: The number of timesteps for actions.
-            action_dim: The dimensionality of each action.
-            relaxed_decoding: Whether to use relaxed decoding (allows partial sequences).
-
-        Returns:
-            A numpy array representing the decoded actions.
-        """
-        decoded_actions = []
-
-        for token in token_ids:
-            try:
-                decoded_tokens = self.action_tokenizer.bpe_tokenizer.decode(token)
-                decoded_dct_coeff = np.array(list(map(ord, decoded_tokens))) + self.action_tokenizer.min_token
-
-                if relaxed_decoding:
-                    # expected sequence length
-                    expected_seq_len = time_horizon * action_dim
-                    diff = expected_seq_len - decoded_dct_coeff.shape[0]
-
-                    # apply truncation if too long
-                    if diff < 0:
-                        decoded_dct_coeff = decoded_dct_coeff[:expected_seq_len]  # truncate on the right
-
-                    # apply padding if too short
-                    elif diff > 0:
-                        decoded_dct_coeff = np.pad(
-                            decoded_dct_coeff, (0, diff), mode="constant", constant_values=0
-                        )
-
-                decoded_dct_coeff = decoded_dct_coeff.reshape(-1, action_dim)
-                assert decoded_dct_coeff.shape == (
-                    time_horizon,
-                    action_dim,
-                ), (
-                    f"Decoded DCT coefficients have shape {decoded_dct_coeff.shape}, expected ({time_horizon}, {action_dim})"
-                )
-
-            except Exception as e:
-                logging.warning(f"Error decoding tokens: {e}")
-                logging.warning(f"Tokens: {token}")
-                decoded_dct_coeff = np.zeros((time_horizon, action_dim))
-
-            decoded_actions.append(
-                idct(decoded_dct_coeff / self.action_tokenizer.scale, axis=0, norm="ortho")
-            )
-
-        return np.stack(decoded_actions)
-
     def detokenize_actions(self, tokens: torch.Tensor, action_horizon: int, action_dim: int) -> torch.Tensor:
         """
         Detokenizes action tokens back to continuous actions.
@@ -1200,12 +1134,19 @@ class PI0FastPolicy(PreTrainedPolicy):
 
         # Convert PaliGemma tokens to action tokens
         action_tokens = [
-            self._paligemma_tokens_to_act_tokens(raw_action_token) for raw_action_token in raw_action_tokens
+            paligemma_ids_to_fast_ids(
+                raw_action_token, self._paligemma_tokenizer.vocab_size, self.config.fast_skip_tokens
+            )
+            for raw_action_token in raw_action_tokens
         ]
 
         # Decode action tokens to continuous actions
-        actions = self.decode_actions_with_fast(
-            action_tokens, time_horizon=action_horizon, action_dim=action_dim
+        actions = decode_fast_actions(
+            self.action_tokenizer,
+            [token_ids.tolist() for token_ids in action_tokens],
+            action_dim,
+            time_horizon=action_horizon,
+            relaxed=True,
         )
 
         # Convert to tensor and return
@@ -1269,8 +1210,9 @@ class PI0FastPolicy(PreTrainedPolicy):
                 temperature=temperature,
             )
 
-        # Detokenize action tokens to continuous actions
-        action_horizon = self.config.n_action_steps
+        # DCT coefficients represent the full training chunk. select_action slices
+        # the decoded trajectory to n_action_steps when filling its execution queue.
+        action_horizon = self.config.chunk_size
         if self.config.output_features is None:
             raise ValueError("output_features must be set (validate_features) before predicting actions")
         action_dim = self.config.output_features[ACTION].shape[0]

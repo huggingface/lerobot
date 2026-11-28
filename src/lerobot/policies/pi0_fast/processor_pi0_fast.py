@@ -14,12 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+from huggingface_hub import snapshot_download
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
@@ -36,6 +39,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.processor.tokenizer_processor import ACTION_TOKENIZER_DIR
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.hub import split_hub_reference
 
@@ -173,10 +177,55 @@ def make_pi0_fast_pre_post_processors(
     return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)
 
 
+def find_saved_action_tokenizer(
+    pretrained_path: str | Path, action_tokenizer_name: str, *, revision: str | None = None
+) -> str | None:
+    """Return the FAST tokenizer folder the processor saved in a checkpoint, if it can be used.
+
+    The policy decodes with this folder and the processor encodes with it, so both sides use the
+    same tokenizer.
+
+    Args:
+        pretrained_path: Local checkpoint directory or Hub repository.
+        action_tokenizer_name: Tokenizer the policy is configured with.
+        revision: Hub revision of the checkpoint.
+
+    Returns:
+        The saved folder, or ``None`` when the checkpoint has none (checkpoints saved before the
+        processor stored its tokenizer) or was trained with a different ``action_tokenizer_name``.
+    """
+    if Path(pretrained_path).is_dir():
+        root = Path(pretrained_path)
+    else:
+        try:
+            root = Path(
+                snapshot_download(
+                    str(pretrained_path),
+                    allow_patterns=["config.json", f"{ACTION_TOKENIZER_DIR}/*"],
+                    revision=revision,
+                )
+            )
+        except OSError:
+            # Missing from the Hub, or not cached while offline: use the configured tokenizer.
+            return None
+    folder = root / ACTION_TOKENIZER_DIR
+    config_file = root / "config.json"
+    if not (folder / "processor_config.json").is_file() or not config_file.is_file():
+        return None
+    # Fine-tuning with another tokenizer keeps the configured one.
+    if json.loads(config_file.read_text()).get("action_tokenizer_name") != action_tokenizer_name:
+        return None
+    return str(folder)
+
+
 def make_pi0_fast_pre_post_processors_from_pretrained(
     config: PI0FastConfig, pretrained_path: str, **kwargs: Any
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Apply repo@revision overrides before loading saved processor steps."""
+    """Apply repo@revision overrides before loading saved processor steps.
+
+    The action tokenizer step also encodes with the tokenizer the policy decodes with: the copy saved
+    in the checkpoint, or ``config.action_tokenizer_name`` when fine-tuning with another tokenizer.
+    """
     kwargs.pop("dataset_stats", None)
     kwargs.pop("dataset_meta", None)
     overrides = deepcopy(kwargs.pop("preprocessor_overrides", None) or {})
@@ -187,6 +236,13 @@ def make_pi0_fast_pre_post_processors_from_pretrained(
     ):
         if split_hub_reference(name)[1] is not None:
             overrides.setdefault(step, {}).setdefault(key, name)
+    saved_tokenizer = find_saved_action_tokenizer(
+        pretrained_path, config.action_tokenizer_name, revision=kwargs.get("revision")
+    )
+    if saved_tokenizer is None:
+        overrides.setdefault("action_tokenizer_processor", {}).setdefault(
+            "action_tokenizer_name", config.action_tokenizer_name
+        )
     return load_pretrained_policy_processors(
         pretrained_path,
         preprocessor_overrides=overrides,

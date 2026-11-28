@@ -245,6 +245,30 @@ def make_my_policy_pre_post_processors_from_pretrained(
 
 For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (renames override keys).
 
+### Policies that predict action tokens
+
+Autoregressive policies predict actions as discrete tokens from an action tokenizer. Encoding and decoding must match exactly, so reuse what LeRobot already has instead of writing your own.
+
+**FAST tokens.** π₀-FAST, FineART-VLA, WALL-X and MolmoAct2 all use the FAST tokenizer through shared functions in `lerobot.processor`. Use them too, rather than calling the tokenizer directly:
+
+- `encode_fast_actions(tokenizer, actions)` takes normalized actions of shape `(B, H, D)` and returns one list of raw FAST IDs per chunk.
+- `decode_fast_actions(tokenizer, tokens, action_dim, *, time_horizon, relaxed=False)` returns actions of shape `(B, time_horizon, action_dim)`. Pass the horizon the tokens encode (the whole chunk), then select the steps to execute: the decoded values depend on it.
+- `fast_ids_to_paligemma_ids()` and `paligemma_ids_to_fast_ids()` map raw FAST IDs into a PaliGemma vocabulary and back.
+- `ActionTokenizerProcessorStep` adds FAST training targets to the preprocessor and saves the tokenizer inside the checkpoint. Decode with that saved copy, as `PI0FastPolicy` does, so a checkpoint always decodes with the tokenizer it was trained with. When fine-tuning with another tokenizer, encode and decode with that one instead (see `make_pi0_fast_pre_post_processors_from_pretrained`).
+
+```python
+from lerobot.processor import decode_fast_actions, paligemma_ids_to_fast_ids
+
+fast_ids = paligemma_ids_to_fast_ids(generated_ids, vocab_size, self.config.fast_skip_tokens)
+actions = decode_fast_actions(
+    self.action_tokenizer, [fast_ids.tolist()], action_dim, time_horizon=self.config.chunk_size
+)
+```
+
+Fit a dataset-specific FAST tokenizer on the same actions the policy trains on: the same normalization, relative actions and chunk length. See [Training a Custom FAST Tokenizer](./pi0fast#training-a-custom-fast-tokenizer).
+
+**Another tokenizer.** A tokenizer that only your policy uses belongs in your policy folder. Give it the same shape as the FAST functions: `encode(actions)` for normalized `(B, H, D)` actions, and `decode(tokens, action_dim)` returning `(B, H, D)` actions. Use one tokenizer object for both directions and save it with the checkpoint, so decoding always matches training.
+
 ### Returning a prediction besides actions (imagined frames, subtasks, boxes)
 
 A policy may return what it expects or believes besides the action it takes, such as a world

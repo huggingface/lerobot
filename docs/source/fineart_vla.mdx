@@ -179,6 +179,13 @@ tokenizer that loads custom code. When calling `fit_fast_tokenizer` directly in
 Python, pass `trust_remote_code=True` after reviewing the base tokenizer code.
 Pin the base FAST tokenizer with `--policy.action_tokenizer_name=physical-intelligence/fast@<full-commit-sha>`; this also pins the source used for fitting.
 
+Fitting applies the same relative-action and normalization steps as training. The
+cache is keyed by the dataset (repository, revision and local copy), episode
+selection, sampling (seed and sample counts), preprocessing and validation
+settings, so changing any of them fits a new tokenizer. The checkpoint
+config records the tokenizer's vocabulary size (`fast_vocab_size`), so text
+generation blocks every FAST ID.
+
 ## Training performance
 
 FineART-VLA uses optimized training paths by default:

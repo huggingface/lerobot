@@ -119,7 +119,7 @@ def test_action_tokenizer_can_reject_truncated_sequences():
     processor.max_action_tokens = 4
     processor.fast_skip_tokens = 128
     processor.allow_truncation = False
-    processor.action_tokenizer = lambda _actions: [1, 2, 3]
+    processor.action_tokenizer = lambda _actions: [[1, 2, 3]]
     processor._paligemma_tokenizer = type(
         "Tokenizer",
         (),
