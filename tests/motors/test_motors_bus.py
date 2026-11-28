@@ -470,6 +470,32 @@ def arm() -> MockMotorsBus:
     return bus
 
 
+@pytest.mark.parametrize("resolution", [1024, 4096])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_record_ranges_refuses_an_encoder_wrap(bus, monkeypatch, resolution, reverse):
+    monkeypatch.setattr(DUMMY_2, "resolution", resolution)
+    samples = [10, resolution - 10] if reverse else [resolution - 10, 10]
+    with (
+        patch.object(bus, "sync_read", side_effect=[{"dummy_1": value} for value in samples]),
+        patch("lerobot.motors.motors_bus.enter_pressed", return_value=True),
+        pytest.raises(ValueError, match=r"dummy_1.*wrapped"),
+    ):
+        bus.record_ranges_of_motion(["dummy_1"], display_values=False)
+
+
+def test_record_ranges_accepts_a_smooth_sweep_wider_than_half_a_turn(bus, monkeypatch):
+    monkeypatch.setattr(DUMMY_2, "resolution", 1024)
+    with (
+        patch.object(bus, "sync_read", side_effect=[{"dummy_1": value} for value in (50, 400, 700, 1000)]),
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, False, True]),
+        patch("lerobot.motors.motors_bus.time.sleep"),
+    ):
+        assert bus.record_ranges_of_motion(["dummy_1"], display_values=False) == (
+            {"dummy_1": 50},
+            {"dummy_1": 1000},
+        )
+
+
 def test_record_calibration(arm, monkeypatch):
     """The motors are freed, in their mode and direction before the pose is asked; then homed at
     the pose held, ranges swept by hand, and a full-turn motor spans its whole encoder."""
@@ -477,7 +503,8 @@ def test_record_calibration(arm, monkeypatch):
     for id_ in arm.ids:
         arm._bus.seed(id_, "torque_enable", 1)
         arm._bus.seed(id_, "drive_mode", 1)
-    poses = [{1: 600, 2: 300, 3: 400}, {1: 100, 3: 200}, {1: 900, 3: 700}]  # held, then swept
+    # held, then swept with intermediate samples less than half a turn apart
+    poses = [{1: 600, 2: 300, 3: 400}, {1: 100, 3: 200}, {1: 500, 3: 450}, {1: 900, 3: 700}]
     at_prompt = {}
 
     def move() -> bool:
