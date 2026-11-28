@@ -161,7 +161,8 @@ class TrainPipelineConfig(HubMixin):
     log_freq: int = 200  # 0 or negative disables periodic logging
     # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
-    # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
+    # Cap on held-out frames (0 = use all). Balance across tasks when the reader exposes task indices;
+    # otherwise take the first eligible frames in dataset order.
     max_eval_samples: int = 0
     tolerance_s: float = 1e-4
     save_checkpoint: bool = True
