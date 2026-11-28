@@ -49,6 +49,7 @@ class TokenController:
     """Stand-in for SonicWholeBodyController: declares its own action and proprio spaces."""
 
     control_dt = 0.02
+    supports_position_hold = True
 
     def __init__(self, dim: int = TOKEN_DIM):
         self.action_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
@@ -69,9 +70,11 @@ class TokenController:
 
 
 class LocomotionOnlyController:
-    """Stand-in for GR00T/Holosoma: declares no optional features, so the robot's defaults apply."""
+    """Stand-in for GR00T/Holosoma: takes the joystick, leaves the arms to the caller."""
 
     control_dt = 0.02
+    action_ft = dict.fromkeys(REMOTE_KEYS, float)
+    passthrough = True
 
     def run_step(self, action: dict, lowstate) -> dict:
         return {}
@@ -167,6 +170,7 @@ def make_robot():
         stack.enter_context(patch(f"{module}.hg_LowState", MagicMock))
         stack.enter_context(patch(f"{module}.CRC", MagicMock(return_value=mocks["crc_mock"])))
 
+        from lerobot.controllers import ControlledRobot
         from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
 
         built = []
@@ -178,10 +182,11 @@ def make_robot():
                 cameras=cameras or {},
                 **config_kwargs,
             )
-            # Hand the stub to __init__ where it would resolve the configured controller by
-            # name, so construction-time state (the hold declaration) sees it.
-            with patch(f"{module}.make_robot_controller", lambda name: controller):
-                robot = UnitreeG1(cfg)
+            # What make_robot_from_config builds for `--robot.controller=...`, with the stub in place
+            # of the named controller.
+            robot = UnitreeG1(cfg)
+            if controller is not None:
+                robot = ControlledRobot(robot, controller)
             built.append(robot)
             return robot
 
@@ -192,14 +197,20 @@ def make_robot():
                 robot.disconnect()
 
 
+def g1(robot):
+    """The UnitreeG1 itself, under a ControlledRobot when a controller runs it."""
+    return getattr(robot, "robot", robot)
+
+
 def arm_for_publish(robot, mocks, kp_value: float = 50.0, kd_value: float = 1.0):
     """Attach the state that ``connect()`` would normally set up, for publish-only tests."""
-    robot.msg = mocks["lowcmd_default"]
-    robot.crc = mocks["crc_mock"]
-    robot.lowcmd_publisher = mocks["publisher_mock"]
-    robot.kp = np.full(NUM_MOTORS, kp_value, np.float32)
-    robot.kd = np.full(NUM_MOTORS, kd_value, np.float32)
-    for cmd in robot.msg.motor_cmd:
+    inner = g1(robot)
+    inner.msg = mocks["lowcmd_default"]
+    inner.crc = mocks["crc_mock"]
+    inner.lowcmd_publisher = mocks["publisher_mock"]
+    inner.kp = np.full(NUM_MOTORS, kp_value, np.float32)
+    inner.kd = np.full(NUM_MOTORS, kd_value, np.float32)
+    for cmd in inner.msg.motor_cmd:
         cmd.q = -1.0  # sentinel: untouched joints keep this value
     return robot
 
@@ -214,7 +225,7 @@ def hardware_mode(robot):
     Building with ``is_simulation=False`` would make ``__init__`` import the ZMQ bridge, and
     pyzmq is not installed in the test environment, so the flag is flipped once the robot exists.
     """
-    robot.config.is_simulation = False
+    g1(robot).config.is_simulation = False
     return robot
 
 
@@ -228,7 +239,6 @@ class TestInitialState:
         factory, _ = make_robot
         robot = factory()
         assert not robot.is_connected
-        assert robot.controller is None
 
     def test_observation_empty_before_connect(self, make_robot):
         factory, _ = make_robot
@@ -246,25 +256,54 @@ class TestInitialState:
 
     def test_stubs_satisfy_protocol(self):
         """Controllers are duck-typed against a runtime-checkable Protocol."""
-        from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+        from lerobot.controllers import RobotController
 
         assert isinstance(TokenController(), RobotController)
         assert isinstance(LocomotionOnlyController(), RobotController)
 
+    def test_g1_exposes_low_level_control(self, make_robot):
+        from lerobot.controllers import LowLevelControl
+
+        factory, _ = make_robot
+        assert isinstance(factory(), LowLevelControl)
+
+    def test_controller_wraps_the_robot(self, make_robot):
+        """Name, config and calibration paths stay the G1's, so scripts keyed on them still match."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+        assert robot.name == "unitree_g1"
+        assert robot.config is g1(robot).config
+        assert robot.calibration_fpath == g1(robot).calibration_fpath
+
 
 class TestMakeRobotController:
-    def test_none_disables_controller(self):
-        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
-
-        assert make_robot_controller(None) is None
-
     def test_unknown_name_raises(self):
-        from lerobot.robots.unitree_g1.unitree_g1 import make_robot_controller
+        from lerobot.controllers import make_robot_controller
 
         with pytest.raises(ValueError, match="Unknown controller") as excinfo:
-            make_robot_controller("NotAController")
+            make_robot_controller("unitree_g1", "NotAController")
         # The error should tell the user what they can pick instead.
         assert "SonicWholeBodyController" in str(excinfo.value)
+
+    def test_robot_without_controllers_raises(self):
+        from lerobot.controllers import make_robot_controller
+
+        with pytest.raises(ValueError, match="has no controllers"):
+            make_robot_controller("so101_follower", "SonicWholeBodyController")
+
+    def test_config_controller_builds_a_controlled_robot(self, make_robot):
+        from lerobot.controllers import ControlledRobot
+        from lerobot.robots.utils import make_robot_from_config
+
+        factory, _ = make_robot
+        config = factory().config
+        config.controller = "GrootLocomotionController"
+        controller = LocomotionOnlyController()
+        with patch("lerobot.controllers.make_robot_controller", return_value=controller) as make:
+            robot = make_robot_from_config(config)
+        make.assert_called_once_with("unitree_g1", "GrootLocomotionController")
+        assert isinstance(robot, ControlledRobot)
+        assert robot.controller is controller
 
 
 # ---------------------------------------------------------------------------
@@ -395,14 +434,14 @@ class TestPositionHold:
         echo = {key: 0.01 * i for i, key in enumerate(controller.observation_ft)}
         controller.observation_state = lambda: dict(echo)
         robot = factory(controller=controller)
-        robot._lowstate = G1_29_LowState()  # get_observation() is empty until a state arrives
+        g1(robot)._lowstate = G1_29_LowState()  # get_observation() is empty until a state arrives
         wrapper = thread_safe(robot)
         wrapper.configure_hold()
 
         wrapper.get_observation()
         wrapper.hold()
 
-        assert {key: robot.controller_input[key] for key in echo} == echo
+        assert {key: robot.command[key] for key in echo} == echo
 
 
 # ---------------------------------------------------------------------------
@@ -566,8 +605,8 @@ class TestSendAction:
 
         robot.send_action({"motion_token.0.pos": 1.5, "remote.lx": 0.25})
 
-        assert robot.controller_input["motion_token.0.pos"] == 1.5
-        assert robot.controller_input["remote.lx"] == 0.25
+        assert robot.command["motion_token.0.pos"] == 1.5
+        assert robot.command["remote.lx"] == 0.25
 
     def test_arm_targets_are_published(self, make_robot):
         factory, mocks = make_robot
@@ -599,7 +638,7 @@ class TestSendAction:
 
 def sim_ready(robot):
     """Point the robot at a stub sim env so reset() takes its single-publish branch."""
-    robot.sim_env = MagicMock()
+    g1(robot).sim_env = MagicMock()
     return robot
 
 
@@ -719,26 +758,26 @@ class TestDisconnect:
         before the zero-gain command; otherwise its next tick re-stiffens the joints and the
         robot never actually goes limp.
         """
-        factory, mocks = make_robot
-        robot = arm_for_publish(hardware_mode(factory()), mocks)
+        from lerobot.robots.unitree_g1.unitree_g1 import G1LowState
 
         published = []
-        robot._send_zero_torque = lambda: published.append("zero_torque")
         tick_started = threading.Event()
 
-        def controller_loop():
-            """Mirrors the real loop: check the flag, spend time in inference, then publish.
+        class SlowController(LocomotionOnlyController):
+            """Spends time in inference, so a tick is under way when shutdown begins."""
 
-            The publish is unconditional, so a tick already under way still sends stiff
-            targets even though the shutdown flag flipped while it was running.
-            """
-            while not robot._shutdown_event.is_set():
+            def run_step(self, action, lowstate):
                 tick_started.set()
                 time.sleep(0.05)
                 published.append("controller")
+                return {}
 
-        robot._controller_thread = threading.Thread(target=controller_loop)
-        robot._controller_thread.start()
+        factory, mocks = make_robot
+        robot = arm_for_publish(hardware_mode(factory(controller=SlowController())), mocks)
+        g1(robot)._send_zero_torque = lambda: published.append("zero_torque")
+        g1(robot)._lowstate = G1LowState()
+        robot._thread = threading.Thread(target=robot._loop)
+        robot._thread.start()
         assert tick_started.wait(timeout=1.0), "controller loop never started a tick"
 
         robot.disconnect()
@@ -805,39 +844,71 @@ def test_position_command_serializes_motor_fields(make_robot, override_gains_and
 
 
 class TestControllerInput:
-    def test_starts_from_a_zeroed_remote(self, make_robot):
+    def test_starts_empty(self, make_robot):
+        """Controllers read missing joystick keys as zero, and SONIC holds its neutral token."""
         factory, _ = make_robot
         robot = factory(controller=TokenController())
-        assert all(value == 0.0 for value in robot.controller_input.values())
+        assert robot.command == {}
 
     def test_action_values_are_merged_in(self, make_robot):
-        factory, _ = make_robot
-        robot = factory(controller=TokenController())
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
 
-        robot._update_controller_action({"remote.lx": 0.5, "motion_token.0.pos": 1.5})
+        robot.send_action({"remote.lx": 0.5, "motion_token.0.pos": 1.5})
 
-        assert robot.controller_input["remote.lx"] == 0.5
-        assert robot.controller_input["motion_token.0.pos"] == 1.5
+        assert robot.command["remote.lx"] == 0.5
+        assert robot.command["motion_token.0.pos"] == 1.5
 
     def test_none_values_are_skipped(self, make_robot):
-        factory, _ = make_robot
-        robot = factory(controller=TokenController())
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
 
-        robot._update_controller_action({"remote.lx": 0.5})
-        robot._update_controller_action({"remote.lx": None})
+        robot.send_action({"remote.lx": 0.5})
+        robot.send_action({"remote.lx": None})
 
-        assert robot.controller_input["remote.lx"] == 0.5
+        assert robot.command["remote.lx"] == 0.5
 
     def test_partial_update_keeps_keys(self, make_robot):
         """The controller thread reads a snapshot; stale axes must not be dropped."""
-        factory, _ = make_robot
-        robot = factory(controller=TokenController())
+        factory, mocks = make_robot
+        robot = arm_for_publish(factory(controller=TokenController()), mocks)
 
-        robot._update_controller_action({"remote.lx": 0.5, "remote.ly": -0.5})
-        robot._update_controller_action({"remote.lx": 0.25})
+        robot.send_action({"remote.lx": 0.5, "remote.ly": -0.5})
+        robot.send_action({"remote.lx": 0.25})
 
-        assert robot.controller_input["remote.lx"] == 0.25
-        assert robot.controller_input["remote.ly"] == -0.5
+        assert robot.command["remote.lx"] == 0.25
+        assert robot.command["remote.ly"] == -0.5
+
+    def test_ticks_run_the_command_and_publish_with_controller_gains(self, make_robot):
+        from lerobot.robots.unitree_g1.unitree_g1 import G1LowState
+
+        seen = []
+        knee = G1_29_JointIndex.kLeftKnee
+
+        class RecordingController(TokenController):
+            def run_step(self, action, lowstate):
+                seen.append(action)
+                return {f"{knee.name}.q": 0.42}
+
+        factory, mocks = make_robot
+        controller = RecordingController()
+        controller.kp = np.full(NUM_MOTORS, 33.0, np.float32)
+        robot = arm_for_publish(factory(controller=controller), mocks)
+        g1(robot)._lowstate = G1LowState()
+        robot.send_action({"motion_token.0.pos": 1.5})
+
+        robot._thread = threading.Thread(target=robot._loop)
+        robot._thread.start()
+        deadline = time.monotonic() + 1.0
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.005)
+        robot._stop.set()
+        robot._thread.join(timeout=1.0)
+
+        assert seen[0]["motion_token.0.pos"] == 1.5
+        cmd = robot.msg.motor_cmd[knee.value]
+        assert cmd.q == pytest.approx(0.42)
+        assert cmd.kp == pytest.approx(33.0)
 
 
 class TestEmbodimentDriver:

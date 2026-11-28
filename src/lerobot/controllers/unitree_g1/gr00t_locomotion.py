@@ -15,20 +15,23 @@
 # limitations under the License.
 
 import logging
-from collections import deque
 
 import numpy as np
 import onnxruntime as ort
-from huggingface_hub import hf_hub_download
+import torch
 
 from lerobot.robots.unitree_g1.g1_utils import (
     REMOTE_AXES,
     REMOTE_BUTTONS,
+    REMOTE_KEYS,
     G1_29_JointIndex,
-    get_gravity_orientation,
-    make_ort_session_options,
 )
-from lerobot.robots.unitree_g1.unitree_g1 import RobotController
+
+from ..controller import RobotController
+from ..history import FrameHistory
+from ..hub import load_onnx_policy
+from ..processors import make_controller_processors
+from .proprio import read_proprio
 
 logger = logging.getLogger(__name__)
 
@@ -58,28 +61,8 @@ def load_groot_policies(
     Args:
         repo_id: Hugging Face Hub repository ID containing the ONNX policies.
     """
-    logger.info(f"Loading GR00T dual-policy system from the hub ({repo_id})...")
-
-    # Download ONNX policies from Hugging Face Hub
-    balance_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Balance.onnx",
-    )
-    walk_path = hf_hub_download(
-        repo_id=repo_id,
-        filename="GR00T-WholeBodyControl-Walk.onnx",
-    )
-
-    # Load ONNX policies with a capped thread pool. GR00T runs at 50 Hz in a
-    # background thread alongside the (torch) upper-body policy and IK; letting ORT
-    # grab every core starves those and makes the whole rollout stutter. These are
-    # small MLPs, so 1 thread is both enough and lowest-latency.
-    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
-    policy_balance = ort.InferenceSession(balance_path, sess_options=so)
-    policy_walk = ort.InferenceSession(walk_path, sess_options=so)
-
-    logger.info("GR00T policies loaded successfully")
-
+    policy_balance, _ = load_onnx_policy(repo_id, "GR00T-WholeBodyControl-Balance.onnx")
+    policy_walk, _ = load_onnx_policy(repo_id, "GR00T-WholeBodyControl-Walk.onnx")
     return policy_balance, policy_walk
 
 
@@ -87,6 +70,9 @@ class GrootLocomotionController(RobotController):
     """GR00T lower-body locomotion controller for the Unitree G1."""
 
     control_dt = CONTROL_DT
+    # Joystick velocities and buttons; the arms stay the caller's.
+    action_ft = dict.fromkeys(REMOTE_KEYS, float)
+    passthrough = True
 
     def __init__(self):
         # Load policies
@@ -96,34 +82,34 @@ class GrootLocomotionController(RobotController):
         self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # vx, vy, theta_dot
 
         # Robot state
-        self.groot_qj_all = np.zeros(29, dtype=np.float32)
-        self.groot_dqj_all = np.zeros(29, dtype=np.float32)
         self.groot_action = np.zeros(15, dtype=np.float32)
         self.groot_obs_single = np.zeros(86, dtype=np.float32)
-        self.groot_obs_history = deque(maxlen=6)
-        self.groot_obs_stacked = np.zeros(516, dtype=np.float32)
+        # Input to GR00T is 6 frames (6*86D=516)
+        self.groot_obs_history = FrameHistory(6, np.zeros(86, dtype=np.float32))
         self.groot_height_cmd = 0.74  # Default base height
         self.groot_orientation_cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
-        # Input to GR00T is 6 frames (6*86D=516)
-        for _ in range(6):
-            self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
+        # `scale * x + offset` in, and `ACTION_SCALE * a + default` for the 15 leg and waist joints out.
+        self.preprocessor, self.postprocessor = make_controller_processors(
+            observation_affine={
+                "observation.joint_pos": (DOF_POS_SCALE, -GROOT_DEFAULT_ANGLES * DOF_POS_SCALE),
+                "observation.joint_vel": (np.full(29, DOF_VEL_SCALE), 0.0),
+                "observation.ang_vel": (np.full(3, ANG_VEL_SCALE), 0.0),
+                "observation.command": (CMD_SCALE, 0.0),
+            },
+            action_affine=(ACTION_SCALE, GROOT_DEFAULT_ANGLES[:15]),
+        )
 
         logger.info("GrootLocomotionController initialized")
 
     def reset(self) -> None:
         """Reset internal state for a new episode."""
         self.cmd[:] = 0.0
-        self.groot_qj_all[:] = 0.0
-        self.groot_dqj_all[:] = 0.0
         self.groot_action[:] = 0.0
         self.groot_obs_single[:] = 0.0
-        self.groot_obs_stacked[:] = 0.0
         self.groot_height_cmd = 0.74
         self.groot_orientation_cmd[:] = 0.0
-        self.groot_obs_history.clear()
-        for _ in range(6):
-            self.groot_obs_history.append(np.zeros(86, dtype=np.float32))
+        self.groot_obs_history.reset()
 
     def run_step(self, action: dict, lowstate) -> dict:
         """Run one step of the locomotion controller.
@@ -151,44 +137,29 @@ class GrootLocomotionController(RobotController):
         self.cmd[1] = -lx  # Left/right (negated)
         self.cmd[2] = -rx  # Rotation rate (negated)
 
-        # Get joint positions and velocities from lowstate
-        for motor in G1_29_JointIndex:
-            idx = motor.value
-            self.groot_qj_all[idx] = lowstate.motor_state[idx].q
-            self.groot_dqj_all[idx] = lowstate.motor_state[idx].dq
-
-        # Scale joint positions and velocities
-        qj_obs = self.groot_qj_all.copy()
-        dqj_obs = self.groot_dqj_all.copy()
-
-        # Express IMU data in gravity frame of reference
-        quat = lowstate.imu_state.quaternion
-        ang_vel = np.array(lowstate.imu_state.gyroscope, dtype=np.float32)
-        gravity_orientation = get_gravity_orientation(quat)
-
-        # Scale joint positions and velocities before policy inference
-        qj_obs = (qj_obs - GROOT_DEFAULT_ANGLES) * DOF_POS_SCALE
-        dqj_obs = dqj_obs * DOF_VEL_SCALE
-        ang_vel_scaled = ang_vel * ANG_VEL_SCALE
+        proprio = read_proprio(lowstate)
+        obs = self.preprocessor(
+            {
+                "observation.joint_pos": proprio.q,
+                "observation.joint_vel": proprio.dq,
+                "observation.ang_vel": proprio.ang_vel,
+                "observation.command": self.cmd,
+            }
+        )
 
         # Build single frame observation
-        self.groot_obs_single[:3] = self.cmd * np.array(CMD_SCALE)
+        self.groot_obs_single[:3] = obs["observation.command"]
         self.groot_obs_single[3] = self.groot_height_cmd
         self.groot_obs_single[4:7] = self.groot_orientation_cmd
-        self.groot_obs_single[7:10] = ang_vel_scaled
-        self.groot_obs_single[10:13] = gravity_orientation
-        self.groot_obs_single[13:42] = qj_obs
-        self.groot_obs_single[42:71] = dqj_obs
+        self.groot_obs_single[7:10] = obs["observation.ang_vel"]
+        self.groot_obs_single[10:13] = proprio.gravity
+        self.groot_obs_single[13:42] = obs["observation.joint_pos"]
+        self.groot_obs_single[42:71] = obs["observation.joint_vel"]
         self.groot_obs_single[71:86] = self.groot_action  # 15D previous actions
 
         # Add to history and stack observations (6 frames × 86D = 516D)
-        self.groot_obs_history.append(self.groot_obs_single.copy())
-
-        # Stack all 6 frames into 516D vector
-        for i, obs_frame in enumerate(self.groot_obs_history):
-            start_idx = i * 86
-            end_idx = start_idx + 86
-            self.groot_obs_stacked[start_idx:end_idx] = obs_frame
+        self.groot_obs_history.push(self.groot_obs_single)
+        groot_obs_stacked = self.groot_obs_history.stacked()
 
         cmd_magnitude = np.linalg.norm(self.cmd)
         selected_policy = (
@@ -196,12 +167,12 @@ class GrootLocomotionController(RobotController):
         )  # Balance/standing policy for small commands, walking policy for movement commands
 
         # Run policy inference
-        ort_inputs = {selected_policy.get_inputs()[0].name: np.expand_dims(self.groot_obs_stacked, axis=0)}
+        ort_inputs = {selected_policy.get_inputs()[0].name: np.expand_dims(groot_obs_stacked, axis=0)}
         ort_outs = selected_policy.run(None, ort_inputs)
         self.groot_action = ort_outs[0].squeeze()
 
         # Transform action back to target joint positions
-        target_dof_pos_15 = GROOT_DEFAULT_ANGLES[:15] + self.groot_action * ACTION_SCALE
+        target_dof_pos_15 = self.postprocessor(torch.as_tensor(self.groot_action)).numpy()
 
         # Build action dict
         action_dict = {}
