@@ -123,9 +123,10 @@ Score every frame of a dataset with the shared [offline scoring workflow](./rewa
 
 ```bash
 uv run lerobot-score \
-    --repo_id=lerobot/libero_10_image \
+    --repo_id=lerobot/libero_10 \
     --root=/path/to/local/dataset \
     --reward_model.type=topreward \
+    --reward_model.image_key=observation.images.image \
     --reward_model.device=cuda \
     --reward_model.num_samples=15
 ```
@@ -141,15 +142,15 @@ sample_weighting:
   signal_name: topreward.progress
 ```
 
-Then render the progress overlay for any episode:
+Then draw the progress over the video of a scored episode:
 
 ```bash
 uv run examples/dataset/create_progress_videos.py \
-    --repo-id lerobot/libero_10_image \
+    --repo-id lerobot/libero_10 \
     --dataset-root /path/to/local/dataset \
-    --episode 0 \
-    --score-name topreward \
-    --gif
+    --episodes 0 \
+    --scores topreward \
+    --webp
 ```
 
 ## Configuration Notes

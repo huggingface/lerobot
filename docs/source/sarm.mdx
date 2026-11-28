@@ -359,60 +359,26 @@ Add `accelerate launch --multi_gpu --num_processes=4` to use multiple GPUs for t
 
 ## Step 4: Visualize Predictions
 
-The script plots predictions and annotation targets when available, without writing dataset scores. Run it from the repository root:
-
-<hfoptions id="viz_mode">
-<hfoption id="single_stage">
+Score a few episodes with [`lerobot-score`](./reward_scoring), under their own score name so they stay apart from the full scores of Step 5a, then draw the progress over the episode videos:
 
 ```bash
-uv run examples/rewards/visualize_sarm.py \
-  --dataset-repo-id your-username/your-dataset \
-  --reward-model-path your-username/sarm-model \
-  --num-visualizations 5 \
-  --head-mode sparse \
-  --output-dir ./sarm_viz
+uv run lerobot-score \
+  --repo_id=your-username/your-dataset \
+  --reward_model.path=your-username/sarm-model \
+  --reward_model.device=cuda \
+  --reward_model.head_mode=sparse \
+  --episodes='[0,1,2,3,4]' \
+  --score_name=sarm-preview
+
+uv run examples/dataset/create_progress_videos.py \
+  --repo-id your-username/your-dataset \
+  --dataset-root ~/.cache/huggingface/lerobot/your-username/your-dataset \
+  --episodes 0 1 2 3 4 \
+  --scores sarm-preview \
+  --webp
 ```
 
-</hfoption>
-<hfoption id="dense_only">
-
-```bash
-uv run examples/rewards/visualize_sarm.py \
-  --dataset-repo-id your-username/your-dataset \
-  --reward-model-path your-username/sarm-model \
-  --num-visualizations 5 \
-  --head-mode dense \
-  --output-dir ./sarm_viz
-```
-
-</hfoption>
-<hfoption id="dual">
-
-```bash
-uv run examples/rewards/visualize_sarm.py \
-  --dataset-repo-id your-username/your-dataset \
-  --reward-model-path your-username/sarm-model \
-  --num-visualizations 5 \
-  --head-mode both \
-  --output-dir ./sarm_viz
-```
-
-</hfoption>
-</hfoptions>
-
-The visualization shows:
-
-- **Progress plot**: Predicted progress (and optional annotation-derived “GT” when available and `--stride 1`)
-- **Stage probabilities**: Stacked area plot of predicted stage probabilities
-- **Sample frames**: Key frames from the episode with progress/stage labels
-
-### Visualization Arguments
-
-| Argument               | Description                                               |
-| ---------------------- | --------------------------------------------------------- |
-| `--num-visualizations` | Number of episodes to visualize (default: 5)              |
-| `--head-mode`          | SARM head to use: `sparse`, `dense`, or `both`            |
-| `--stride`             | Compute every N frames, interpolate the rest (default: 1) |
+Use `--reward_model.head_mode=dense` for the dense head, or `both` to draw both heads of a dual-head model on one plot. For a head with several subtasks, the video also shows SARM's predicted subtask under the task, with a strip under the plot coloring the predicted subtasks over the episode. When the episode has subtask annotations from Step 1, it adds the annotated subtask with its own strip, a dashed line where each annotated subtask starts, and the ground-truth progress SARM is trained toward, computed from the annotations and the subtask time shares saved with the checkpoint. `lerobot-score` writes to `$HF_LEROBOT_HOME/<repo_id>` (by default `~/.cache/huggingface/lerobot/<repo_id>`), which is the folder `--dataset-root` points to here. The script writes one MP4, and with `--webp` an animated WebP, per episode to `./progress_videos`. See [Reward Scoring](./reward_scoring#visualize-scores) for its other options.
 
 ---
 
