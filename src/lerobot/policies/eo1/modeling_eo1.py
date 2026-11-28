@@ -19,15 +19,19 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import deque
+from copy import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
+from safetensors.torch import load_file
 from torch import Tensor
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -71,23 +75,29 @@ class EO1Policy(PreTrainedPolicy):
     config_class = EO1Config
     name = "eo1"
 
-    def __init__(self, config: EO1Config, **kwargs):
+    def __init__(
+        self, config: EO1Config, *, vlm_backbone: Qwen2_5_VLForConditionalGeneration | None = None, **kwargs
+    ):
         require_package("transformers", extra="eo1")
         super().__init__(config)
         config.validate_features()
         self.config = config
 
-        if config.pretrained_path is None:
-            # Initialize from pretrained VLM
-            repo_id, revision = split_hub_reference(config.vlm_base)
-            vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                repo_id, dtype=config.dtype, attn_implementation=config.attn_implementation, revision=revision
-            )
-        else:
-            vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
-                config.vlm_backbone_config,
-                dtype=config.dtype,
-            )
+        if vlm_backbone is None:
+            if config.pretrained_path is None:
+                # Initialize from pretrained VLM
+                repo_id, revision = split_hub_reference(config.vlm_base)
+                vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    repo_id,
+                    dtype=config.dtype,
+                    attn_implementation=config.attn_implementation,
+                    revision=revision,
+                )
+            else:
+                vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
+                    config.vlm_backbone_config,
+                    dtype=config.dtype,
+                )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)
         self._text_processor = None
@@ -96,6 +106,75 @@ class EO1Policy(PreTrainedPolicy):
 
         self.model.to(config.device)
         self.reset()
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        force_download: bool = False,
+        resume_download: bool | None = None,
+        proxies: dict | None = None,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+        trust_remote_code: bool | None = None,
+        strict: bool = False,
+        **kwargs,
+    ) -> EO1Policy:
+        """Restore the backbone without randomly initializing weights that will be overwritten."""
+        require_package("transformers", extra="eo1")
+        hub_kwargs: dict[str, Any] = {
+            "force_download": force_download,
+            "token": token,
+            "cache_dir": cache_dir,
+            "local_files_only": local_files_only,
+            "revision": revision,
+        }
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path,
+                **hub_kwargs,
+                resume_download=resume_download,
+                proxies=proxies,
+                trust_remote_code=bool(trust_remote_code),
+                **kwargs,
+            )
+        elif trust_remote_code is not None:
+            config = copy(config)
+            config.trust_remote_code = trust_remote_code
+        config = cast(EO1Config, config)
+        files = cls._resolve_weight_files(str(pretrained_name_or_path), **hub_kwargs)
+        prefix = "model.vlm_backbone."
+        backbone_weights = {
+            key.removeprefix(prefix): value
+            for file in files
+            for key, value in load_file(file, device="cpu").items()
+            if key.startswith(prefix)
+        }
+        backbone_config = config.vlm_backbone_config
+        # LeRobot's shared-tensor saver may keep lm_head instead of the embedding key
+        # expected by Transformers when restoring tied weights.
+        if backbone_config.tie_word_embeddings and "lm_head.weight" in backbone_weights:
+            backbone_weights.setdefault(
+                "model.language_model.embed_tokens.weight", backbone_weights["lm_head.weight"]
+            )
+        vlm_backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            None,
+            config=backbone_config,
+            state_dict=backbone_weights,
+            dtype=config.dtype if config.dtype is not None else torch.get_default_dtype(),
+        )
+        del backbone_weights
+        policy = cls(config, vlm_backbone=vlm_backbone, **kwargs)
+        # Keep safetensors' handling of shared weights and strict/partial checkpoints.
+        # CPU staging avoids a second full checkpoint allocation on the accelerator.
+        cls._load_weight_files(policy, files, "cpu", strict)
+        policy.to(config.device)
+        policy.eval()
+        return policy
 
     def reset(self):
         self._action_queue = deque(maxlen=self.config.n_action_steps)
