@@ -21,6 +21,7 @@ Checks degrade to a no-op when the target codec isn't available locally.
 
 import functools
 import logging
+from fractions import Fraction
 from typing import Any
 
 import av
@@ -87,10 +88,31 @@ def _get_codec_video_formats(vcodec: str) -> tuple[str, ...]:
     return tuple(fmt.name for fmt in (codec.video_formats or []))
 
 
-def detect_available_encoders_pyav(encoders: list[str] | str) -> list[str]:
+@functools.cache
+def encoder_opens(vcodec: str, pix_fmt: str) -> bool:
+    """Whether *vcodec* opens with *pix_fmt* on this machine.
+
+    FFmpeg lists a hardware encoder whenever it was built with it, also when the driver or the device is
+    missing (``h264_nvenc`` in a build with NVENC support on a machine without NVENC, e.g. a Jetson), so
+    being listed does not mean the encoder can be used. Opening a small context answers that.
+    """
+    try:
+        ctx = av.codec.CodecContext.create(vcodec, "w")
+        ctx.width, ctx.height = 256, 256
+        ctx.pix_fmt = pix_fmt
+        ctx.time_base = Fraction(1, 30)
+        ctx.open()
+    except Exception as e:
+        logger.debug("encoder '%s' is listed but does not open with pix_fmt '%s': %s", vcodec, pix_fmt, e)
+        return False
+    return True
+
+
+def detect_available_encoders_pyav(encoders: list[str] | str, pix_fmt: str | None = None) -> list[str]:
     """Return the subset of *encoders* available as video encoders in the local FFmpeg build.
 
-    Each name is probed directly via :func:`get_codec`; input order is preserved.
+    Each name is probed directly via :func:`get_codec`; input order is preserved. When *pix_fmt* is
+    given, an encoder is kept only if it also opens with that pixel format (:func:`encoder_opens`).
     """
     if isinstance(encoders, str):
         encoders = [encoders]
@@ -98,10 +120,12 @@ def detect_available_encoders_pyav(encoders: list[str] | str) -> list[str]:
     available: list[str] = []
     for name in encoders:
         codec = get_codec(name)
-        if codec is not None and codec.type == "video":
-            available.append(name)
-        else:
+        if codec is None or codec.type != "video":
             logger.debug("encoder '%s' not available as video encoder", name)
+        elif pix_fmt is not None and not encoder_opens(name, pix_fmt):
+            continue
+        else:
+            available.append(name)
     return available
 
 

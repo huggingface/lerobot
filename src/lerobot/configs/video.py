@@ -142,11 +142,12 @@ class VideoEncoderConfig:
         """
         return cls(**cls._kwargs_from_video_info(video_info))
 
-    def detect_available_encoders(self, encoders: list[str] | str) -> list[str]:
+    def detect_available_encoders(self, encoders: list[str] | str, check_opens: bool = False) -> list[str]:
         """Return the subset of available encoders based on the specified video backend.
 
         Args:
             encoders: List of encoder names to detect. If a string, it is converted to a list.
+            check_opens: Also require that each encoder opens with ``self.pix_fmt`` on this machine.
         Returns:
             List of available encoder names. If the video backend is not "pyav", returns an empty list.
         """
@@ -154,7 +155,7 @@ class VideoEncoderConfig:
             require_package("av", extra="dataset")
             from lerobot.datasets import detect_available_encoders_pyav
 
-            return detect_available_encoders_pyav(encoders)
+            return detect_available_encoders_pyav(encoders, pix_fmt=self.pix_fmt if check_opens else None)
         return []
 
     def validate(self) -> None:
@@ -170,7 +171,7 @@ class VideoEncoderConfig:
     def resolve_vcodec(self) -> None:
         """Check ``vcodec`` and, when it is ``"auto"``, pick a concrete encoder.
 
-        For ``"auto"``, the first hardware encoder in the preference list that is available is chosen; if none are available, ``libsvtav1`` is used. If the
+        For ``"auto"``, the first hardware encoder in the preference list that is available and opens with ``pix_fmt`` is chosen; if none is, ``libsvtav1`` is used. If the
         resolved codec (explicit or after auto-selection) is not available, raises ``ValueError``.
 
         Stream-derived canonical codec names listed in :data:`VIDEO_CODECS_ALIASES` are
@@ -180,7 +181,7 @@ class VideoEncoderConfig:
         if self.vcodec not in VALID_VIDEO_CODECS:
             raise ValueError(f"Invalid vcodec '{self.vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         if self.vcodec == "auto":
-            available = self.detect_available_encoders(HW_VIDEO_CODECS)
+            available = self.detect_available_encoders(HW_VIDEO_CODECS, check_opens=True)
             for encoder in HW_VIDEO_CODECS:
                 if encoder in available:
                     logger.info(f"Auto-selected video codec: {encoder}")
