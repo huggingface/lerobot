@@ -797,10 +797,19 @@ def compute_relative_action_stats(
                 _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
             )
 
-    stats = running_stats.get_statistics()
+    total_frames = len(valid_starts) * chunk_size
+    if total_frames < 2:
+        # RunningQuantileStats requires at least two samples. Mirror
+        # get_feature_stats' single-sample fallback: quantiles equal the mean.
+        stats = get_feature_stats(
+            _compute_relative_chunk_batch(valid_starts, all_actions, all_states, chunk_size, relative_mask),
+            axis=0,
+            keepdims=False,
+        )
+    else:
+        stats = running_stats.get_statistics()
 
     excluded_dims = int(len(relative_mask) - relative_mask.sum())
-    total_frames = len(valid_starts) * chunk_size
     logger.info(
         f"Relative action stats ({len(valid_starts)} chunks, {total_frames} frames): "
         f"relative_dims={int(relative_mask.sum())}/{len(relative_mask)} (excluded={excluded_dims}), "
