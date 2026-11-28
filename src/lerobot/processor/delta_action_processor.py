@@ -35,8 +35,9 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
     end-effector (x, y, z) and optionally the gripper.
 
     Attributes:
-        use_gripper: If True, assumes the 4th element of the tensor is the
-                     gripper action.
+        use_gripper: If True, the 4th tensor element is the gripper action.
+                     If False, the tensor is xyz only and the gripper command is
+                     the discrete stay value, 1.0.
     """
 
     use_gripper: bool = True
@@ -49,13 +50,14 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
             action = action.squeeze(0)
 
         # TODO (maractingi): add rotation
+        # 1.0 is the discrete "stay" command. Omitting the key makes the next
+        # step raise KeyError when this step was built with use_gripper=False.
         delta_action = {
             "delta_x": action[0].item(),
             "delta_y": action[1].item(),
             "delta_z": action[2].item(),
+            "gripper": action[3].item() if self.use_gripper else 1.0,
         }
-        if self.use_gripper:
-            delta_action["gripper"] = action[3].item()
         return delta_action
 
     def transform_features(
@@ -66,10 +68,7 @@ class MapTensorToDeltaActionDictStep(ActionProcessorStep):
                 type=FeatureType.ACTION, shape=(1,)
             )
 
-        if self.use_gripper:
-            features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(
-                type=FeatureType.ACTION, shape=(1,)
-            )
+        features[PipelineFeatureType.ACTION]["gripper"] = PolicyFeature(type=FeatureType.ACTION, shape=(1,))
         return features
 
 
