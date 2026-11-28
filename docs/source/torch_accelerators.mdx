@@ -31,6 +31,22 @@ does this and is the quickest way to a working environment; see
 [docker/README.md](https://github.com/huggingface/lerobot/blob/main/docker/README.md)
 for the run flags ROCm requires.
 
+#### Known issues on ROCm
+
+These came up while training LeRobot policies on AMD Instinct MI300X with ROCm 7.14 and PyTorch 2.12, using `docker/Dockerfile.rocm`:
+
+- **`--group-add render` fails.** Some images do not define the `render` group by name. Pass the host's numeric group IDs instead, for example `--group-add $(getent group video | cut -d: -f3) --group-add $(getent group render | cut -d: -f3)`.
+- **Multi-GPU training gets slower as GPUs are added.** Some HIP runtimes ([ROCm/rocm-systems#6134](https://github.com/ROCm/rocm-systems/pull/6134), reverted in [#6712](https://github.com/ROCm/rocm-systems/pull/6712)) narrow the CPU affinity of every process that initialises HIP to the CPUs nearest GPU 0. `accelerate launch` initialises HIP to count the GPUs, so all ranks and their DataLoader workers share those CPUs. On an 8x MI300X node with 160 CPUs this left 8 CPUs, and ACT ran at 706 samples/s on 8 GPUs, below its 1,056 on 2. Set `AMD_CPU_AFFINITY=0` (the runtime's default again upstream) before launching: the same run reached 4,122 samples/s on 8 GPUs (579 on one). `python -c "import os, torch; torch.cuda.device_count(); print(len(os.sched_getaffinity(0)))"` shows whether a runtime is affected.
+- **The first training step is slow.** MIOpen compiles convolution kernels for each new shape on first use, which took about 8 minutes for ACT's ResNet backbone at batch 32. The compiled kernels go to the user's cache directories, which a `--rm` container loses. Mount a persistent directory and point `MIOPEN_USER_DB_PATH` and `MIOPEN_CUSTOM_CACHE_DIR` at it: the first step of the next run then took 28 s instead of 464 s. `MIOPEN_FIND_MODE=2` (fast find) is enough; normal find was not faster afterwards.
+- **Evaluation in MuJoCo environments cannot render with EGL.** Instinct GPUs have no graphics context (`can't create a graphics context on a compute chip`). Render on the CPU instead: install `libosmesa6` and `libglu1-mesa`, and set `MUJOCO_GL=osmesa`.
+- **LoRA (`--peft.*`) needs `torchao` newer than 0.16.** If the base image ships an older one, PEFT refuses to load. Run `uv pip install 'torchao>0.16'` in the image; the overrides in `Dockerfile.rocm` keep the ROCm build of PyTorch in place.
+- **FlashAttention is not available.** Use the policy's PyTorch attention instead, for example `--policy.attn_mode=torch` for FLUX3.
+- **The FLUX3 Video VAE needs NATTEN**, which has no ROCm wheels. Its source build only provides the Flex backend, which without compilation materialises a dense mask and runs out of memory at the VAE's sizes.
+
+#### Policies trained on ROCm
+
+Each of these completed training steps and saved a checkpoint on MI300X: ACT, Diffusion, Multi-task DiT, VQ-BeT, TD-MPC, SmolVLA, π0, π0.5, π0-FAST, EO1, X-VLA, WALL-OSS, Cosmos3, LaWAM, G05, FastWAM, LingBot-VLA, LingBot-VA, MolmoAct2, DM05, EVO1, VLA-JEPA, Long-WAM, FineART-VLA, GR00T N1.7 and NAT VLA, plus the SARM and reward-classifier reward models. Multi-GPU training (DDP, FSDP, HSDP) through `accelerate launch` behaves as on NVIDIA GPUs.
+
 ### Verifying the installation
 
 After installation, accelerator availability can be verified by running
