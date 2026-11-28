@@ -23,6 +23,14 @@ progress file at the dataset root: ``sarm_progress.parquet``, ``robometer_progre
 downloaded from the dataset repository when the local dataset folder does not have it. Videos are
 not downloaded.
 
+The old files hold one ``progress_sparse`` column, plus ``progress_dense`` for dual-head SARM models:
+
+- SARM: ``progress_sparse`` becomes ``sarm.sparse_progress`` and ``progress_dense`` becomes
+  ``sarm.dense_progress``.
+- RoboMeter: ``progress_sparse`` becomes ``robometer.progress``. Old RoboMeter files have no success
+  probability, so the converted scores have no ``robometer.success_probability``.
+- TOPReward: ``progress_sparse`` becomes ``topreward.progress``.
+
 Example:
 
     uv run examples/dataset/convert_rabc_progress_to_scores.py \\

@@ -157,6 +157,9 @@ The preprocessor writes Qwen-VL tensors under the `observation.robometer.*` name
 
 ### Score a LeRobot Dataset
 
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](./reward_scoring#convert-old-ra-bc-progress-files)).
+
 Install both dataset and ROBOMETER dependencies, then run:
 
 ```bash

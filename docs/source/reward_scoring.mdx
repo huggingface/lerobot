@@ -2,6 +2,9 @@
 
 `lerobot-score` runs a reward model over dataset episodes and writes frame-aligned signals to a named Parquet file, `scores/<name>.parquet`. Each file joins back to source frames through `(episode_index, frame_index)` and includes an `index` column for the source-global frame index. The source frames are unchanged, and filtering remains a downstream decision.
 
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](#convert-old-ra-bc-progress-files)).
+
 ## How It Fits Together
 
 ```text

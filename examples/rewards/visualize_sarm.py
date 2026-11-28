@@ -42,8 +42,9 @@ import torch
 from tqdm import tqdm
 
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
-from lerobot.rewards.sarm.sarm_utils import interpolate_progress, normalize_stage_tau
+from lerobot.rewards.sarm import SARMRewardModel
+from lerobot.rewards.sarm.sarm_utils import normalize_stage_tau
+from lerobot.rewards.scoring import interpolate_progress
 from lerobot.utils.constants import POLICY_PREPROCESSOR_DEFAULT_NAME
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 

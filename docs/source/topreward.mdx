@@ -116,6 +116,9 @@ with torch.inference_mode():
 
 ### Score a LeRobot Dataset
 
+> [!WARNING]
+> The `compute_rabc_weights.py` scripts of RoboMeter, SARM and TOPReward are removed and their `<model>_progress.parquet` files are no longer read. Score datasets with `lerobot-score`, and convert existing progress files with `examples/dataset/convert_rabc_progress_to_scores.py` (see [Convert Old RA-BC Progress Files](./reward_scoring#convert-old-ra-bc-progress-files)).
+
 Score every frame of a dataset with the shared [offline scoring workflow](./reward_scoring):
 
 ```bash
