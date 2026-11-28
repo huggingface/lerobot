@@ -21,12 +21,13 @@ from dataclasses import asdict
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import MultivariateNormal, TanhTransform, Transform, TransformedDistribution
+from torch.distributions import Independent, Normal, TanhTransform, Transform, TransformedDistribution
 
 from lerobot.configs import PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
 from lerobot.utils.hub import split_hub_reference
 
+from ..common.export_utils import is_non_strict_exporting
 from ..pretrained import PreTrainedPolicy
 from ..utils import get_device_from_parameters
 from .configuration_gaussian_actor import GaussianActorConfig, is_image_feature
@@ -660,7 +661,14 @@ class RescaleFromTanh(Transform):
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
     def __init__(self, loc, scale_diag, low=None, high=None):
-        base_dist = MultivariateNormal(loc, torch.diag_embed(scale_diag))
+        # scale_diag stays the covariance diagonal, as trained policies expect; float32 keeps log_prob precise.
+        cov_diag = scale_diag.to(torch.promote_types(scale_diag.dtype, torch.float32))
+        # Eager calls always check loc and scale, so a NaN observation raises even after the first
+        # torch.compile turns validation off process-wide. Tracing skips the checks on purpose: Dynamo breaks
+        # the graph on them, and export fails on them before PyTorch 2.15 and keeps runtime asserts from 2.15.
+        # So a compiled or exported actor gives NaN actions for a NaN observation.
+        tracing = is_non_strict_exporting() or torch.compiler.is_dynamo_compiling()
+        base_dist = Independent(Normal(loc, cov_diag.sqrt(), validate_args=not tracing), 1)
 
         transforms = [TanhTransform(cache_size=1)]
 
@@ -671,7 +679,7 @@ class TanhMultivariateNormalDiag(TransformedDistribution):
 
             transforms.insert(0, RescaleFromTanh(low, high))
 
-        super().__init__(base_dist, transforms)
+        super().__init__(base_dist, transforms, validate_args=False if tracing else None)
 
     def mode(self):
         # Mode is mean of base distribution, passed through transforms
