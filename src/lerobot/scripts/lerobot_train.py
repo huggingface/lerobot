@@ -34,6 +34,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from functools import partial
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -249,12 +250,15 @@ def update_policy(
                 # Note: Policies supporting sample weighting must implement forward(batch, reduction="none")
                 per_sample_loss, output_dict = policy(batch, reduction="none")
 
-                # Weighted loss: each sample's contribution is scaled by its weight.
-                # We divide by weight sum (not batch size) so that if some weights are zero,
-                # the remaining samples contribute proportionally more, preserving gradient scale.
-                # Weights are pre-normalized to sum to batch_size for stable training dynamics.
+                # Use the weight mass of this whole data-parallel micro-batch. RA-BC
+                # normalization also shares raw sums, so ranks retain comparable weights.
+                # DDP/FSDP average gradients: undo that averaging for the local numerator.
                 epsilon = 1e-6
-                loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+                weight_sum = sample_weights.sum()
+                if accelerator.num_processes > 1:
+                    weight_sum = accelerator.reduce(weight_sum, reduction="sum")
+                loss = (per_sample_loss * sample_weights).sum() / (weight_sum + epsilon)
+                loss = loss * accelerator.num_processes
 
                 # Log weighting statistics
                 if output_dict is None:
@@ -776,6 +780,9 @@ def train(cfg: TrainPipelineConfig) -> None:
             device,
             dataset_root=cfg.dataset.root,
             dataset_repo_id=cfg.dataset.repo_id,
+            normalization_stats_reducer=(
+                partial(accelerator.reduce, reduction="sum") if accelerator.num_processes > 1 else None
+            ),
         )
 
     # --- banner (main process only; numel() reads metadata — on DTensors it is the GLOBAL shape,
