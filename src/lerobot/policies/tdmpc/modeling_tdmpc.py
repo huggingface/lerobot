@@ -344,9 +344,8 @@ class TDMPCPolicy(PreTrainedPolicy):
         for k in observations:
             current_observation[k] = observations[k][0]
             next_observations[k] = observations[k][1:]
-        horizon, batch_size = next_observations[
-            OBS_IMAGE if self.config.image_features else OBS_ENV_STATE
-        ].shape[:2]
+        # Every observation setup comes with one action per step, so take the horizon from the actions.
+        horizon = action.shape[0]
 
         # Run latent rollout using the latent dynamics model and policy model.
         # Note this has shape `horizon+1` because there are `horizon` actions and a current `z`. Each action
