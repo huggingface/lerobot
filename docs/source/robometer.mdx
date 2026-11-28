@@ -172,8 +172,8 @@ uv run lerobot-score \
 
 The default dataset score, named `robometer`, contains:
 
-- `reward.robometer.progress`
-- `reward.robometer.success_probability`
+- `robometer.progress`
+- `robometer.success_probability`
 
 Both are dense float32 frame signals in `[0, 1]`. Like ROBOMETER's own frame-step evaluation, the frame scorer predicts each frame from 4 frames spread over the prefix ending at it. The shared scoring workflow handles validation, atomic episode writes, resume, and deterministic merging.
 
@@ -183,7 +183,7 @@ For RA-BC weighting, select the namespaced progress signal explicitly:
 sample_weighting:
   type: rabc
   score_name: robometer
-  signal_name: reward.robometer.progress
+  signal_name: robometer.progress
 ```
 
 ## Configuration Notes

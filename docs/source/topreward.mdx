@@ -127,7 +127,7 @@ uv run lerobot-score \
     --reward_model.num_samples=15
 ```
 
-For each episode, the scorer computes the log-probability of the task for `--reward_model.num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `reward.topreward.progress`, in `[0, 1]`.
+For each episode, the scorer computes the log-probability of the task for `--reward_model.num_samples` evenly spaced prefixes (15 by default, every prefix when the episode is shorter), normalizes them per episode with min-max, and interpolates between them. Each prefix is passed whole, without the `max_frames` cap. The dataset score `topreward` holds one dense signal, `topreward.progress`, in `[0, 1]`.
 
 For RA-BC weighting, select it explicitly:
 
@@ -135,7 +135,7 @@ For RA-BC weighting, select it explicitly:
 sample_weighting:
   type: rabc
   score_name: topreward
-  signal_name: reward.topreward.progress
+  signal_name: topreward.progress
 ```
 
 Then render the progress overlay for any episode:

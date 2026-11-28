@@ -24,7 +24,7 @@ Example usage:
     sample_weighting:
         type: rabc
         score_name: robometer
-        signal_name: reward.robometer.progress
+        signal_name: robometer.progress
         kappa: 0.01
 
     # In training script

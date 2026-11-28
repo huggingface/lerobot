@@ -32,7 +32,7 @@ Usage:
         --dataset-root /path/to/local/dataset \
         --episode 1100 \
         --score-name robometer \
-        --signal-name reward.robometer.progress
+        --signal-name robometer.progress
 
     python examples/dataset/create_progress_videos.py \
         --repo-id lerobot-data-collection/level2_final_quality3 \
@@ -692,7 +692,7 @@ def main() -> None:
         "--signal-name",
         type=str,
         default=None,
-        help="Signal of the score to draw, e.g. 'reward.sarm.sparse_progress' (default: its first signal).",
+        help="Signal of the score to draw, e.g. 'sarm.sparse_progress' (default: its first signal).",
     )
     args = parser.parse_args()
 

@@ -115,14 +115,14 @@ def test_config_custom_values():
     config = SampleWeightingConfig(
         type="rabc",
         score_name="robometer",
-        signal_name="reward.robometer.progress",
+        signal_name="robometer.progress",
         kappa=0.05,
         epsilon=1e-8,
         extra_params={"fallback_weight": 0.5},
     )
     assert config.type == "rabc"
     assert config.score_name == "robometer"
-    assert config.signal_name == "reward.robometer.progress"
+    assert config.signal_name == "robometer.progress"
     assert config.kappa == 0.05
     assert config.epsilon == 1e-8
     assert config.extra_params == {"fallback_weight": 0.5}
@@ -412,27 +412,23 @@ def test_rabc_accepts_namespaced_signal():
             "index": [0, 1],
             "episode_index": [0, 0],
             "frame_index": [0, 1],
-            "reward.robometer.progress": [0.0, 1.0],
+            "robometer.progress": [0.0, 1.0],
         }
     )
     dataset = FakeScoreDataset(
         scores,
-        {
-            "reward.robometer.progress": SignalDescriptor(
-                description="RoboMeter progress.", greater_is_better=True
-            )
-        },
+        {"robometer.progress": SignalDescriptor(description="RoboMeter progress.", greater_is_better=True)},
     )
     weighter = RABCWeights(
         dataset=dataset,
         score_name="robometer",
-        signal_name="reward.robometer.progress",
+        signal_name="robometer.progress",
         chunk_size=1,
         device=torch.device("cpu"),
     )
 
-    assert weighter.signal_name == "reward.robometer.progress"
-    assert weighter.get_stats()["signal_name"] == "reward.robometer.progress"
+    assert weighter.signal_name == "robometer.progress"
+    assert weighter.get_stats()["signal_name"] == "robometer.progress"
 
 
 def test_rabc_rejects_a_signal_missing_from_the_scores(sample_score_dataset):
@@ -442,7 +438,7 @@ def test_rabc_rejects_a_signal_missing_from_the_scores(sample_score_dataset):
         RABCWeights(
             dataset=sample_score_dataset,
             score_name="sarm",
-            signal_name="reward.sarm.dense_progress",
+            signal_name="sarm.dense_progress",
             chunk_size=1,
             device=torch.device("cpu"),
         )

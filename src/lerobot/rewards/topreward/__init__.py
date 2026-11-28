@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_topreward import TOPRewardConfig
+from .configuration_topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS, TOPRewardConfig
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
 
-__all__ = ["TOPRewardConfig", "TOPRewardModel", "make_topreward_pre_post_processors"]
+__all__ = [
+    "TOPREWARD_PROGRESS_SIGNAL",
+    "TOPREWARD_SIGNAL_DESCRIPTORS",
+    "TOPRewardConfig",
+    "TOPRewardModel",
+    "make_topreward_pre_post_processors",
+]

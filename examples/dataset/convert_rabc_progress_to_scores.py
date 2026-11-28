@@ -30,7 +30,7 @@ Example:
         --push-to-hub
 
 Then train with ``--sample_weighting.type=rabc --sample_weighting.score_name=sarm
---sample_weighting.signal_name=reward.sarm.sparse_progress``.
+--sample_weighting.signal_name=sarm.sparse_progress``.
 """
 
 import argparse
@@ -40,19 +40,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.rewards.robometer.scoring_robometer import (
-    PROGRESS_SIGNAL as ROBOMETER_PROGRESS_SIGNAL,
-    ROBOMETER_SIGNAL_DESCRIPTORS,
-)
-from lerobot.rewards.sarm.scoring_sarm import (
-    DENSE_PROGRESS_SIGNAL,
+from lerobot.rewards.robometer import ROBOMETER_PROGRESS_SIGNAL, ROBOMETER_SIGNAL_DESCRIPTORS
+from lerobot.rewards.sarm import (
+    SARM_DENSE_PROGRESS_SIGNAL,
     SARM_SIGNAL_DESCRIPTORS,
-    SPARSE_PROGRESS_SIGNAL,
+    SARM_SPARSE_PROGRESS_SIGNAL,
 )
-from lerobot.rewards.topreward.scoring_topreward import (
-    PROGRESS_SIGNAL as TOPREWARD_PROGRESS_SIGNAL,
-    TOPREWARD_SIGNAL_DESCRIPTORS,
-)
+from lerobot.rewards.topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
@@ -65,7 +59,7 @@ if TYPE_CHECKING or (_datasets_available and _av_available):
 
 # The signal each model's progress columns become.
 _SIGNALS = {
-    "sarm": {"progress_sparse": SPARSE_PROGRESS_SIGNAL, "progress_dense": DENSE_PROGRESS_SIGNAL},
+    "sarm": {"progress_sparse": SARM_SPARSE_PROGRESS_SIGNAL, "progress_dense": SARM_DENSE_PROGRESS_SIGNAL},
     "robometer": {"progress_sparse": ROBOMETER_PROGRESS_SIGNAL},
     "topreward": {"progress_sparse": TOPREWARD_PROGRESS_SIGNAL},
 }

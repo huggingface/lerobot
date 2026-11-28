@@ -26,24 +26,12 @@ from numpy.typing import NDArray
 from lerobot.processor import PolicyProcessorPipeline
 
 from ..scoring import FrameSignals, SignalDescriptor, scoring_options
+from .configuration_topreward import TOPREWARD_PROGRESS_SIGNAL, TOPREWARD_SIGNAL_DESCRIPTORS
 from .modeling_topreward import TOPRewardModel
 from .processor_topreward import make_topreward_pre_post_processors
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
-
-PROGRESS_SIGNAL = "reward.topreward.progress"
-
-TOPREWARD_SIGNAL_DESCRIPTORS = {
-    PROGRESS_SIGNAL: SignalDescriptor(
-        description=(
-            "TOPReward log-probability of the task for the trajectory prefix ending at this frame, "
-            "min-max normalized per episode."
-        ),
-        greater_is_better=True,
-        bounds=(0.0, 1.0),
-    ),
-}
 
 
 def _build_prefix_lengths(num_frames: int, num_samples: int | None) -> NDArray[np.int64]:
@@ -129,7 +117,7 @@ class TOPRewardFrameScorer:
         )
         return FrameSignals(
             frame_indices=np.arange(num_frames, dtype=np.int64),
-            signals={PROGRESS_SIGNAL: progress.astype(np.float32)},
+            signals={TOPREWARD_PROGRESS_SIGNAL: progress.astype(np.float32)},
         )
 
 
