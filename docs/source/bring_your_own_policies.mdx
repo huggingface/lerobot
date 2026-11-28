@@ -245,6 +245,46 @@ def make_my_policy_pre_post_processors_from_pretrained(
 
 For working examples, see [`processor_evo1.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/evo1/processor_evo1.py) (re-pads normalization stats), [`processor_groot.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/groot/processor_groot.py) (handles raw upstream checkpoints), and [`processor_molmoact2.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/molmoact2/processor_molmoact2.py) (renames override keys).
 
+### Taking the starting noise as an argument
+
+A policy that samples its actions from random noise (flow matching, diffusion) lets the caller pass
+that noise in. With it, two runs can be compared on the same noise, and an exported or compiled
+policy can be checked against the original: `torch.export` takes no generator, so the noise has to
+be a tensor.
+
+```python
+class MyPolicy(PreTrainedPolicy):
+    def predict_action_chunk(self, batch, *, noise: Tensor | None = None) -> Tensor:
+        """`noise` is the optional starting sample, shape `(B, chunk_size, max_action_dim)`."""
+        if noise is None:
+            noise = torch.randn(shape, device=device, dtype=dtype)
+        else:
+            noise = noise.to(device=device, dtype=dtype)
+        ...
+
+    def select_action(self, batch, *, noise: Tensor | None = None) -> Tensor:
+        if not self._action_queue:
+            chunk = self.predict_action_chunk(batch, noise=noise)
+            self._action_queue.extend(chunk[:, : self.config.n_action_steps].transpose(0, 1))
+        return self._action_queue.popleft()
+```
+
+- `noise` is keyword-only, defaults to `None`, and replaces only the starting draw. Without it,
+  the policy draws exactly as before, so seeded results do not change.
+- It has the shape the policy would draw. Write that shape in the docstring.
+- Move it to the device and dtype of the draw it replaces, so a float32 tensor works with a
+  bfloat16 model.
+- Never change the caller's tensor. If the denoising loop updates its sample in place
+  (`x_t += dt * v_t`), copy the noise first.
+- A policy that also samples other latents, such as a world model's future video, takes each as
+  its own keyword (`video_noise`).
+- Don't end the signature in a `**kwargs` that nothing reads: a misspelled `nosie=` would then be
+  silently ignored and fresh noise drawn.
+
+[`modeling_pi0.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/pi0/modeling_pi0.py)
+and [`modeling_flux3.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/flux3/modeling_flux3.py)
+(with `video_noise`) are working examples.
+
 ### Returning a prediction besides actions (imagined frames, subtasks, boxes)
 
 A policy may return what it expects or believes besides the action it takes, such as a world
@@ -560,6 +600,7 @@ The general expectations are in [`CONTRIBUTING.md`](https://github.com/huggingfa
 - [ ] `MyPolicy` and `MyPolicyConfig` cover the surface above; `__init_subclass__` accepts the class.
 - [ ] `policies/__init__.py` re-exports the config (this registers the policy; the factory resolves modeling/processor by naming convention).
 - [ ] `make_my_policy_pre_post_processors` follows the naming convention.
+- [ ] If the policy samples from noise, `predict_action_chunk` and `select_action` take a keyword-only `noise` ([Taking the starting noise as an argument](#taking-the-starting-noise-as-an-argument)).
 - [ ] Optional deps live behind a `[project.optional-dependencies]` extra and the `TYPE_CHECKING + require_package` guard.
 - [ ] `tests/policies/` updated; backward-compat artifact committed & policy-specific tests.
 - [ ] `src/lerobot/policies/<name>/README.md` symlinked into `docs/source/policy_<name>_README.md`; user-facing `docs/source/<name>.mdx` written and added to `_toctree.yml`.

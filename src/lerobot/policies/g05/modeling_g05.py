@@ -1441,13 +1441,18 @@ class G05NativeBackend(nn.Module):
         positions: Tensor,
         action_dim_is_pad: Tensor | None,
         dtype: torch.dtype,
+        noise: Tensor | None = None,
     ) -> Tensor:
-        """Integrate the flow to sample an action chunk."""
+        """Integrate the flow to sample an action chunk, from `noise` when given."""
         fm = self.model_config["fm"]
         batch_size = token_types.shape[0]
         horizon = int(fm["horizon_steps"])
         action_dim = int(fm["action_dim"])
-        action = sample_noise((batch_size, horizon, action_dim), token_types.device, dtype=dtype)
+        if noise is None:
+            action = sample_noise((batch_size, horizon, action_dim), token_types.device, dtype=dtype)
+        else:
+            # Copied: the padded dimensions are masked in place below.
+            action = noise.to(device=token_types.device, dtype=dtype).clone()
         dim_mask = action_dim_is_pad.bool().unsqueeze(1) if action_dim_is_pad is not None else None
         if dim_mask is not None:
             action.masked_fill_(dim_mask, 0)
@@ -1524,8 +1529,8 @@ class G05NativeBackend(nn.Module):
         loss = (weights * (predicted - target_velocity).square()).sum() / weights.sum().clamp_min(1)
         return loss * float(fm["fm_weight"])
 
-    def predict_action(self, batch: Mapping[str, Any]) -> dict[str, Any]:
-        """Predict one action chunk, optionally with chain of thought."""
+    def predict_action(self, batch: Mapping[str, Any], *, noise: Tensor | None = None) -> dict[str, Any]:
+        """Predict one action chunk, optionally with chain of thought. `noise` starts the flow head."""
         samples = list(batch["samples"])
         pixel_values = batch["pixel_values"]
         first_image = next(iter(pixel_values.values()))
@@ -1585,6 +1590,7 @@ class G05NativeBackend(nn.Module):
                 positions=positions,
                 action_dim_is_pad=dim_mask,
                 dtype=first_image.dtype,
+                noise=noise,
             )
         if bool(self.model_config.get("discrete_action", False)):
             if self.action_tokenizer is None:
@@ -1907,6 +1913,7 @@ class G05Policy(PreTrainedPolicy):
         batch: Mapping[str, Any],
         *,
         system_mode: str | None = None,
+        noise: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
         """Run inference in the requested system mode."""
         if system_mode is None:
@@ -1927,7 +1934,7 @@ class G05Policy(PreTrainedPolicy):
             dtype=torch.bfloat16,
             enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
-            result = self.backend.predict_action(prepared)
+            result = self.backend.predict_action(prepared, noise=noise)
         action = result["ar_action"] if self.config.action_head == "actioncodec" else result[ACTION]
         metadata = (
             {"cot_text": result["cot_text"]} if system_mode == "system2" and "cot_text" in result else {}
@@ -1954,7 +1961,9 @@ class G05Policy(PreTrainedPolicy):
         return prediction
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
+    def predict_action_chunk(
+        self, batch: dict[str, Any], *, noise: Tensor | None = None
+    ) -> Tensor | PolicyOutput:
         """The action chunk, with what its same-pass chain of thought predicts in System 2.
 
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
@@ -1963,20 +1972,24 @@ class G05Policy(PreTrainedPolicy):
         than merely accompanied by it. In System 2 the chunk comes back in a `PolicyOutput`
         whose prediction holds each env's CoT subtask and boxes; System 1 generates no CoT
         and returns the bare chunk.
+
+        `noise` is the starting sample of the flow head, `(B, horizon_steps, action_dim)` of the
+        checkpoint's `fm` settings. When it is None, standard normal noise is drawn. The ActionCodec
+        head does not sample from noise and ignores it.
         """
-        action, metadata = self._run_inference(batch)
+        action, metadata = self._run_inference(batch, noise=noise)
         prediction = self._cot_prediction(metadata)
         return PolicyOutput(action=action, prediction=prediction) if prediction else action
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
+    def select_action(self, batch: dict[str, Any], *, noise: Tensor | None = None) -> Tensor | PolicyOutput:
         """Return the next action, refilling the queue when it empties.
 
         The first action of a chunk carries the chunk's prediction (see `predict_action_chunk`).
         """
         prediction = None
         if not self._action_queue:
-            output = self.predict_action_chunk(batch, **kwargs)
+            output = self.predict_action_chunk(batch, noise=noise)
             chunk, prediction = (
                 (output, None) if isinstance(output, Tensor) else (output[ACTION], output.get(PREDICTION))
             )
