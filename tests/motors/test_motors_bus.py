@@ -548,3 +548,36 @@ def test_setup_motors_asks_for_one_motor_at_a_time(motors, order, bus, monkeypat
         f"Connect the controller board to the '{motor}' motor only and press enter." for motor in order
     ]
     assert f"'{order[0]}' motor id set to {bus.motors[order[0]].id}" in capsys.readouterr().out
+
+
+@pytest.fixture
+def degrees_bus() -> MockMotorsBus:
+    """One motor in degrees with the calibrated range of a typical SO-101 joint: 800..3200
+    steps on a 4096-step encoder, i.e. about -105..105 degrees around the middle (2000)."""
+    bus = MockMotorsBus(
+        "/dev/dummy-port",
+        {"dummy": Motor(1, "model_4", MotorNormMode.DEGREES)},
+        {"dummy": MotorCalibration(id=1, drive_mode=0, homing_offset=0, range_min=800, range_max=3200)},
+    )
+    bus.connect(handshake=False)
+    return bus
+
+
+@pytest.mark.parametrize(
+    "degrees, step",
+    [
+        (0.0, 2000),  # the middle of the range
+        (90.0, 3023),  # in range: unchanged, int((90 * 4095 / 360) + 2000)
+        (-90.0, 976),
+        (150.0, 3200),  # past the upper stop: the stop
+        (-200.0, 800),  # past the lower stop: the stop, not step -275
+        (720.0, 3200),
+    ],
+)
+def test_unnormalize_degrees_is_bounded_to_the_calibrated_range(degrees_bus, degrees, step):
+    assert degrees_bus._unnormalize({1: degrees}) == {1: step}
+
+
+def test_normalize_degrees_reports_a_position_outside_the_range(degrees_bus):
+    """Reading is not bounded: a joint pushed past its calibrated stop reports its true angle."""
+    assert degrees_bus._normalize({1: 3300})[1] == pytest.approx((3300 - 2000) * 360 / 4095)
