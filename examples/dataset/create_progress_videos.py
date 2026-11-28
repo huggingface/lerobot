@@ -55,9 +55,8 @@ import numpy as np
 import pandas as pd
 from huggingface_hub import snapshot_download
 
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.scores import load_scores
-from lerobot.rewards.scoring import load_signal_descriptors
+from lerobot.datasets import LeRobotDataset, load_scores
+from lerobot.rewards import load_signal_descriptors
 
 GRAPH_Y_TOP_FRAC = 0.01
 GRAPH_Y_BOT_FRAC = 0.99

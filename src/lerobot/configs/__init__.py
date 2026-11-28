@@ -27,6 +27,7 @@ from . import parser  # registers the draccus codec of torch.dtype
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
 from .policies import PreTrainedConfig
+from .rewards import RewardModelConfig
 from .types import (
     FeatureType,
     NormalizationMode,
@@ -65,6 +66,7 @@ __all__ = [
     "JobConfig",
     "PeftConfig",
     "PreTrainedConfig",
+    "RewardModelConfig",
     "TrackioConfig",
     "VideoEncoderConfig",
     "RGBEncoderConfig",

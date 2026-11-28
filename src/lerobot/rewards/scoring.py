@@ -26,11 +26,10 @@ import numpy as np
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 
 if TYPE_CHECKING:
-    from lerobot.configs.rewards import RewardModelConfig
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.configs import RewardModelConfig
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets.scores import add_scores, load_scores_info
+    from lerobot.datasets import LeRobotDataset, add_scores, load_scores_info
 
 
 @dataclass(frozen=True)

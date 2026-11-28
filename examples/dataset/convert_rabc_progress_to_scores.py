@@ -54,8 +54,7 @@ if TYPE_CHECKING or (_datasets_available and _av_available):
     import pyarrow.parquet as pq
     from huggingface_hub import HfApi, hf_hub_download
 
-    from lerobot.datasets import LeRobotDataset
-    from lerobot.datasets.scores import add_scores, push_scores_to_hub
+    from lerobot.datasets import LeRobotDataset, add_scores, push_scores_to_hub
 
 # The signal each model's progress columns become.
 _SIGNALS = {

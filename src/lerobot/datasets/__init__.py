@@ -45,9 +45,24 @@ from .multi_dataset import MultiLeRobotDataset
 from .pipeline_features import aggregate_pipeline_dataset_features, create_initial_features
 from .pyav_utils import check_video_encoder_parameters_pyav, detect_available_encoders_pyav
 from .sampler import EpisodeAwareSampler, compute_sampler_state
+from .scores import (
+    ScoreWriter,
+    add_scores,
+    list_scores,
+    load_scores,
+    load_scores_info,
+    merge_scores,
+    push_scores_to_hub,
+)
 from .storage import register_dataset_reader
 from .streaming_dataset import StreamingLeRobotDataset
-from .utils import DEFAULT_EPISODES_PATH, create_lerobot_dataset_card, resolve_episode_indices
+from .utils import (
+    DEFAULT_EPISODES_PATH,
+    SCORES_DIR,
+    create_lerobot_dataset_card,
+    delta_window,
+    resolve_episode_indices,
+)
 from .video_utils import VideoEncodingManager
 
 # NOTE: Low-level I/O functions (cast_stats_to_numpy, get_parquet_file_size_in_mb, etc.)
@@ -65,13 +80,16 @@ __all__ = [
     "LeRobotDatasetMetadata",
     "MultiLeRobotDataset",
     "PERSISTENT_STYLES",
+    "SCORES_DIR",
     "STYLE_REGISTRY",
+    "ScoreWriter",
     "StreamingLeRobotDataset",
     "VideoEncodingManager",
     "register_dataset_reader",
     "check_video_encoder_parameters_pyav",
     "detect_available_encoders_pyav",
     "add_features",
+    "add_scores",
     "aggregate_datasets",
     "aggregate_pipeline_dataset_features",
     "aggregate_stats",
@@ -81,13 +99,19 @@ __all__ = [
     "create_lerobot_dataset_card",
     "column_for_style",
     "delete_episodes",
+    "delta_window",
     "get_feature_stats",
+    "list_scores",
     "load_episodes",
+    "load_scores",
+    "load_scores_info",
     "make_dataset",
     "make_train_eval_datasets",
     "merge_datasets",
+    "merge_scores",
     "modify_features",
     "modify_tasks",
+    "push_scores_to_hub",
     "recompute_stats",
     "reencode_dataset",
     "remove_feature",

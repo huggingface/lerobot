@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets import LeRobotDataset
     from lerobot.policies.pretrained import PreTrainedPolicy
 
 
@@ -158,8 +158,8 @@ def _make_rabc_weighter(
     if dataset is None:
         raise ValueError("RA-BC sample weighting requires a dataset containing scores")
 
-    # Dataset factories import training configs, so keep this type import out of module initialization.
-    from lerobot.datasets.multi_dataset import MultiLeRobotDataset
+    # `lerobot.datasets` imports the training configs, which import this module.
+    from lerobot.datasets import MultiLeRobotDataset
 
     if isinstance(dataset, MultiLeRobotDataset):
         raise ValueError(

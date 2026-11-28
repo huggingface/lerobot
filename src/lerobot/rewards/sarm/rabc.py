@@ -41,11 +41,8 @@ from lerobot.utils.sample_weighting import SampleWeighter
 
 from ..scoring import load_signal_descriptors
 
-if TYPE_CHECKING:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets.scores import load_scores
+    from lerobot.datasets import LeRobotDataset, load_scores
 
 
 class RABCWeights(SampleWeighter):

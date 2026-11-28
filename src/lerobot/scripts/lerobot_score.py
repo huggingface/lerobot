@@ -60,17 +60,14 @@ from typing import TYPE_CHECKING
 
 from huggingface_hub import HfApi
 
-from lerobot.configs import parser
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import RewardModelConfig, parser
 from lerobot.rewards import make_frame_scorer, make_reward_model, score_dataset
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
 from lerobot.utils.utils import init_logging
 
 if TYPE_CHECKING or (_datasets_available and _av_available):
-    from lerobot.datasets import LeRobotDataset
-    from lerobot.datasets.scores import push_scores_to_hub
-    from lerobot.datasets.utils import SCORES_DIR
+    from lerobot.datasets import SCORES_DIR, LeRobotDataset, push_scores_to_hub
 
 
 @dataclass
