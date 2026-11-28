@@ -421,15 +421,19 @@ class SmolVLAPolicy(PreTrainedPolicy):
             images.append(img)
             img_masks.append(mask)
 
-        # Create image features not present in the batch
-        # as fully 0 padded images.
-        for num_empty_cameras in range(len(missing_img_keys)):
-            if num_empty_cameras >= self.config.empty_cameras:
-                break
-            img = torch.ones_like(img) * -1
-            mask = torch.zeros_like(mask)
-            images.append(img)
-            img_masks.append(mask)
+        # Create image features not present in the batch as fully padded images, up to
+        # `empty_cameras` of them. Each one goes to its own slot in `image_features` order so that
+        # the cameras after it keep their slots; missing cameras beyond the budget are dropped.
+        slot = 0
+        num_empty_cameras = 0
+        for key in self.config.image_features:
+            if key in missing_img_keys:
+                if num_empty_cameras >= self.config.empty_cameras:
+                    continue
+                images.insert(slot, torch.ones_like(img) * -1)
+                img_masks.insert(slot, torch.zeros_like(mask))
+                num_empty_cameras += 1
+            slot += 1
         return images, img_masks
 
     def _pi_aloha_decode_state(self, state):
