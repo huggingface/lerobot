@@ -73,7 +73,7 @@ The `preview` command only works with existing doc files. When you add a complet
 
 ## Adding a new element to the navigation bar
 
-Accepted files are Markdown (.md).
+Accepted files are MDX (.mdx).
 
 Create a file with its extension and put it in the source directory. You can then link it to the toc-tree by putting
 the filename without the extension in the [`_toctree.yml`](https://github.com/huggingface/lerobot/blob/main/docs/source/_toctree.yml) file.
@@ -108,7 +108,7 @@ For an example of a rich moved sections set please see the very end of [the tran
 
 Adding a new tutorial or section is done in two steps:
 
-- Add a new file under `./source`. This file can either be ReStructuredText (.rst) or Markdown (.md).
+- Add a new file under `./source`. This file should be MDX (`.mdx`).
 - Link that file in `./source/_toctree.yml` on the correct toc-tree.
 
 Make sure to put your new file under the proper section. If you have a doubt, feel free to ask in a Github Issue or PR.
