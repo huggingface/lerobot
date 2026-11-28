@@ -29,6 +29,45 @@ from lerobot.utils.constants import ACTION, DONE, OBS_STATE, OBS_STR, REWARD
 
 
 # Tests for the unified to_tensor function
+@pytest.mark.parametrize("dtype", [None, torch.float32])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_to_tensor_reversed_numpy_views(axis, dtype):
+    array = np.arange(12, dtype=np.float64).reshape(3, 4)
+    reversed_view = np.flip(array, axis=axis)
+    original = array.copy()
+
+    result = to_tensor(reversed_view, dtype=dtype, device="cpu")
+
+    expected = torch.tensor(reversed_view.copy(), dtype=dtype)
+    torch.testing.assert_close(result, expected)
+    np.testing.assert_array_equal(array, original)
+
+
+@pytest.mark.parametrize("shape,axis", [((1, 3), 0), ((2, 3, 1), 2)])
+def test_to_tensor_contiguous_negative_stride(shape: tuple[int, ...], axis: int) -> None:
+    array = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    original = array.copy()
+    view = np.flip(array, axis=axis)
+    assert view.flags.c_contiguous
+    assert view.strides[axis] < 0
+    # Contiguity alone does not imply torch-compatible strides.
+    assert np.ascontiguousarray(view).strides[axis] < 0
+
+    result = to_tensor(view, dtype=None, device="cpu")
+
+    torch.testing.assert_close(result, torch.tensor(view.copy()))
+    result.fill_(99)
+    np.testing.assert_array_equal(array, original)
+
+
+def test_to_tensor_positive_strides_preserve_shared_storage():
+    array = np.arange(12, dtype=np.float64).reshape(3, 4).T
+    result = to_tensor(array, dtype=None)
+    array[0, 0] = 42
+    assert result[0, 0].item() == 42
+    assert result.stride() == tuple(stride // array.itemsize for stride in array.strides)
+
+
 def test_to_tensor_numpy_arrays():
     """Test to_tensor with various numpy arrays."""
     # Regular numpy array
