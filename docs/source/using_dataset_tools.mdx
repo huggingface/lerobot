@@ -83,6 +83,18 @@ For advanced usage—including visualizing datasets stored on a remote server—
 lerobot-dataset-viz --help
 ```
 
+## Check Local Dataset Videos
+
+To find missing, unreadable, or too-short video files in a local v3.0 dataset, run:
+
+```bash
+lerobot-check-dataset-videos /path/to/dataset
+```
+
+The command compares episode `from_timestamp` / `to_timestamp` values with each referenced video's stream duration and prints a JSON report. It checks local files only, does not download or modify data, and does not decode every frame. Install the dataset extra first with `pip install 'lerobot[dataset]'` or `uv pip install 'lerobot[dataset]'`.
+
+The command exits with status `0` when all checked intervals fit their video streams, `1` when it finds an integrity issue, and `2` when the dataset metadata cannot be checked.
+
 ## Editing Datasets
 
 LeRobot provides several utilities for manipulating datasets:
