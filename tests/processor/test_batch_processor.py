@@ -153,13 +153,11 @@ def test_higher_dimensional_tensors_unchanged():
     assert torch.allclose(processed_obs[OBS_IMAGE], image_5d)
 
 
-def test_non_tensor_values_unchanged():
-    """Test that non-tensor values in observations remain unchanged."""
+def test_non_feature_values_unchanged():
+    """Test that non-feature observation values remain unchanged."""
     processor = AddBatchDimensionProcessorStep()
 
     observation = {
-        OBS_STATE: [1, 2, 3],  # List, not tensor
-        OBS_IMAGE: "not_a_tensor",  # String
         "custom_key": 42,  # Integer
         "another_key": {"nested": "dict"},  # Dict
     }
@@ -170,10 +168,26 @@ def test_non_tensor_values_unchanged():
     processed_obs = result[TransitionKey.OBSERVATION]
 
     # Should remain unchanged
-    assert processed_obs[OBS_STATE] == [1, 2, 3]
-    assert processed_obs[OBS_IMAGE] == "not_a_tensor"
     assert processed_obs["custom_key"] == 42
     assert processed_obs["another_key"] == {"nested": "dict"}
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        (OBS_STATE, np.array([1.0, 2.0])),
+        (OBS_ENV_STATE, [1.0, 2.0]),
+        (OBS_IMAGE, "not_a_tensor"),
+        (f"{OBS_IMAGES}.camera", {"not": "a tensor"}),
+    ],
+)
+def test_non_tensor_feature_values_raise_type_error(key, value):
+    """Test that recognized observation features must be tensors."""
+    processor = AddBatchDimensionProcessorStep()
+    transition = create_transition(observation={key: value}, action=torch.empty(0))
+
+    with pytest.raises(TypeError, match=f"Observation '{key}' should be a torch.Tensor"):
+        processor(transition)
 
 
 def test_none_observation():
