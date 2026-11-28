@@ -769,35 +769,46 @@ def compute_relative_action_stats(
         f"(chunk_size={chunk_size}, workers={effective_workers})"
     )
 
-    batch_size = 50_000
-    batches = [valid_starts[i : i + batch_size] for i in range(0, len(valid_starts), batch_size)]
+    total_vectors = len(valid_starts) * chunk_size
 
-    running_stats = RunningQuantileStats()
-
-    if num_workers > 1:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            futures = [
-                pool.submit(
-                    _compute_relative_chunk_batch,
-                    batch,
-                    all_actions,
-                    all_states,
-                    chunk_size,
-                    relative_mask,
-                )
-                for batch in batches
-            ]
-            for future in as_completed(futures):
-                running_stats.update(future.result())
+    if total_vectors < 2:
+        # `RunningQuantileStats` requires at least two vectors; mirror the
+        # `get_feature_stats` fallback for small samples (std of 0, quantiles
+        # set to the mean).
+        relative_actions = _compute_relative_chunk_batch(
+            valid_starts, all_actions, all_states, chunk_size, relative_mask
+        )
+        stats = _compute_basic_stats(relative_actions, total_vectors, DEFAULT_QUANTILES)
     else:
-        for batch in batches:
-            running_stats.update(
-                _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
-            )
+        batch_size = 50_000
+        batches = [valid_starts[i : i + batch_size] for i in range(0, len(valid_starts), batch_size)]
 
-    stats = running_stats.get_statistics()
+        running_stats = RunningQuantileStats()
+
+        if num_workers > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = [
+                    pool.submit(
+                        _compute_relative_chunk_batch,
+                        batch,
+                        all_actions,
+                        all_states,
+                        chunk_size,
+                        relative_mask,
+                    )
+                    for batch in batches
+                ]
+                for future in as_completed(futures):
+                    running_stats.update(future.result())
+        else:
+            for batch in batches:
+                running_stats.update(
+                    _compute_relative_chunk_batch(batch, all_actions, all_states, chunk_size, relative_mask)
+                )
+
+        stats = running_stats.get_statistics()
 
     excluded_dims = int(len(relative_mask) - relative_mask.sum())
     total_frames = len(valid_starts) * chunk_size
