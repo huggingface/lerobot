@@ -222,6 +222,9 @@ lerobot-train \
 
 Then deploy the fine-tuned policy and repeat from Step 2 to target its remaining failure modes.
 
+> [!TIP]
+> For Pi0.5 and SmolVLA, [FlowDAgger](./flow_dagger) is an alternative to steps 3–4. It keeps the base policy frozen and trains a small noise policy directly on the DAgger dataset, including its `intervention` column, so no merge is needed.
+
 ---
 
 ## Tips for Effective HIL Collection
