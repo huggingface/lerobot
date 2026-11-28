@@ -354,7 +354,9 @@ def record_grab(cfg: OmxRecordGrabConfig) -> LeRobotDataset:
                 root=cfg.dataset.root,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
                 image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
@@ -372,7 +374,9 @@ def record_grab(cfg: OmxRecordGrabConfig) -> LeRobotDataset:
                 use_videos=use_videos,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
-                vcodec=cfg.dataset.vcodec,
+                rgb_encoder=cfg.dataset.rgb_encoder,
+                depth_encoder=cfg.dataset.depth_encoder,
+                encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
                 image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
