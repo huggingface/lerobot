@@ -109,8 +109,8 @@ class RolloutEvent(Enum):
     """No initial position was captured; the robot holds its current pose."""
 
     RESET_FAILED = "reset_failed"
-    """The return move errored partway: the robot may be holding an arbitrary pose, *not* the
-    initial position."""
+    """The return move errored, timed out or was stopped partway: the robot may be holding an
+    arbitrary pose, *not* the initial position."""
 
     QUERY_ANSWERED = "query_answered"
     """A text query resolved (an :meth:`RolloutController.ask` question or an autosteer turn); the
@@ -467,7 +467,10 @@ class RolloutController:
         if not self._ctx.hardware.initial_position:
             logger.warning("No initial position captured — skipping the return move")
             self._emit(RolloutEvent.RESET_SKIPPED)
-        elif self._strategy.return_to_initial_position(self._ctx.hardware):
+        elif self._strategy.return_to_initial_position(
+            self._ctx.hardware,
+            stop_requested=lambda: self._stop_requested.is_set() or self._global_shutdown.is_set(),
+        ):
             self._emit(RolloutEvent.RESET_DONE)
         else:
             # RESET_DONE guarantees "back at the initial position"; a failed move must not claim it.

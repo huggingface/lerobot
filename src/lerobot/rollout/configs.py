@@ -344,9 +344,9 @@ class RolloutConfig:
     rename_map: dict[str, str] = field(default_factory=dict)
 
     # Hardware teardown
-    # When True (default), smoothly interpolate the robot back to the joint
-    # positions captured at startup before disconnecting.  Set to False to
-    # leave the robot in its final achieved pose at shutdown.
+    # When True (default), smoothly move the robot back to the joint positions
+    # captured at startup, and wait until it settles, before disconnecting.
+    # Set to False to leave the robot in its final achieved pose at shutdown.
     return_to_initial_position: bool = True
 
     # Torch compile
