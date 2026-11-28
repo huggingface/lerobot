@@ -416,6 +416,7 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path):
             ema=ConstantEMAConfig(decay=0.999),
         )
         result.accelerator.gradient_accumulation.steps = 2
+        result.trackio.enable = False
         result.optimizer = policy_config.get_optimizer_preset()
         result.scheduler = policy_config.get_scheduler_preset()
         result.validate = lambda: None

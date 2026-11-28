@@ -96,6 +96,7 @@ def run_accelerate_training(
         f"--num_processes={num_processes}",
         "-m",
         "lerobot.scripts.lerobot_train",
+        "--trackio.enable=false",
     ] + config_args
 
     result = subprocess.run(

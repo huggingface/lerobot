@@ -46,7 +46,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from tqdm import tqdm
 
-from lerobot.common.trackio_utils import TrackioLogger
+from lerobot.common.trackio_utils import make_trackio_logger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -564,12 +564,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     if is_main_process():
         logging.info(pformat(cfg.to_dict()))
 
-    if cfg.trackio.enable and cfg.trackio.project and is_main_process():
-        trackio_logger = TrackioLogger(cfg)
-    else:
-        trackio_logger = None
-        if is_main_process():
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    trackio_logger = make_trackio_logger(cfg) if is_main_process() else None
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
