@@ -25,6 +25,24 @@ from lerobot.configs.rewards import RewardModelConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
+from ..scoring import SignalDescriptor
+
+# Signals SARM writes to dataset scores: each head's progress and, for heads with several
+# subtasks, its most likely subtask.
+SARM_SPARSE_PROGRESS_SIGNAL = "sarm.sparse_progress"
+SARM_DENSE_PROGRESS_SIGNAL = "sarm.dense_progress"
+SARM_SPARSE_STAGE_SIGNAL = "sarm.sparse_stage"
+SARM_DENSE_STAGE_SIGNAL = "sarm.dense_stage"
+SARM_SIGNAL_DESCRIPTORS = {
+    signal: SignalDescriptor(
+        description=f"SARM task progress from its {head} head, predicted from the window of frames around this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+        allow_nan=True,
+    )
+    for head, signal in (("sparse", SARM_SPARSE_PROGRESS_SIGNAL), ("dense", SARM_DENSE_PROGRESS_SIGNAL))
+}
+
 
 @RewardModelConfig.register_subclass("sarm")
 @dataclass
@@ -87,6 +105,11 @@ class SARMConfig(RewardModelConfig):
     image_key: str = OBS_IMAGES + ".top"  # Key for image used from the dataset
     state_key: str = OBS_STATE
 
+    # Offline scoring (`lerobot-score`): the heads to score ("sparse", "dense" or "both"), and score
+    # every `stride`-th frame and interpolate in between.
+    head_mode: str = "sparse"
+    stride: int = 1
+
     # Populated by the processor (video_features, state_features, text_features)
     input_features: dict = field(default_factory=lambda: {})
 
@@ -113,6 +136,10 @@ class SARMConfig(RewardModelConfig):
             raise ValueError(
                 f"annotation_mode must be 'single_stage', 'dense_only', or 'dual', got {self.annotation_mode}"
             )
+        if self.head_mode not in ("sparse", "dense", "both"):
+            raise ValueError(f"head_mode must be 'sparse', 'dense' or 'both', got {self.head_mode!r}")
+        if self.stride < 1:
+            raise ValueError(f"stride must be >= 1, got {self.stride}")
 
         if self.annotation_mode == "single_stage":
             # Use task description as stage name, full episode as one stage

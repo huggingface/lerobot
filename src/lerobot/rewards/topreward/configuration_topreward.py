@@ -20,10 +20,25 @@ from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.utils.constants import OBS_IMAGES
 
+from ..scoring import SignalDescriptor
+
 # Default prompt scaffolding from the upstream TOPReward paper / reference
 # implementation (``QwenClient.compute_instruction_reward``). The prompt
 # scores the terminal ``True`` token in ``f"{instruction} ... True"``
 # given the video.
+# Signal TOPReward writes to dataset scores.
+TOPREWARD_PROGRESS_SIGNAL = "topreward.progress"
+TOPREWARD_SIGNAL_DESCRIPTORS = {
+    TOPREWARD_PROGRESS_SIGNAL: SignalDescriptor(
+        description=(
+            "TOPReward log-probability of the task for the trajectory prefix ending at this frame, "
+            "min-max normalized per episode."
+        ),
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+}
+
 DEFAULT_PROMPT_PREFIX = (
     "The above video shows a robot manipulation trajectory that completes the following task: "
 )
@@ -70,6 +85,9 @@ class TOPRewardConfig(RewardModelConfig):
             upstream ``add_chat_template=True``).
         max_input_length: Hard limit on the total tokenized input length;
             samples that exceed it raise a ``ValueError``.
+        num_samples: Offline scoring (``lerobot-score``) scores this many evenly
+            spaced prefixes per episode and interpolates between them.
+            ``None`` = score every prefix.
     """
 
     # Path to a local LeRobot dir or HF repo that holds a ``config.json``
@@ -92,6 +110,8 @@ class TOPRewardConfig(RewardModelConfig):
     add_chat_template: bool = False
 
     max_input_length: int = 32768
+
+    num_samples: int | None = 15
 
     license: str | None = "mit"  # matches upstream TOPReward
     tags: list[str] | None = field(
@@ -120,6 +140,9 @@ class TOPRewardConfig(RewardModelConfig):
             )
         if self.max_input_length <= 0:
             raise ValueError(f"max_input_length must be > 0, got {self.max_input_length}")
+        # Progress is min-max normalized across the scored prefixes, so one prefix gives no signal.
+        if self.num_samples is not None and self.num_samples < 2:
+            raise ValueError(f"num_samples must be >= 2, got {self.num_samples}")
 
         if self.image_key not in self.input_features:
             self.input_features[self.image_key] = PolicyFeature(shape=(3, 224, 224), type=FeatureType.VISUAL)

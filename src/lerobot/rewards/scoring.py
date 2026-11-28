@@ -1,0 +1,230 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Reward-model contracts and orchestration for scoring dataset frames."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any, Protocol
+
+import draccus
+import numpy as np
+
+from lerobot.utils.import_utils import _av_available, _datasets_available, require_package
+
+if TYPE_CHECKING:
+    from lerobot.configs import RewardModelConfig
+
+if TYPE_CHECKING or (_datasets_available and _av_available):
+    from lerobot.datasets import LeRobotDataset, add_scores, load_scores_info
+
+
+@dataclass(frozen=True)
+class SignalDescriptor:
+    """Describe a signal's meaning, preferred direction, bounds and unit."""
+
+    description: str
+    greater_is_better: bool | None
+    bounds: tuple[float, float] | None = None
+    unit: str | None = None
+    # Whether NaN may mark a frame the scorer could not score. Frames left out are not scored.
+    allow_nan: bool = False
+    # Names of a categorical signal's values, such as subtasks: each value is a position here.
+    labels: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class FrameSignals:
+    """Sparse or dense frame-aligned signals for one episode."""
+
+    frame_indices: np.ndarray
+    signals: Mapping[str, np.ndarray]
+
+
+class FrameScorer(Protocol):
+    """Produce frame-aligned signals and describe their meaning up front."""
+
+    name: str
+
+    @property
+    def provenance(self) -> Mapping[str, Any]: ...
+
+    @property
+    def descriptors(self) -> Mapping[str, SignalDescriptor]: ...
+
+    def score_episode(self, dataset: LeRobotDataset, episode_index: int) -> FrameSignals: ...
+
+
+# Config fields that change where or how fast a run executes, or how a model is published, but not
+# the scores. The checkpoint is recorded separately in the provenance.
+_RUN_FIELDS = (
+    "device",
+    "pretrained_path",
+    "pretrained_revision",
+    "push_to_hub",
+    "repo_id",
+    "license",
+    "tags",
+    "private",
+)
+
+
+def scoring_options(config: RewardModelConfig) -> dict[str, Any]:
+    """Return the reward model config fields that can change the scores, for score provenance.
+
+    Resume and merge only combine scores with the same provenance, so recording every such field
+    keeps scores computed with different settings apart.
+
+    Args:
+        config: Config of the reward model that computes the scores.
+
+    Returns:
+        The encoded config without fields that cannot change the scores.
+    """
+    options = draccus.encode(config)
+    for name in _RUN_FIELDS:
+        options.pop(name, None)
+    return options
+
+
+def interpolate_progress(
+    computed_indices: np.ndarray,
+    computed_values: np.ndarray,
+    all_indices: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate values scored at some frames onto every frame, skipping NaN values.
+
+    Args:
+        computed_indices: Frames that were scored, in increasing order.
+        computed_values: Value at each scored frame; NaN marks a frame that could not be scored.
+        all_indices: Frames to fill.
+
+    Returns:
+        One float32 value per frame in ``all_indices``: NaN everywhere when no value is finite, and
+        the single finite value everywhere when only one is.
+    """
+    computed_indices = np.asarray(computed_indices)
+    computed_values = np.asarray(computed_values)
+    all_indices = np.asarray(all_indices)
+
+    mask = np.isfinite(computed_values)
+    if mask.sum() == 0:
+        return np.full(all_indices.shape, np.nan, dtype=np.float32)
+    if mask.sum() == 1:
+        return np.full(all_indices.shape, float(computed_values[mask][0]), dtype=np.float32)
+
+    out = np.interp(all_indices, computed_indices[mask], computed_values[mask])
+    return out.astype(np.float32)
+
+
+def score_dataset(
+    dataset: LeRobotDataset,
+    scorer: FrameScorer,
+    *,
+    name: str | None = None,
+    episodes: Sequence[int] | None = None,
+    resume: bool = True,
+    overwrite: bool = False,
+) -> None:
+    """Score selected episodes and store their signals as named scores.
+
+    Args:
+        dataset: Dataset to score.
+        scorer: Model adapter providing signals, their descriptors and provenance.
+        name: Score name. Defaults to ``scorer.name``.
+        episodes: Global episode indices to score. Defaults to the dataset's selected episodes.
+        resume: If ``True``, skip episodes written by an interrupted matching run.
+        overwrite: If ``True``, replace existing scores once scoring succeeds.
+
+    Raises:
+        ImportError: If the dataset extra's dependencies are unavailable.
+        ValueError: If a descriptor has an invalid direction, signal names do not match
+            descriptors, frame indices repeat, signals have non-numeric dtypes, or a signal
+            whose descriptor does not allow NaN has NaN values.
+    """
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    descriptors = dict(scorer.descriptors)
+    for signal_name, descriptor in descriptors.items():
+        if not any(descriptor.greater_is_better is value for value in (True, False, None)):
+            raise ValueError(f"Signal {signal_name!r}: greater_is_better must be True, False or None")
+
+    info = {
+        "provenance": dict(scorer.provenance),
+        "signals": {signal_name: asdict(descriptor) for signal_name, descriptor in descriptors.items()},
+    }
+
+    def score_episode(episode_index: int) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        frame_signals = scorer.score_episode(dataset, episode_index)
+        if set(frame_signals.signals) != set(descriptors):
+            raise ValueError(
+                f"Signal names for episode {episode_index} must match the scorer's descriptors: "
+                f"signals={sorted(frame_signals.signals)}, descriptors={sorted(descriptors)}"
+            )
+        for signal_name, values in frame_signals.signals.items():
+            if values.dtype.kind not in "biuf":
+                raise ValueError(
+                    f"Signal {signal_name!r} for episode {episode_index} must have a numeric dtype "
+                    f"(bool, integer or float), got {values.dtype}"
+                )
+            if not descriptors[signal_name].allow_nan and values.dtype.kind == "f" and np.isnan(values).any():
+                raise ValueError(
+                    f"Signal {signal_name!r} for episode {episode_index} has NaN values, "
+                    "but its descriptor does not allow them"
+                )
+        return frame_signals.frame_indices, dict(frame_signals.signals)
+
+    add_scores(
+        dataset,
+        scorer.name if name is None else name,
+        score_episode,
+        info=info,
+        episodes=episodes,
+        resume=resume,
+        overwrite=overwrite,
+    )
+
+
+def load_signal_descriptors(dataset: LeRobotDataset, name: str) -> dict[str, SignalDescriptor]:
+    """Load the signal descriptors stored with named scores.
+
+    Args:
+        dataset: Dataset the scores belong to.
+        name: Score name.
+
+    Returns:
+        The signal descriptors, with bounds and labels restored as tuples.
+
+    Raises:
+        ImportError: If the dataset extra's dependencies are unavailable.
+        ValueError: If the scores have no signal descriptors from ``score_dataset``.
+    """
+    require_package("datasets", extra="dataset")
+    require_package("av", extra="dataset")
+    info = load_scores_info(dataset, name)
+    if "signals" not in info:
+        raise ValueError(f"Scores {name!r} have no signal descriptors; use scores written by score_dataset")
+
+    descriptors = {}
+    for signal_name, descriptor in info["signals"].items():
+        fields = dict(descriptor)
+        bounds, labels = fields.pop("bounds", None), fields.pop("labels", None)
+        descriptors[signal_name] = SignalDescriptor(
+            **fields,
+            bounds=None if bounds is None else tuple(bounds),
+            labels=None if labels is None else tuple(labels),
+        )
+    return descriptors

@@ -24,12 +24,30 @@ from lerobot.utils.constants import OBS_IMAGES
 from lerobot.utils.hub import split_hub_reference
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..scoring import SignalDescriptor
+
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoConfig, AutoTokenizer
 else:
     AutoConfig = None  # type: ignore[assignment]
     AutoTokenizer = None  # type: ignore[assignment]
 
+
+# Signals RoboMeter writes to dataset scores.
+ROBOMETER_PROGRESS_SIGNAL = "robometer.progress"
+ROBOMETER_SUCCESS_PROBABILITY_SIGNAL = "robometer.success_probability"
+ROBOMETER_SIGNAL_DESCRIPTORS = {
+    ROBOMETER_PROGRESS_SIGNAL: SignalDescriptor(
+        description="RoboMeter task progress for the trajectory prefix ending at this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+    ROBOMETER_SUCCESS_PROBABILITY_SIGNAL: SignalDescriptor(
+        description="RoboMeter success probability for the trajectory prefix ending at this frame.",
+        greater_is_better=True,
+        bounds=(0.0, 1.0),
+    ),
+}
 
 # Special tokens Robometer adds to the Qwen-VL tokenizer at construction time.
 # The order is part of the data contract: upstream resized ``embed_tokens``
@@ -57,6 +75,9 @@ class RobometerConfig(RewardModelConfig):
     default_task: str | None = None
 
     max_frames: int | None = 8
+
+    # Offline scoring (`lerobot-score`): frames sampled from the prefix ending at each target frame.
+    num_subsampled_frames: int = 4
 
     license: str | None = "apache-2.0"
     tags: list[str] | None = field(
@@ -92,6 +113,8 @@ class RobometerConfig(RewardModelConfig):
         super().__post_init__()
         if self.max_frames is not None and self.max_frames < 1:
             raise ValueError(f"max_frames must be >= 1, got {self.max_frames}")
+        if self.num_subsampled_frames < 1:
+            raise ValueError(f"num_subsampled_frames must be >= 1, got {self.num_subsampled_frames}")
         if self.frame_pooling not in {"mean", "boundary", "attention"}:
             raise ValueError(f"frame_pooling must be mean/boundary/attention; got {self.frame_pooling!r}")
         if self.frame_pooling_attn_temperature <= 0:

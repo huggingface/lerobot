@@ -17,7 +17,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -60,22 +60,210 @@ def test_reward_model_config_lookup():
     assert cls is RewardClassifierConfig
 
 
-def test_factory_get_reward_model_class():
-    """Test the get_reward_model_class factory."""
+@pytest.mark.parametrize(
+    ("name", "module_path", "class_name"),
+    [
+        ("reward_classifier", "lerobot.rewards.classifier.modeling_classifier", "Classifier"),
+        ("sarm", "lerobot.rewards.sarm.modeling_sarm", "SARMRewardModel"),
+        ("topreward", "lerobot.rewards.topreward.modeling_topreward", "TOPRewardModel"),
+    ],
+)
+def test_factory_get_reward_model_class(name, module_path, class_name):
+    """Built-in reward models resolve by config_class, whatever their class name."""
+    import importlib
+
     from lerobot.rewards.factory import get_reward_model_class
 
-    cls = get_reward_model_class("sarm")
-    from lerobot.rewards.sarm.modeling_sarm import SARMRewardModel
+    assert get_reward_model_class(name) is getattr(importlib.import_module(module_path), class_name)
 
-    assert cls is SARMRewardModel
+
+def test_factory_get_reward_model_class_matches_plugin_config_class(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig(RewardModelConfig):
+        pass
+
+    class OtherConfig(RewardModelConfig):
+        pass
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+
+    class OtherModel(PreTrainedRewardModel):
+        config_class = OtherConfig
+        name = "other"
+
+    class PluginModel(PreTrainedRewardModel):
+        config_class = PluginConfig
+        name = "plugin"
+
+    def make_module(name, **classes):
+        module = ModuleType(name)
+        vars(module).update(classes)
+        return module
+
+    captured = {}
+
+    def import_module(name):
+        captured.update(module=name)
+        return make_module(
+            name, PreTrainedRewardModel=PreTrainedRewardModel, OtherModel=OtherModel, PluginModel=PluginModel
+        )
+
+    monkeypatch.setattr(RewardModelConfig, "get_known_choices", lambda: {"plugin": PluginConfig})
+    monkeypatch.setattr(RewardModelConfig, "get_choice_class", lambda name: PluginConfig)
+    monkeypatch.setattr(reward_factory.importlib, "import_module", import_module)
+
+    assert reward_factory.get_reward_model_class("plugin") is PluginModel
+    assert captured == {"module": "example.modeling_plugin"}
+
+    monkeypatch.setattr(
+        reward_factory.importlib, "import_module", lambda name: make_module(name, OtherModel=OtherModel)
+    )
+    with pytest.raises(
+        ValueError, match="config_class = PluginConfig.*not found in 'example.modeling_plugin'"
+    ):
+        reward_factory.get_reward_model_class("plugin")
+
+
+def test_factory_get_reward_model_class_reports_missing_modeling_module(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig(RewardModelConfig):
+        pass
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+
+    def raise_missing_module(module_path):
+        raise ModuleNotFoundError(f"No module named {module_path!r}", name=module_path)
+
+    monkeypatch.setattr(RewardModelConfig, "get_known_choices", lambda: {"plugin": PluginConfig})
+    monkeypatch.setattr(RewardModelConfig, "get_choice_class", lambda name: PluginConfig)
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_module)
+
+    with pytest.raises(ValueError, match="Reward model class for 'plugin' is not implemented"):
+        reward_factory.get_reward_model_class("plugin")
 
 
 def test_factory_unknown_raises():
-    """Unknown name should raise ValueError."""
+    """Unknown name should raise ValueError listing the registered reward models."""
     from lerobot.rewards.factory import get_reward_model_class
 
-    with pytest.raises(ValueError, match="not available"):
+    with pytest.raises(ValueError, match="Unknown reward model name 'nonexistent_reward_model'.*sarm"):
         get_reward_model_class("nonexistent_reward_model")
+
+
+def _robometer_config(**kwargs):
+    from lerobot.rewards.robometer import RobometerConfig
+
+    return RobometerConfig(
+        device="cpu", vlm_config={"model_type": "fake", "text_config": {"vocab_size": 10}}, **kwargs
+    )
+
+
+def _sarm_config(**kwargs):
+    from lerobot.rewards.sarm import SARMConfig
+
+    return SARMConfig(device="cpu", **kwargs)
+
+
+def _topreward_config(**kwargs):
+    from lerobot.rewards.topreward import TOPRewardConfig
+
+    return TOPRewardConfig(device="cpu", **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("make_config", "scoring_options"),
+    [
+        (_robometer_config, {"num_subsampled_frames": 2}),
+        (_sarm_config, {"head_mode": "both", "stride": 5}),
+        (_topreward_config, {"num_samples": 3}),
+    ],
+    ids=["robometer", "sarm", "topreward"],
+)
+def test_saved_reward_model_configs_keep_scoring_options(tmp_path, make_config, scoring_options):
+    make_config(**scoring_options).save_pretrained(tmp_path)
+
+    loaded = RewardModelConfig.from_pretrained(tmp_path)
+    assert {name: getattr(loaded, name) for name in scoring_options} == scoring_options
+
+
+def test_make_frame_scorer_uses_reward_model_naming_convention(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    expected = object()
+    captured = {}
+
+    def make_plugin_frame_scorer(*, model, batch_size):
+        captured.update(model=model, batch_size=batch_size)
+        return expected
+
+    def import_module(name):
+        captured.update(module=name)
+        return SimpleNamespace(make_plugin_frame_scorer=make_plugin_frame_scorer)
+
+    monkeypatch.setattr(reward_factory.importlib, "import_module", import_module)
+
+    scorer = reward_factory.make_frame_scorer(model, batch_size=4)
+
+    assert scorer is expected
+    assert captured == {"module": "example.scoring_plugin", "model": model, "batch_size": 4}
+
+
+def test_make_frame_scorer_preserves_nested_import_errors(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+
+    def raise_missing_dependency(_module_path):
+        raise ModuleNotFoundError("No module named 'plugin_dependency'", name="plugin_dependency")
+
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_dependency)
+
+    with pytest.raises(ModuleNotFoundError, match="plugin_dependency"):
+        reward_factory.make_frame_scorer(model)
+
+
+def test_make_frame_scorer_reports_missing_scoring_module(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    module_path = "example.scoring_plugin"
+
+    def raise_missing_module(_module_path):
+        raise ModuleNotFoundError(f"No module named {module_path!r}", name=module_path)
+
+    monkeypatch.setattr(reward_factory.importlib, "import_module", raise_missing_module)
+
+    with pytest.raises(ValueError, match="Frame scorer.*not implemented"):
+        reward_factory.make_frame_scorer(model)
+
+
+def test_make_frame_scorer_reports_missing_factory_function(monkeypatch):
+    import lerobot.rewards.factory as reward_factory
+
+    class PluginConfig:
+        type = "plugin"
+
+    PluginConfig.__module__ = "example.configuration_plugin"
+    model = SimpleNamespace(config=PluginConfig())
+    monkeypatch.setattr(reward_factory.importlib, "import_module", lambda name: SimpleNamespace())
+
+    with pytest.raises(ValueError, match="Frame scorer.*not implemented"):
+        reward_factory.make_frame_scorer(model)
 
 
 def test_pretrained_reward_model_compute_reward_points_to_native_methods():
@@ -262,7 +450,7 @@ def test_train_pipeline_config_trainable_config_returns_policy_when_set():
 
 
 def test_train_pipeline_config_from_pretrained_migrates_legacy_rabc_fields(tmp_path):
-    """Legacy top-level RA-BC fields should be migrated into ``sample_weighting``."""
+    """Legacy top-level RA-BC fields should be migrated into ``sample_weighting``, except the progress file."""
     from lerobot.configs.default import DatasetConfig
     from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
     from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
@@ -294,10 +482,10 @@ def test_train_pipeline_config_from_pretrained_migrates_legacy_rabc_fields(tmp_p
 
     assert loaded.sample_weighting is not None
     assert loaded.sample_weighting.type == "rabc"
-    assert loaded.sample_weighting.progress_path == "hf://datasets/user/repo/sarm_progress.parquet"
     assert loaded.sample_weighting.kappa == 0.05
     assert loaded.sample_weighting.epsilon == 1e-5
-    assert loaded.sample_weighting.head_mode == "dense"
+    assert loaded.sample_weighting.score_name is None
+    assert loaded.sample_weighting.signal_name is None
 
 
 def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(tmp_path):
@@ -332,6 +520,46 @@ def test_train_pipeline_config_from_pretrained_strips_legacy_rabc_when_disabled(
     loaded = TrainPipelineConfig.from_pretrained(tmp_path)
 
     assert loaded.sample_weighting is None
+
+
+@pytest.mark.parametrize("weighting_type", ["uniform", "rabc"])
+def test_train_pipeline_config_from_pretrained_strips_progress_file_fields(tmp_path, weighting_type, caplog):
+    """A ``sample_weighting`` saved with ``progress_path`` and ``head_mode`` should load without them."""
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
+    from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id="user/repo"),
+        policy=DiffusionConfig(device="cpu"),
+    )
+    cfg._save_pretrained(tmp_path)
+
+    config_path = tmp_path / TRAIN_CONFIG_NAME
+    with open(config_path) as f:
+        payload = json.load(f)
+
+    payload["sample_weighting"] = {
+        "type": weighting_type,
+        "score_name": "sarm",
+        "signal_name": "sarm.sparse_progress",
+        "progress_path": None,
+        "head_mode": "sparse",
+        "kappa": 0.02,
+        "epsilon": 1e-6,
+        "extra_params": {},
+    }
+    with open(config_path, "w") as f:
+        json.dump(payload, f)
+
+    loaded = TrainPipelineConfig.from_pretrained(tmp_path)
+
+    assert loaded.sample_weighting is not None
+    assert loaded.sample_weighting.type == weighting_type
+    assert loaded.sample_weighting.kappa == 0.02
+    assert loaded.sample_weighting.score_name == "sarm"
+    assert loaded.sample_weighting.signal_name == "sarm.sparse_progress"
+    assert "whose RA-BC read a progress file" not in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +708,17 @@ def test_publish_trained_model_uploads_expected_reward_files(monkeypatch, _offli
     assert TRAIN_CONFIG_NAME in all_files  # train_config.json (bundle commit)
     assert "README.md" in all_files  # reward-specific card (bundle commit)
     assert any(name.endswith(".safetensors") for name in all_files)  # weights (model commit)
+
+
+def test_from_pretrained_records_loaded_checkpoint(tmp_path):
+    """Score provenance relies on the config naming the checkpoint actually loaded."""
+    model, _ = _make_dummy_reward_model(pretrained_path="some/other-model")
+    model.save_pretrained(tmp_path)
+
+    loaded = _DummyHubReward.from_pretrained(tmp_path)
+
+    assert loaded.config.pretrained_path == str(tmp_path)
+    assert loaded.config.pretrained_revision is None
 
 
 def test_save_pretrained_writes_nothing_off_main_rank(tmp_path, monkeypatch):

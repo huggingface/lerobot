@@ -236,6 +236,59 @@ def test_data_download_forwards_token(tmp_path, monkeypatch, token):
     assert snapshot_download.call_args.kwargs["token"] is token
 
 
+@pytest.mark.parametrize("episodes", [None, [0]])
+@pytest.mark.parametrize("download_videos", [True, False])
+def test_data_download_excludes_scores(tmp_path, monkeypatch, episodes, download_videos):
+    snapshot_root = tmp_path / "snapshot"
+    snapshot_download = Mock(return_value=str(snapshot_root))
+    monkeypatch.setattr(lerobot_dataset_module, "snapshot_download", snapshot_download)
+
+    dataset = LeRobotDataset.__new__(LeRobotDataset)
+    dataset.repo_id = DUMMY_REPO_ID
+    dataset.revision = "main"
+    dataset.episodes = episodes
+    dataset._requested_root = None
+    dataset.meta = SimpleNamespace(root=None)
+    dataset.reader = SimpleNamespace(
+        root=None,
+        get_episodes_file_paths=Mock(return_value=["data/chunk-000/file-000.parquet"]),
+    )
+
+    dataset._download(download_videos=download_videos)
+
+    patterns = snapshot_download.call_args.kwargs
+    if episodes is None:
+        assert patterns["allow_patterns"] is None
+    else:
+        assert "scores/" not in patterns["allow_patterns"]
+    assert "scores/" in patterns["ignore_patterns"]
+    assert ("videos/" in patterns["ignore_patterns"]) is not download_videos
+
+
+def test_push_to_hub_ignores_unpublished_score_parts(tmp_path, monkeypatch):
+    from huggingface_hub.utils import filter_repo_objects
+
+    hub_api = Mock()
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", Mock(return_value=hub_api))
+    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", Mock())
+
+    dataset = LeRobotDataset.__new__(LeRobotDataset)
+    dataset.repo_id = DUMMY_REPO_ID
+    dataset.root = tmp_path
+    dataset.meta = SimpleNamespace(storage_format="lerobot", info={})
+
+    dataset.push_to_hub(tag_version=False)
+
+    ignore_patterns = hub_api.upload_folder.call_args.kwargs["ignore_patterns"]
+    paths = [
+        "scores/progress.parquet",
+        "scores/.progress.parquet.parts/manifest.json",
+        "scores/.progress.parquet.parts/episode-000000.parquet",
+        "scores/.progress.parquet.abc123.tmp",
+    ]
+    assert list(filter_repo_objects(paths, ignore_patterns=ignore_patterns)) == ["scores/progress.parquet"]
+
+
 def test_without_root_reads_different_revisions_from_distinct_snapshot_roots(
     tmp_path,
     info_factory,

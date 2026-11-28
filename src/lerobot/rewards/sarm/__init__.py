@@ -12,8 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_sarm import SARMConfig
+from .configuration_sarm import (
+    SARM_DENSE_PROGRESS_SIGNAL,
+    SARM_DENSE_STAGE_SIGNAL,
+    SARM_SIGNAL_DESCRIPTORS,
+    SARM_SPARSE_PROGRESS_SIGNAL,
+    SARM_SPARSE_STAGE_SIGNAL,
+    SARMConfig,
+)
 from .modeling_sarm import SARMOutput, SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
 
-__all__ = ["SARMConfig", "SARMOutput", "SARMRewardModel", "make_sarm_pre_post_processors"]
+__all__ = [
+    "SARM_DENSE_PROGRESS_SIGNAL",
+    "SARM_DENSE_STAGE_SIGNAL",
+    "SARM_SIGNAL_DESCRIPTORS",
+    "SARM_SPARSE_PROGRESS_SIGNAL",
+    "SARM_SPARSE_STAGE_SIGNAL",
+    "SARMConfig",
+    "SARMOutput",
+    "SARMRewardModel",
+    "make_sarm_pre_post_processors",
+]
