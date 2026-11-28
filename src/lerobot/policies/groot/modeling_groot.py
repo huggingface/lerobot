@@ -27,21 +27,28 @@ import dataclasses
 import logging
 import os
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from copy import copy
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, Unpack
 
 import torch
-from huggingface_hub import hf_hub_download
-from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub.constants import CONFIG_NAME, SAFETENSORS_SINGLE_FILE
+from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+from huggingface_hub.utils import httpx
+from safetensors import safe_open
+from safetensors.torch import load_file
 from torch import Tensor
 
-from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec
+from ..common.openpi_checkpoint import load_modules, parameters_on_meta
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
@@ -49,11 +56,12 @@ from .configuration_groot import (
     GROOT_N1_5_REMOVAL_GUIDANCE,
     GROOT_N1_7,
     GrootConfig,
+    groot_n1_7_action_execution_horizon,
     infer_groot_model_version,
-    infer_groot_n1_7_action_execution_horizon,
-    infer_groot_n1_7_action_horizon,
+    is_raw_groot_n1_7_config,
 )
-from .groot_n1_7 import GR00TN17, _tie_unused_qwen_lm_head
+from .groot_n1_7 import GR00TN17, GR00TN17Config, _set_trainable_parameters, _tie_unused_qwen_lm_head
+from .utils import read_json
 
 if TYPE_CHECKING or _transformers_available:
     from transformers.trainer_pt_utils import get_parameter_names
@@ -63,6 +71,79 @@ else:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound="GrootPolicy")
+
+# The LM head is tied to the input embedding, so a saved checkpoint holds only one of the two names.
+_TIED_WEIGHT_NAMES = (
+    "backbone.model.lm_head.weight",
+    "backbone.model.model.language_model.embed_tokens.weight",
+)
+
+
+def _state_dict_error(
+    mismatched: tuple[str, ...] = (), missing: tuple[str, ...] = (), unexpected: tuple[str, ...] = ()
+) -> RuntimeError:
+    """Return the error that the regular load raises for these differences, in the same words.
+
+    There torch's load_state_dict reports the size mismatches, and safetensors' load_model the keys.
+    """
+    error = "Error(s) in loading state_dict for GrootPolicy:" + "".join(f"\n\t{line}" for line in mismatched)
+    if missing:
+        error += "\n    Missing key(s) in state_dict: " + ", ".join(f'"{key}"' for key in missing)
+    if unexpected:
+        error += "\n    Unexpected key(s) in state_dict: " + ", ".join(f'"{key}"' for key in unexpected)
+    return RuntimeError(error)
+
+
+def _read_base(
+    base_model_path: str | None,
+    cache_dir: str | Path | None = None,
+    local_files_only: bool = False,
+    token: str | bool | None = None,
+) -> dict[str, Any] | None:
+    """Return the config.json of base_model_path, or None if there is none to read.
+
+    Raises if it is not a GR00T N1.7 config, since a save keeps it in the checkpoint's config.
+    """
+    if base_model_path is None:
+        return None
+    local = Path(base_model_path).expanduser()
+    if local.exists():
+        path = local / CONFIG_NAME
+    else:
+        try:
+            # snapshot_download, as the build uses: with the Hub unreachable and nothing cached, it fails
+            # at once with the build's error, where hf_hub_download first retries.
+            snapshot = snapshot_download(
+                base_model_path,
+                allow_patterns=[CONFIG_NAME],
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                token=token,
+            )
+        except HFValidationError:
+            # Neither a folder nor a repo id, for example a folder on another machine.
+            return None
+        path = Path(snapshot) / CONFIG_NAME
+    if not path.is_file():
+        return None
+    base_config = read_json(path)
+    if not is_raw_groot_n1_7_config(base_config):
+        raise ValueError(
+            f"{base_model_path} is not a GR00T N1.7 model: its config.json does not name one "
+            "(for example model_type Gr00tN1d7)."
+        )
+    return base_config
+
+
+@contextmanager
+def _weight_source(config: GrootConfig, checkpoint: Path | None) -> Iterator[None]:
+    """Point pretrained_path at the checkpoint a policy loads while it is built, as make_policy does."""
+    parent = config.pretrained_path
+    config.pretrained_path = checkpoint
+    try:
+        yield
+    finally:
+        config.pretrained_path = parent
 
 
 class GrootPolicy(PreTrainedPolicy):
@@ -75,42 +156,75 @@ class GrootPolicy(PreTrainedPolicy):
     def supports_rtc(self) -> bool:
         return True
 
-    def __init__(self, config: GrootConfig, **kwargs):
+    def __init__(self, config: GrootConfig, *, _groot_model: GR00TN17 | None = None, **kwargs):
         """Initialize Groot policy wrapper."""
         require_package("transformers", extra="groot")
         super().__init__(config)
         config.validate_features()
         self.config = config
+        if _groot_model is None and (config.pretrained_path is None or config.base_model_config is None):
+            # Read before the build, so a base model that is not N1.7 is refused before its weights download.
+            try:
+                config.base_model_config = _read_base(config.base_model_path)
+            except (OSError, httpx.HTTPError) as error:
+                # The build reads base_model_path itself, and fails the same way if it cannot.
+                config.base_model_config = None
+                logger.warning(
+                    "Cannot read the config.json of %s (%s), so checkpoints saved from this policy need the "
+                    "base model to load.",
+                    config.base_model_path,
+                    error,
+                )
 
-        # Initialize GR00T model using ported components
-        self._groot_model = self._create_groot_model()
+        # Initialize GR00T model using ported components, unless from_pretrained built it from a checkpoint.
+        self._groot_model = self._create_groot_model() if _groot_model is None else _groot_model
+        # Saved with the config, so a checkpoint load needs no base model files to know each tag's horizon.
+        config.embodiment_action_horizons = config.resolve_embodiment_action_horizons()
         self._action_queue_steps = self._resolve_action_queue_steps()
         self._warned_native_relative_rtc_prefix_disabled = False
 
         self.reset()
 
-    def _create_groot_model(self):
-        """Create and initialize the GR00T N1.7 model using the ported components."""
-        model_kwargs = {
-            "pretrained_model_name_or_path": self.config.base_model_path,
-            "tune_llm": self.config.tune_llm,
-            "tune_visual": self.config.tune_visual,
-            "tune_projector": self.config.tune_projector,
-            "tune_diffusion_model": self.config.tune_diffusion_model,
-            # Forwarded as a GR00TN17Config override; read back by set_trainable_parameters.
-            "tune_top_llm_layers": self.config.tune_top_llm_layers,
-            "use_flash_attention": self.config.use_flash_attention,
+    @staticmethod
+    def _groot_tuning_kwargs(config: GrootConfig) -> dict[str, bool]:
+        return {
+            "tune_llm": config.tune_llm,
+            "tune_visual": config.tune_visual,
+            "tune_projector": config.tune_projector,
+            "tune_diffusion_model": config.tune_diffusion_model,
+            "tune_vlln": config.tune_vlln,
+        }
+
+    @staticmethod
+    def _groot_config_overrides(config: GrootConfig) -> dict[str, Any]:
+        overrides: dict[str, Any] = {
+            # Read back by set_trainable_parameters.
+            "tune_top_llm_layers": config.tune_top_llm_layers,
+            "use_flash_attention": config.use_flash_attention,
         }
         # Surface the inference-time knobs onto the model config only when the user set them; None
         # leaves the value baked into the checkpoint untouched.
-        if self.config.num_inference_timesteps is not None:
-            model_kwargs["num_inference_timesteps"] = self.config.num_inference_timesteps
-        if self.config.rtc_ramp_rate is not None:
-            model_kwargs["rtc_ramp_rate"] = self.config.rtc_ramp_rate
+        if config.num_inference_timesteps is not None:
+            overrides["num_inference_timesteps"] = config.num_inference_timesteps
+        if config.rtc_ramp_rate is not None:
+            overrides["rtc_ramp_rate"] = config.rtc_ramp_rate
+        return overrides
 
+    @classmethod
+    def _groot_model_config(cls, config: GrootConfig) -> GR00TN17Config:
+        return GR00TN17Config.from_dict(config.base_model_config, **cls._groot_config_overrides(config))
+
+    def _create_groot_model(self) -> GR00TN17:
+        """Create and initialize the GR00T N1.7 model using the ported components."""
+        if self.config.base_model_config is None:
+            # Nothing read (no config.json, or the read failed), so the build reads base_model_path itself.
+            config_kwargs = self._groot_config_overrides(self.config)
+        else:
+            config_kwargs = {"config": self._groot_model_config(self.config)}
         model = GR00TN17.from_pretrained(
-            **model_kwargs,
-            tune_vlln=self.config.tune_vlln,
+            pretrained_model_name_or_path=self.config.base_model_path,
+            **config_kwargs,
+            **self._groot_tuning_kwargs(self.config),
             transformers_loading_kwargs={"trust_remote_code": self.config.trust_remote_code},
         )
         backbone = getattr(model, "backbone", None)
@@ -126,6 +240,209 @@ class GrootPolicy(PreTrainedPolicy):
         for parameter in model.parameters():
             if parameter.is_floating_point():
                 parameter.data = parameter.data.to(torch.float32)
+
+    @classmethod
+    def _build_groot_model_from_checkpoint(
+        cls,
+        config: GrootConfig,
+        model_file: str,
+        strict: bool,
+    ) -> GR00TN17 | None:
+        """Build GR00T from a fine-tuned checkpoint without downloading or loading NVIDIA's base weights.
+
+        The regular load builds GR00T from the base weights, then copies the checkpoint over them. A
+        checkpoint that the regular load rejects gets the same error here. For one that only the regular load
+        can load, this returns None, and the caller loads it that way.
+        """
+        require_package("transformers", extra="groot")
+        if config.device is None:
+            raise ValueError(f"{type(config).__name__}.device is unset; cannot load the weights")
+        # The constructor checks this too, but here it runs before the model is built.
+        config.validate_features()
+        prefix = "_groot_model."
+        with safe_open(model_file, framework="pt", device="cpu") as checkpoint:
+            keys = list(checkpoint.keys())
+            lm_head, embedding = _TIED_WEIGHT_NAMES
+            # Weights outside GR00T are unexpected. So is a second name for the tied pair: a save keeps one.
+            unexpected = [key for key in keys if not key.startswith(prefix)]
+            if prefix + lm_head in keys and prefix + embedding in keys:
+                unexpected.append(prefix + embedding)
+            if unexpected and not strict:
+                logger.warning("Checkpoint holds weights that GR00T lacks; loading the base weights first.")
+                return None
+            # Views of the memory-mapped file, so transformers converts them to each parameter's dtype one
+            # tensor at a time, instead of the whole checkpoint being copied first.
+            state_dict = {
+                key.removeprefix(prefix): checkpoint.get_tensor(key) for key in keys if key.startswith(prefix)
+            }
+            # The regular load checks each weight's shape under the name the checkpoint holds it, so the other
+            # name of the tied pair is only filled in, and not checked.
+            held = set(state_dict)
+            if lm_head in state_dict:
+                state_dict.setdefault(embedding, state_dict[lm_head])
+            elif embedding in state_dict:
+                state_dict[lm_head] = state_dict[embedding]
+
+            if config.base_model_config is None:
+                logger.warning(
+                    "Found no readable config.json at %s; loading the base weights first.",
+                    config.base_model_path,
+                )
+                return None
+            groot_config = cls._groot_model_config(config)
+            if config.dtype != torch.float32 and groot_config.dtype is None:
+                # "auto" then falls back to the dtype of the base weights, which only the regular path reads.
+                logger.warning("Base config does not name a dtype; loading the base weights first.")
+                return None
+            model = GR00TN17.from_pretrained(
+                pretrained_model_name_or_path=None,
+                config=groot_config,
+                state_dict=state_dict,
+                # Weights take the dtype their parameters are built in, so build in fp32 for fp32 parameters.
+                dtype=torch.float32 if config.dtype == torch.float32 else "auto",
+                # Checked below, to give the regular load's error.
+                ignore_mismatched_sizes=True,
+                **cls._groot_tuning_kwargs(config),
+                transformers_loading_kwargs={"trust_remote_code": config.trust_remote_code},
+            )
+            shapes = {name: tensor.shape for name, tensor in model.state_dict().items()}
+            # Base weights cannot fill a weight of another shape, so the regular load rejects it too, listing
+            # such weights in the model's order.
+            mismatched = tuple(
+                f"size mismatch for {prefix}{name}: copying a param with shape {state_dict[name].shape} from "
+                f"checkpoint, the shape in current model is {shape}."
+                for name, shape in shapes.items()
+                if name in held and shape != state_dict[name].shape
+            )
+            if mismatched:
+                raise _state_dict_error(mismatched=mismatched)
+            # The tied LM head and embedding are one tensor; the regular load reports it once, as the head.
+            missing = tuple(prefix + name for name in sorted(shapes.keys() - state_dict.keys() - {embedding}))
+            unexpected += [prefix + name for name in state_dict.keys() - shapes.keys()]
+            if missing or unexpected:
+                if strict:
+                    raise _state_dict_error(missing=missing, unexpected=tuple(sorted(unexpected)))
+                logger.warning("Checkpoint keys differ from GR00T; loading the base weights first.")
+                return None
+            # With `load_bf16`, the backbone still builds what its base config freezes in bfloat16, which
+            # rounds a fp32 checkpoint. The regular path casts to fp32 before loading, so it stays exact.
+            if config.dtype == torch.float32 and any(
+                parameter.is_floating_point() and parameter.dtype != torch.float32
+                for parameter in model.parameters()
+            ):
+                logger.warning("Base config builds some weights in bfloat16; loading the base weights first.")
+                return None
+            # Tie first so the shared weight is copied once. Copy weights out of the file before moving them:
+            # a device copy straight from the file is slow, and on Jetson keeps its pages as private memory.
+            _tie_unused_qwen_lm_head(model.backbone.model)
+            in_file = {tensor.untyped_storage().data_ptr() for tensor in state_dict.values()}
+            for tensor in (*model.parameters(), *model.buffers()):
+                data = tensor.data
+                if data.untyped_storage().data_ptr() in in_file:
+                    data = data.clone()
+                tensor.data = data.to(config.device)
+        return model
+
+    @classmethod
+    def load_checkpoint_modules(
+        cls: builtins.type[T],
+        pretrained_name_or_path: str | Path,
+        modules: list[str],
+        *,
+        config: GrootConfig | None = None,
+        force_download: bool = False,
+        token: str | bool | None = None,
+        cache_dir: str | Path | None = None,
+        local_files_only: bool = False,
+        revision: str | None = None,
+    ) -> T:
+        """Build the policy without weights and load only the weights of `modules` from a fine-tuned checkpoint.
+
+        For exporting one part of a policy too large for the machine's memory. GR00T is built from its config
+        with its parameters on the meta device, so no base weights are downloaded or read. Only the listed
+        submodules get real tensors, read one at a time, in the dtype and with the `requires_grad` the regular
+        load gives them. Every other submodule holding parameters is replaced by None, as `load_modules` says.
+
+        Args:
+            pretrained_name_or_path: Folder or Hub repo id of a fine-tuned checkpoint
+            modules: Names of the submodules to load, like `_groot_model.action_head`
+            config: Optional GrootConfig. If None, loads the one saved with the weights, as `from_pretrained`
+                does. Its `base_model_config` gives the base config, else `base_model_path` does. Its
+                `trust_remote_code` decides if a backbone's custom code runs.
+            force_download: Force download even if cached
+            token: HuggingFace authentication token
+            cache_dir: Cache directory path
+            local_files_only: Only use local files
+            revision: Specific model revision
+
+        Returns:
+            The policy in evaluation mode on `config.device`
+
+        Raises:
+            ValueError: For a subclass, without a base config, or for a base config that names no dtype unless
+                `config.dtype` is float32, as only the base weights would give one.
+            AttributeError: If a listed name is not a submodule.
+            RuntimeError: As `load_modules` raises it with `strict=True`, before anything is copied.
+        """
+        if cls is not GrootPolicy:
+            # As in `from_pretrained`: weights a subclass adds would keep their random values here.
+            raise ValueError(f"Only GrootPolicy loads chosen modules; {cls.__name__} may add weights.")
+        require_package("transformers", extra="groot")
+        model_id = str(pretrained_name_or_path)
+        if os.path.isdir(model_id):
+            model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
+        else:
+            model_file = hf_hub_download(
+                repo_id=model_id,
+                filename=SAFETENSORS_SINGLE_FILE,
+                revision=revision,
+                cache_dir=cache_dir,
+                force_download=force_download,
+                token=token,
+                local_files_only=local_files_only,
+            )
+        if config is None:
+            config = PreTrainedConfig.from_pretrained(
+                pretrained_name_or_path=pretrained_name_or_path,
+                force_download=force_download,
+                token=token,
+                cache_dir=cache_dir,
+                local_files_only=local_files_only,
+                revision=revision,
+            )
+        if config.base_model_config is None:
+            # A checkpoint saved before the config kept it.
+            config.base_model_config = _read_base(
+                config.base_model_path, cache_dir=cache_dir, local_files_only=local_files_only, token=token
+            )
+        if config.base_model_config is None:
+            raise ValueError(
+                f"Found no GR00T base config in the config of {model_id} or at {config.base_model_path}, which "
+                "building the policy without its weights needs."
+            )
+        groot_config = cls._groot_model_config(config)
+        if config.dtype != torch.float32 and groot_config.dtype is None:
+            # "auto" would take the dtype of the base weights, which this load does not read.
+            raise ValueError(
+                f"The GR00T base config names no dtype, so only from_pretrained gives a {config.dtype} policy "
+                "its weights' dtypes."
+            )
+        # Building draws random numbers, so the global generator is left as it was, as in `from_pretrained`.
+        with parameters_on_meta(), torch.random.fork_rng(devices=[]):
+            # Built in the dtypes `from_pretrained` gives the base model, as the regular load builds it.
+            model = GR00TN17._from_config(
+                groot_config,
+                load_backbone_weights=False,
+                transformers_loading_kwargs={"trust_remote_code": config.trust_remote_code},
+            )
+        if config.dtype == torch.float32:
+            # As the regular load, which casts a float32 policy's parameters to float32 after building it.
+            cls._cast_model_parameters_to_fp32(model)
+        _set_trainable_parameters(model, **cls._groot_tuning_kwargs(config))
+        policy = cls(config, _groot_model=model)
+        # Tensors that still point into the file, so only the chosen weights are read.
+        # Strict, as from_pretrained loads by default.
+        return load_modules(policy, load_file(model_file), modules, config.device, strict=True)
 
     @staticmethod
     def _build_weight_decay_parameter_groups(model: torch.nn.Module) -> list[dict[str, Any]]:
@@ -178,6 +495,9 @@ class GrootPolicy(PreTrainedPolicy):
         1. Base GR00T N1.7 models - loads the raw model
         2. Fine-tuned LeRobot checkpoints - loads config and weights from safetensors
 
+        While the policy is built, config.pretrained_path names the local folder of the checkpoint it loads
+        (None for a base model), as in make_policy.
+
         Args:
             pretrained_name_or_path: Path to the GR00T model or fine-tuned checkpoint
             config: Optional GrootConfig. If None, loads from checkpoint or creates default
@@ -203,15 +523,16 @@ class GrootPolicy(PreTrainedPolicy):
 
         model_id = str(pretrained_name_or_path)
         is_finetuned_checkpoint = False
+        model_file = os.path.join(model_id, SAFETENSORS_SINGLE_FILE)
 
         # Check if this is a fine-tuned LeRobot checkpoint (has model.safetensors)
         try:
             if os.path.isdir(model_id):
-                is_finetuned_checkpoint = os.path.exists(os.path.join(model_id, SAFETENSORS_SINGLE_FILE))
+                is_finetuned_checkpoint = os.path.exists(model_file)
             else:
                 # Try to download the safetensors file to check if it exists
                 try:
-                    hf_hub_download(
+                    model_file = hf_hub_download(
                         repo_id=model_id,
                         filename=SAFETENSORS_SINGLE_FILE,
                         revision=revision,
@@ -227,21 +548,76 @@ class GrootPolicy(PreTrainedPolicy):
             is_finetuned_checkpoint = False
 
         if is_finetuned_checkpoint:
-            # This is a fine-tuned LeRobot checkpoint - use parent class loading
             logger.info("Detected fine-tuned LeRobot checkpoint, loading with state dict...")
-            return super().from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                config=config,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                strict=strict,
-                **kwargs,
-            )
+            if force_download and not os.path.isdir(model_id):
+                # Outside the check above, so that a failed forced download reaches the caller.
+                model_file = hf_hub_download(
+                    repo_id=model_id,
+                    filename=SAFETENSORS_SINGLE_FILE,
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    force_download=True,
+                    token=token,
+                    local_files_only=local_files_only,
+                )
+            trust_remote_code = kwargs.pop("trust_remote_code", None)
+            checkpoint = Path(model_file).parent
+            if config is None:
+                config = PreTrainedConfig.from_pretrained(
+                    pretrained_name_or_path=pretrained_name_or_path,
+                    force_download=force_download,
+                    resume_download=resume_download,
+                    proxies=proxies,
+                    token=token,
+                    cache_dir=cache_dir,
+                    local_files_only=local_files_only,
+                    revision=revision,
+                    trust_remote_code=bool(trust_remote_code),
+                    **kwargs,
+                )
+            elif trust_remote_code is not None:
+                # The caller's consent wins over the config's, as in PreTrainedPolicy.from_pretrained.
+                config = copy(config)
+                config.trust_remote_code = trust_remote_code
+            if config.base_model_config is None:
+                # A checkpoint saved before the config kept it, or by a policy that could not read it. If this
+                # read fails too, the regular load reads the base model, as it did before.
+                with suppress(OSError, httpx.HTTPError):
+                    config.base_model_config = _read_base(
+                        config.base_model_path,
+                        cache_dir=cache_dir,
+                        local_files_only=local_files_only,
+                        token=token,
+                    )
+            # Every way of building the policy below, a subclass's too, builds from that config. Each way
+            # draws random numbers differently while it builds, so the global generator is left as it was.
+            with _weight_source(config, checkpoint), torch.random.fork_rng(devices=[]):
+                if cls is GrootPolicy:
+                    groot_model = cls._build_groot_model_from_checkpoint(config, model_file, strict)
+                    if groot_model is not None:
+                        policy = cls(config, _groot_model=groot_model, **kwargs)
+                        policy.eval()
+                        return policy
+                else:
+                    # A subclass may build its own model or add weights, so it keeps the regular load.
+                    logger.warning(
+                        "%s is a subclass, so it builds its own model from the base weights before loading.",
+                        cls.__name__,
+                    )
+                return super().from_pretrained(
+                    pretrained_name_or_path=pretrained_name_or_path,
+                    config=config,
+                    # The files were downloaded above, so a forced download would fetch them twice.
+                    force_download=False,
+                    resume_download=resume_download,
+                    proxies=proxies,
+                    token=token,
+                    cache_dir=cache_dir,
+                    local_files_only=local_files_only,
+                    revision=revision,
+                    strict=strict,
+                    **kwargs,
+                )
 
         # This is a base GR00T model - load it fresh
         logger.info("Detected base GR00T model, loading from HuggingFace...")
@@ -282,8 +658,10 @@ class GrootPolicy(PreTrainedPolicy):
                 message = f"{message} {GROOT_N1_5_REMOVAL_GUIDANCE}"
             raise ValueError(message)
         # Create a fresh policy instance - this will automatically load the GR00T model
-        # in __init__ via _create_groot_model()
-        policy = cls(config)
+        # in __init__ via _create_groot_model(). It is built from the base model alone, not from the base
+        # config saved with a checkpoint the config names.
+        with _weight_source(config, None):
+            policy = cls(config)
 
         policy.eval()
         return policy
@@ -294,13 +672,11 @@ class GrootPolicy(PreTrainedPolicy):
 
     def _resolve_action_queue_steps(self) -> int:
         n_action_steps = int(self.config.n_action_steps)
-        checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
-            self.config.base_model_path,
-            self.config.embodiment_tag,
+        checkpoint_action_horizon = (self.config.embodiment_action_horizons or {}).get(
+            self.config.embodiment_tag
         )
-        execution_horizon = infer_groot_n1_7_action_execution_horizon(
-            self.config.base_model_path,
-            self.config.embodiment_tag,
+        execution_horizon = groot_n1_7_action_execution_horizon(
+            checkpoint_action_horizon, self.config.embodiment_tag
         )
         horizons = [n_action_steps]
         if checkpoint_action_horizon is not None:
@@ -326,9 +702,8 @@ class GrootPolicy(PreTrainedPolicy):
         """Apply the same checkpoint and playback bounds before and after inference."""
 
         horizons = [available_steps]
-        checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
-            self.config.base_model_path,
-            self.config.embodiment_tag,
+        checkpoint_action_horizon = (self.config.embodiment_action_horizons or {}).get(
+            self.config.embodiment_tag
         )
         if checkpoint_action_horizon is not None:
             horizons.append(checkpoint_action_horizon)
