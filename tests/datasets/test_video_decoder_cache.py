@@ -89,7 +89,7 @@ class TestVideoDecoderCacheBounded:
         # Reach into the cache to capture the handle before it is evicted. This is
         # the only assertion in the suite that touches a private attribute, and it
         # is the most direct way to prove the file descriptor is actually released.
-        evicted_handle = cache._cache[str(paths[0])][1]
+        evicted_handle = cache._cache[str(paths[0])].handle
         assert evicted_handle.closed is False
 
         cache.get_decoder(paths[1])  # forces eviction of paths[0]

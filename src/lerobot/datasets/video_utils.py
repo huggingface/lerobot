@@ -24,11 +24,11 @@ import tempfile
 import threading
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, cast
 
 import av
@@ -319,6 +319,17 @@ def _default_max_cache_size() -> int | None:
     return value
 
 
+@dataclass
+class _DecoderEntry:
+    """Cached decoder plus the bookkeeping that keeps its backing file alive."""
+
+    decoder: Any
+    handle: Any
+    lock: Lock
+    users: int = 0
+    closing: bool = False
+
+
 class VideoDecoderCache:
     """Thread-safe LRU cache for torchcodec ``VideoDecoder`` instances.
 
@@ -345,15 +356,23 @@ class VideoDecoderCache:
         if max_size is not None and max_size <= 0:
             raise ValueError(f"max_size must be positive or None; got {max_size}")
         self.max_size: int | None = max_size
-        self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
-        self._lock = Lock()
+        self._cache: OrderedDict[str, _DecoderEntry] = OrderedDict()
+        self._lock = RLock()
 
     def __contains__(self, video_path: object) -> bool:
         with self._lock:
             return str(video_path) in self._cache
 
     def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one, evicting LRU if at capacity."""
+        """Get a cached decoder, evicting LRU if at capacity.
+
+        The returned decoder is not pinned: another thread may evict or clear it
+        at any time. Use ``use_decoder`` when the decoder is about to be read.
+        """
+        with self._lock:
+            return self._get_or_create_locked(str(video_path)).decoder
+
+    def _open_decoder(self, video_path: str) -> tuple[Any, Any]:
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -362,40 +381,82 @@ class VideoDecoderCache:
                 "Install it with: pip install 'lerobot[dataset]' (or uv pip install 'lerobot[dataset]')"
             )
 
-        video_path = str(video_path)
+        file_handle = fsspec.open(video_path).__enter__()
+        try:
+            decoder = VideoDecoder(file_handle, seek_mode="approximate")
+        except Exception:
+            file_handle.close()
+            raise
+        return decoder, file_handle
 
+    def _get_or_create_locked(self, video_path: str) -> _DecoderEntry:
+        """Return the entry for ``video_path``; caller must hold ``self._lock``."""
+        entry = self._cache.get(video_path)
+        if entry is not None:
+            self._cache.move_to_end(video_path)
+            return entry
+
+        decoder, file_handle = self._open_decoder(video_path)
+        entry = _DecoderEntry(decoder=decoder, handle=file_handle, lock=Lock())
+        self._cache[video_path] = entry
+        self._evict_locked()
+        return entry
+
+    def _evict_locked(self) -> None:
+        """Drop LRU entries over capacity; caller must hold ``self._lock``.
+
+        An entry with active readers is marked for deferred close instead of being
+        closed under their feet: its handle stays with the entry object, which the
+        readers keep alive, and the last one to release closes it.
+        """
+        if self.max_size is None:
+            return
+        while len(self._cache) > self.max_size:
+            _, entry = self._cache.popitem(last=False)
+            if entry.users:
+                entry.closing = True
+            else:
+                self._close_handle(entry.handle)
+
+    @staticmethod
+    def _close_handle(handle: Any) -> None:
+        with contextlib.suppress(Exception):
+            handle.close()
+
+    @contextlib.contextmanager
+    def use_decoder(self, video_path: str) -> Iterator[Any]:
+        """Keep a decoder and its backing file alive for the duration of decoding.
+
+        The entry is pinned: eviction or ``clear`` will not close its file while
+        the context is active. Reads of the same video are serialized (a decoder
+        is not documented as thread-safe); reads of different videos run in
+        parallel, so sharing one cache across threads does not serialize decoding.
+        """
+        key = str(video_path)
         with self._lock:
-            entry = self._cache.get(video_path)
-            if entry is not None:
-                self._cache.move_to_end(video_path)
-                return entry[0]
+            entry = self._get_or_create_locked(key)
+            entry.users += 1
 
-            file_handle = fsspec.open(video_path).__enter__()
-            try:
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
-            except Exception:
-                file_handle.close()
-                raise
-            self._cache[video_path] = (decoder, file_handle)
-
-            # Evict LRU entries until we are back under the cap. We close
-            # evicted file handles immediately; the associated ``VideoDecoder``
-            # is released to the GC when its last reference goes away.
-            if self.max_size is not None:
-                while len(self._cache) > self.max_size:
-                    _evicted_path, (_evicted_decoder, evicted_handle) = self._cache.popitem(last=False)
-                    with contextlib.suppress(Exception):
-                        evicted_handle.close()
-
-            return decoder
+        try:
+            with entry.lock:
+                yield entry.decoder
+        finally:
+            with self._lock:
+                entry.users -= 1
+                close_now = entry.users == 0 and entry.closing
+            if close_now:
+                self._close_handle(entry.handle)
 
     def clear(self):
-        """Clear the cache and close all file handles."""
+        """Clear the cache, closing handles that are not being read."""
         with self._lock:
-            for _, file_handle in self._cache.values():
-                with contextlib.suppress(Exception):
-                    file_handle.close()
+            entries = list(self._cache.values())
             self._cache.clear()
+        for entry in entries:
+            if entry.users:
+                entry.closing = True
+            else:
+                self._close_handle(entry.handle)
 
     def size(self) -> int:
         """Return the number of cached decoders."""
@@ -440,18 +501,12 @@ def decode_video_frames_torchcodec(
     if decoder_cache is None:
         decoder_cache = _default_decoder_cache
 
-    # Use cached decoder instead of creating new one each time
-    decoder = decoder_cache.get_decoder(str(video_path))
-
-    # get metadata for frame information
-    metadata = decoder.metadata
-    average_fps = metadata.average_fps
-    # convert timestamps to frame indices
-    frame_indices = [round(ts * average_fps) for ts in timestamps]
-    # retrieve frames based on indices: get_frames_at returns exactly one frame per
-    # requested index, in order, so frame i already corresponds to timestamps[i] --
-    # no nearest-match/re-stack needed (that redundant copy dominates decode overhead).
-    frames_batch = decoder.get_frames_at(indices=frame_indices)
+    # Protect the backing file from eviction/clear until the frame read completes.
+    with decoder_cache.use_decoder(str(video_path)) as decoder:
+        average_fps = decoder.metadata.average_fps
+        frame_indices = [round(ts * average_fps) for ts in timestamps]
+        # get_frames_at returns one frame per requested index, in order.
+        frames_batch = decoder.get_frames_at(indices=frame_indices)
     closest_frames = frames_batch.data
 
     # float64: hour-scale timestamps quantize past tolerance_s in float32.
