@@ -24,6 +24,8 @@ from torch.nn import functional as F  # noqa: N812
 from transformers.cache_utils import Cache
 from transformers.configuration_utils import PretrainedConfig
 
+from lerobot.policies.common.export_utils import is_non_strict_exporting
+
 
 @dataclass
 class _ActionFlowInputs:
@@ -191,6 +193,10 @@ class ActionCudaGraphManager:
     def can_use_action_flow(self, inputs: _ActionFlowInputs) -> bool:
         action_model = self.model
         if not self.enabled:
+            return False
+        # Non-strict export would record the replay instead of the flow loop. torch.compile breaks the graph at
+        # the replay and still runs it.
+        if is_non_strict_exporting():
             return False
         if action_model.training or action_model._require_action_expert().training:
             return False
