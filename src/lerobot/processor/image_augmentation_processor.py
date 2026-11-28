@@ -90,6 +90,11 @@ class ImageAugmentationProcessorStep(ObservationProcessorStep):
             generator.seed()  # a fresh generator starts from a fixed seed; unseeded runs must not share it
         return generator
 
+    @property
+    def generator(self) -> torch.Generator | None:
+        """Return the private generator after it has been initialized on a device."""
+        return self._generator
+
     def _selected_keys(self, observation: RobotObservation) -> list[str]:
         if self.image_keys is not None:
             return [key for key in self.image_keys if key in observation]
