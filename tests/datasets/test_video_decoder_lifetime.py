@@ -75,7 +75,7 @@ def test_decode_keeps_file_open_until_read_finishes(tmp_path, monkeypatch, opera
             read = pool.submit(decode_video_frames_torchcodec, paths[0], [0.0], 0.01, decoder_cache=cache)
             try:
                 assert reading.wait(5)
-                handle = cache._cache[str(paths[0])][1]
+                handle = cache._cache[str(paths[0])].handle
                 mutation = pool.submit(mutate)
                 assert mutation_started.wait(5)
                 # Eviction and clear must not wait for the reader; they hand
